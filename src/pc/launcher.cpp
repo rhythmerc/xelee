@@ -421,6 +421,7 @@ class Launcher final : public Rml::EventListener {
     bool supported = false, settings = false, quiet = false;
     uint64_t last_identity_check = 0, last_axis = 0, last_axis_x = 0;
     launcher::PadNavState xr_nav;  // the headset's controllers (MELEE_STEAM_FRAME)
+    bool xr_pressed = false;       // its laser's trigger, as the mouse button
     unsigned last_progress = 101;
     std::vector<std::string> focus_ids;
     int result = -2, tab = 0;
@@ -1730,6 +1731,25 @@ public:
                     activate_focus();
                 if (nav.back)
                     back();
+            }
+            /* A laser on the virtual screen is the launcher's mouse, its
+             * trigger (or a pinch) the button. */
+            if (auto* ctx = document->GetContext()) {
+                float px = 0.f, py = 0.f;
+                bool pressed = false;
+                const bool on = aurora_xr_screen_pointer(&px, &py, &pressed);
+                if (on) {
+                    const auto size = ctx->GetDimensions();
+                    ctx->ProcessMouseMove(int(px * float(size.x)), int(py * float(size.y)), 0);
+                }
+                pressed = on && pressed;
+                if (pressed != xr_pressed) {
+                    if (pressed)
+                        ctx->ProcessMouseButtonDown(0, 0);
+                    else
+                        ctx->ProcessMouseButtonUp(0, 0);
+                    xr_pressed = pressed;
+                }
             }
 #endif
             if (dialog) {
