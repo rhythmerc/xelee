@@ -1368,18 +1368,36 @@ static int s_center_grkind = -1;
 static bool s_clip_active;
 
 static int s_xr_mode = -1; /* 1 mixed reality, 0 full VR */
+static bool s_full_vr_pref; /* the launcher's Room setting */
+static bool s_room_missing; /* the headset can't show the room: full VR */
 
 static void xr_mode_init(void) {
     if (s_xr_mode < 0) {
         const char* m = getenv("MELEE_XR_MODE");
-        s_xr_mode = m == NULL || strcmp(m, "vr") != 0;
+        s_xr_mode = m != NULL ? strcmp(m, "vr") != 0 : !s_full_vr_pref;
         aurora_xr_set_passthrough(s_xr_mode == 1);
+    }
+}
+
+void pc_xr_set_full_vr(bool full_vr) {
+    s_full_vr_pref = full_vr;
+    if (s_xr_mode >= 0 && getenv("MELEE_XR_MODE") == NULL) {
+        s_xr_mode = !full_vr;
+        aurora_xr_set_passthrough(s_xr_mode == 1 && !s_room_missing);
     }
 }
 
 bool pc_xr_mixed_reality(void) {
     xr_mode_init();
-    return s_xr_mode == 1 && aurora_xr_active();
+    /* A headset that can't show the room (SteamVR streaming from a PC, or a
+     * desktop runtime) gets full VR's whole stages rather than a tabletop
+     * over black, and the HUD over them. */
+    if (!s_room_missing && aurora_xr_active() && !aurora_xr_passthrough_available()) {
+        s_room_missing = true;
+        aurora_xr_set_passthrough(false);
+        pc_log_line("xr: the headset shows no room: full VR");
+    }
+    return s_xr_mode == 1 && !s_room_missing && aurora_xr_active();
 }
 
 bool pc_xr_presenting(void) { return aurora_xr_active(); }
@@ -1390,7 +1408,7 @@ bool pc_xr_toggle_mode(void) {
     }
     xr_mode_init();
     s_xr_mode = !s_xr_mode;
-    aurora_xr_set_passthrough(s_xr_mode == 1);
+    aurora_xr_set_passthrough(s_xr_mode == 1 && !s_room_missing);
     pc_log_line("xr: %s", s_xr_mode ? "mixed reality" : "full VR");
     return true;
 }
