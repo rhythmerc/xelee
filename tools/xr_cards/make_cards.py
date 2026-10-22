@@ -4,8 +4,13 @@
 style, into resources/xr/:
 
   place-cards.png, place-legend.png              for Touch controllers
+  place-cards-frame.png                          for the Steam Frame's (its
+                                                 MENU button is Start; the
+                                                 controllers' clips and legend)
   place-cards-hands.png, place-legend-hands.png  for tracked hands
   place-clip-<set>-<name>.jpg, place-clips.txt   their looping clips
+
+`--only frame` draws the Steam Frame's cards alone, leaving the others.
 
 The gesture cards play clips cut from headset recordings made with the
 xr-recording branch (chroma green backdrop, ghost hands and controllers):
@@ -55,6 +60,7 @@ BUTTONS = {
     "B": ((214, 40, 40), WHITE, "circle"),
     "Y": ((214, 214, 220), (30, 30, 30), "pill"),
     "START": ((150, 152, 160), WHITE, "pill"),
+    "MENU": ((150, 152, 160), WHITE, "pill"),
     "GRIP": ((60, 64, 76), WHITE, "pill"),
     "PINCH": ((60, 64, 76), WHITE, "pill"),
 }
@@ -362,9 +368,12 @@ def keyed_frames(clipset, name, w, h):
     return frames
 
 
-def clip_atlas(clipset, name, w, h):
-    """Packs the clip's frames into a grid; it plays them forward, then back."""
+def clip_atlas(clipset, name, w, h, write=True):
+    """Packs the clip's frames into a grid; it plays them forward, then back.
+    write=False: only its first frame, the cards' still, is wanted."""
     frames = keyed_frames(clipset, name, w, h)
+    if not write:
+        return frames[0], len(frames), 0
     cols = math.ceil(math.sqrt(len(frames) * h / w))
     rows = math.ceil(len(frames) / cols)
     atlas = Image.new("RGB", (cols * w, rows * h))
@@ -379,7 +388,7 @@ def clip_atlas(clipset, name, w, h):
 # ---------------------------------------------------------------- boards
 
 
-def board(hands, firsts=None):
+def board(hands, firsts=None, start="START"):
     W, H = BOARD_W, BOARD_H
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -408,7 +417,7 @@ def board(hands, firsts=None):
         ("TURN", still("turn", picture_turn), [both, ["and twist."]]),
         ("SCALE", still("scale", picture_scale), [both, ["and pull apart or together."]]),
         ("ALL SET?" if DONE else "READY?", picture_start, [
-            [("btn", "A"), "or ", ("btn", "START"), "Done!" if DONE else "Fight!"],
+            [("btn", "A"), "or ", ("btn", start), "Done!" if DONE else "Fight!"],
             [("btn", "B"), "Reset the stage"],
             [("btn", "Y"), "Hide these tips"],
         ]),
@@ -443,19 +452,34 @@ def save(img, name):
 
 
 if __name__ == "__main__":
+    import sys
+
+    only_frame = sys.argv[1:] == ["--only", "frame"]
     os.makedirs(OUT, exist_ok=True)
     pw, ph = picture_size()
     w1, h1 = pw // SS, ph // SS  # clip frames: the picture's size on the saved card
     lines = []
     for clipset, hands, cards, legend_name in (("controllers", False, "place-cards.png", "place-legend.png"),
                                                ("hands", True, "place-cards-hands.png", "place-legend-hands.png")):
+        if only_frame and hands:
+            break
         firsts, index = {}, []
         for name in CLIPS:
             if not os.path.exists(os.path.join(HERE, "footage", f"{clipset}-{name}.mp4")):
                 continue  # a still instead
-            first, frames, cols = clip_atlas(clipset, name, w1, h1)
+            first, frames, cols = clip_atlas(clipset, name, w1, h1, write=not only_frame)
             firsts[name] = first
             index.append((name, frames, cols))
+        if not hands:
+            # The Steam Frame's controllers: the same cards, Start being MENU.
+            # They take the controllers' clips (place-clips.txt), which sit
+            # where they do on these.
+            save(board(False, firsts, start="MENU")[0], "place-cards-frame.png")
+            DONE = True
+            save(board(False, firsts, start="MENU")[0], "place-cards-frame-done.png")
+            DONE = False
+            if only_frame:
+                break
         img, rects = board(hands, firsts)
         save(img, cards)
         save(legend(hands), legend_name)
@@ -467,6 +491,8 @@ if __name__ == "__main__":
         for name, frames, cols in index:
             x, y, w, h = rects[CLIPS.index(name)]
             lines.append(f"{clipset} {name} {frames} {cols} {w1} {h1} {CLIP_FPS} {x // SS} {y // SS} {w // SS} {h // SS}")
+    if only_frame:
+        sys.exit(0)
     # set name frames cols frame_w frame_h fps x y w h (the picture on its
     # set's cards, 1x pixels); played forward, then back.
     with open(os.path.join(OUT, "place-clips.txt"), "w") as f:
