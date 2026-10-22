@@ -24,6 +24,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE="${FRAME_PACKAGE:-${ROOT}/dist/Xelee-SteamFrame-arm64.tar.gz}"
 
 remote() { ssh -o BatchMode=yes "${HOST}" "$@"; }
+# Ends the game: found by its executable, since it names its main thread
+# "Main thread" (no pkill -x melee).
+STOP="pids=\$(for p in \$(pgrep -u \"\$USER\" -x 'Main thread'); do \
+    [ \"\$(readlink /proc/\$p/exe)\" = \"\$HOME/${DEST}/melee\" ] && echo \$p; done); \
+    if [ -n \"\$pids\" ]; then kill \$pids; \
+    for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 \$pids 2>/dev/null || break; sleep 0.5; done; fi; true"
 
 case "${1:-}" in
 deploy)
@@ -48,12 +54,14 @@ run)
             while IFS= read -r -d '' kv; do case \"\$kv\" in \
                 DISPLAY=*|WAYLAND_DISPLAY=*|XDG_RUNTIME_DIR=*|DBUS_SESSION_BUS_ADDRESS=*|PULSE_SERVER=*|XR_RUNTIME_JSON=*|STEAM_*|SteamGameId=*) export \"\$kv\";; \
             esac; done < /proc/\$pid/environ; \
-            cd '${DEST}' && mkdir -p logs && nohup ./xelee.sh $* > logs/console.txt 2>&1 &"
+            ${STOP}; \
+            cd '${DEST}' || exit 1; mkdir -p logs; \
+            nohup ./xelee.sh $* > logs/console.txt 2>&1 < /dev/null &"
     fi
     echo "started on ${HOST}"
     ;;
 stop)
-    remote "pkill -x melee || true"
+    remote "${STOP}"
     ;;
 env)
     printf '%s\n' ${2:-} | remote "cat > '${DEST}/melee-env.txt'"
