@@ -35,6 +35,9 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 MELEE = Path(os.environ.get("MELEE_BIN") or ROOT / "build" / "linux-xr" / "melee")
+# The Steam Frame's build configured for this machine (-DMELEE_STEAM_FRAME=ON),
+# for the cases about its launcher; skipped without one.
+FRAME_MELEE = Path(os.environ.get("MELEE_FRAME_BIN") or ROOT / "build" / "linux-frame-x86" / "melee")
 LAYER_DIR = Path(os.environ.get("XR_SIM_LAYER_DIR") or MELEE.parent / "extern" / "aurora" / "tests" / "xr_sim_layer")
 
 FIGHT = {"MELEE_BOOT_SCENE": "vs", "MELEE_DEBUG_VS": "cpu4", "MELEE_XR_PLACE": "0", "MELEE_SEED": "1",
@@ -134,6 +137,15 @@ CASES = {
         frames=900,
         need=[r"The runtime allows 11 swapchains", r"No swapchain to spare for placing picture"], forbid=[],
         checks=[sim_summary(lambda f, b, u, p, r, a, j: p == 11 and r == 1, "one refusal, at 11")]),
+    "frame-launcher": dict(
+        what="The Steam Frame's build: its launcher in the headset, the disc found in ~/Games, Menu presses Play",
+        frame_build=True, no_disc=True,
+        env=dict(FIGHT, **FRAME, AURORA_XR_INPUT_LOG="1",
+                 # Play, and again to skip the wait for pipelines (a fresh HOME has none).
+                 AURORA_SIM_PRESS="/user/hand/right/input/menu/click@200-203;"
+                                  "/user/hand/right/input/menu/click@260-263"), frames=600,
+        need=[r"Launcher: (starting the game|pipelines built, starting the game|Play waits)",
+              r"passthrough on \(alpha blend\)", r"XR pad buttons 0x1000", r"3D eyes render"], forbid=[]),
     "placing-frame": dict(
         what="The placing hold within the Steam Frame's 16 swapchains, with its own cards",
         env={"MELEE_BOOT_SCENE": "place", "AURORA_XR_ARENA_AT_HEAD": "1", **FRAME}, frames=900,
@@ -164,6 +176,15 @@ def run_case(name, case, disc, out, headless, timeout):
                MELEE_LOG_FILE=str(run / "melee.log"), MELEE_EXIT_AFTER_FRAMES=str(case["frames"]),
                AURORA_XR_DUMP=str(run / "dump"), AURORA_XR_DUMP_AFTER="200")
     env.update(case["env"])
+    binary, argv = (FRAME_MELEE if case.get("frame_build") else MELEE), [disc]
+    if case.get("no_disc"):
+        # A fresh home with the disc in ~/Games: found there, not remembered.
+        home = run / "home"
+        (home / "Games").mkdir(parents=True)
+        (home / "Games" / Path(disc).name).symlink_to(Path(disc).resolve())
+        env["HOME"] = str(home)
+        env.pop("XDG_DATA_HOME", None)
+        argv = []
     procs = []
     try:
         mon_env = dict(os.environ, XRT_NO_STDIN="1", XRT_COMPOSITOR_NULL="1", QWERTY_ENABLE="1",
@@ -182,7 +203,7 @@ def run_case(name, case, disc, out, headless, timeout):
         time.sleep(2)
         with open(run / "stdout.log", "w") as log:
             try:
-                status = subprocess.run([str(MELEE), disc], env=env, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                status = subprocess.run([str(binary)] + argv, env=env, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                         timeout=timeout).returncode
             except subprocess.TimeoutExpired:
                 status = "timeout"
@@ -239,6 +260,9 @@ def main():
     failed = 0
     for name in names:
         case = CASES[name]
+        if case.get("frame_build") and not FRAME_MELEE.exists():
+            print("SKIP %-26s no Steam Frame build for this machine (MELEE_FRAME_BIN)" % name)
+            continue
         uses_layer = "XR_ENABLE_API_LAYERS" in case["env"]
         if uses_layer and not (LAYER_DIR / "XrApiLayer_aurora_frame_sim.json").exists():
             print("SKIP %-26s the test layer isn't built (ninja XrApiLayer_aurora_frame_sim)" % name)
