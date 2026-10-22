@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #pragma once
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace launcher {
 struct DiscInfo {
@@ -69,6 +71,7 @@ struct Preferences {
     bool ctf_home = true;    // your own flag must be home to score
     bool ctf_slow = true;    // carriers walk and dash slower
     bool ctf_items = false;  // Melee's own item settings, or none
+    bool xr_full_vr = false;   // XR: full VR (whole stages) instead of mixed reality
     uint64_t install_id = 0;  // random once per install (LAN host election); 0 = not yet
 };
 DiscInfo inspect_disc(const std::string& path);
@@ -77,4 +80,26 @@ Verification verify_disc(
 Preferences load_preferences(const std::filesystem::path& path);
 bool save_preferences(
     const std::filesystem::path& path, const Preferences& prefs, std::string& error);
+
+// Disc images the launcher can play, in these directories (not their
+// subdirectories), in order: for a headset's own build, which has no file
+// picker in the headset. At most `limit`.
+std::vector<std::string> find_discs(
+    const std::vector<std::filesystem::path>& dirs, size_t limit = 8);
+
+// A headset's controllers driving the launcher's gamepad navigation: they
+// reach it as the GameCube pad (aurora_xr_get_pad), not as a gamepad SDL
+// sees. Buttons are PADStatus::button bits, the stick -128..127 (up
+// positive). What the change since `state` does; holding the stick repeats.
+struct PadNav {
+    int step = 0;        // focus down (+1) or up (-1)
+    int horizontal = 0;  // a value right (+1) or left (-1)
+    bool activate = false, back = false;
+};
+struct PadNavState {
+    uint16_t buttons = 0;
+    uint64_t stepped_ms = 0, moved_ms = 0;
+};
+PadNav pad_nav(
+    PadNavState& state, uint16_t buttons, int8_t stick_x, int8_t stick_y, uint64_t now_ms);
 }  // namespace launcher

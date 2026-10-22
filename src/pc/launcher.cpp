@@ -15,6 +15,7 @@
 #include "spatial_audio.h"
 #include "stage_ambience.h"
 #include "xr_place.h"
+#include "xr_scene.h"
 #include "slippi/slp_user.h"
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <aurora/dvd.h>
@@ -352,6 +353,12 @@ static uint32_t pending_pipelines() {
 #if defined(__ANDROID__) && defined(AURORA_ENABLE_OPENXR)
 constexpr const char* platform_class = "quest";
 constexpr bool has_updater = true;
+#elif defined(MELEE_STEAM_FRAME)
+/* The Steam Frame's own build: the same headset layout, shown on the
+ * headset's virtual screen and driven by its controllers (xr_pad_nav). No
+ * updater until releases carry its package. */
+constexpr const char* platform_class = "quest";
+constexpr bool has_updater = false;
 #elif defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
 constexpr const char* platform_class = "mobile";
 constexpr bool has_updater = true;
@@ -364,9 +371,27 @@ constexpr const char* disc_note =
     "Use Choose Disc, or place a disc image in Files > On My iPhone > Melee.";
 #elif defined(__ANDROID__)
 constexpr const char* disc_note = "Use Choose Disc to pick a disc image.";
+#elif defined(MELEE_STEAM_FRAME)
+constexpr const char* disc_note =
+    "Put a disc image in Games or Downloads, or beside Xelee; Choose Disc picks among them.";
 #else
 constexpr const char* disc_note = "Drop a disc image here, or use Choose Disc.";
 #endif
+#if defined(MELEE_STEAM_FRAME)
+/* Where a disc image is looked for on the headset, in order: beside the
+ * game, then the home folder's Games, Downloads and Documents, then home. */
+static std::vector<std::filesystem::path> steam_frame_disc_dirs() {
+    std::vector<std::filesystem::path> dirs;
+    if (const char* base = SDL_GetBasePath())
+        dirs.emplace_back(base);
+    if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+        const std::filesystem::path h = home;
+        dirs.insert(dirs.end(), {h / "Games", h / "Downloads", h / "Documents", h});
+    }
+    return dirs;
+}
+#endif
+
 /* Melee colours the menu frame after the entry under the cursor. */
 constexpr const char* themes[] = {"play", "choose", "verify", "settings", "quit"};
 
@@ -395,6 +420,7 @@ class Launcher final : public Rml::EventListener {
     std::string pending_path, verification_identity, selected_identity;
     bool supported = false, settings = false, quiet = false;
     uint64_t last_identity_check = 0, last_axis = 0, last_axis_x = 0;
+    launcher::PadNavState xr_nav;  // the headset's controllers (MELEE_STEAM_FRAME)
     unsigned last_progress = 101;
     std::vector<std::string> focus_ids;
     int result = -2, tab = 0;
@@ -474,7 +500,7 @@ class Launcher final : public Rml::EventListener {
         switch (tab) {
         case 0:
             return {"display", "sync", "resolution", "xr-resolution", "spacewarp", "xr-foveation", "xr-shadow",
-                "xr-lighting", "aspect",
+                "xr-lighting", "xr-room", "aspect",
                 "hud-mode", "aa", "filter-mode", "fps", "custom-textures", "backend",
                 "performance", "defaults-graphics"};
         case 1:
@@ -906,6 +932,7 @@ class Launcher final : public Rml::EventListener {
         text("xr-shadow", prefs.xr_shadow ? "On" : "Off");
         text("xr-place", prefs.xr_place_hold ? "Place the stage" : "Start right away");
         text("xr-lighting", lighting_name(prefs.xr_lighting));
+        text("xr-room", prefs.xr_full_vr ? "Full VR" : "Mixed reality");
         text("aspect", prefs.widescreen == 0 ? "Original (73:60)" :
                        prefs.widescreen == 1 ? "Widescreen 16:9" :
                                                "Auto (window aspect)");
@@ -1058,6 +1085,8 @@ class Launcher final : public Rml::EventListener {
             prefs.xr_foveation = d.xr_foveation;
             prefs.xr_shadow = d.xr_shadow;
             prefs.xr_lighting = d.xr_lighting;
+            prefs.xr_full_vr = d.xr_full_vr;
+            pc_xr_set_full_vr(prefs.xr_full_vr);
             message = "Graphics settings are back to their defaults.";
             if (restart)
                 message += " Anti-aliasing and the backend apply after a restart.";
@@ -1159,6 +1188,18 @@ class Launcher final : public Rml::EventListener {
         if (busy())
             return;
         if (id == "choose") {
+#if defined(MELEE_STEAM_FRAME)
+            /* No file picker shows in the headset: each press takes the next
+             * disc image found where a player would put one. */
+            const auto found = launcher::find_discs(steam_frame_disc_dirs());
+            if (found.empty()) {
+                status(disc_note, true);
+                return;
+            }
+            auto next = std::find(found.begin(), found.end(), prefs.disc);
+            inspect(next == found.end() || ++next == found.end() ? found.front() : *next);
+            return;
+#endif
             static const SDL_DialogFileFilter filters[] = {
                 {"GameCube disc images", "iso;gcm;ciso;rvz;gcz;wia"}, {"All files", "*"}};
             dialog = std::make_shared<DialogResult>();
@@ -1341,6 +1382,12 @@ class Launcher final : public Rml::EventListener {
             save();
             refresh_settings();
             element("xr-place")->Focus();
+        } else if (id == "xr-room") {
+            prefs.xr_full_vr = !prefs.xr_full_vr;
+            pc_xr_set_full_vr(prefs.xr_full_vr);
+            save();
+            refresh_settings();
+            element("xr-room")->Focus();
         } else if (id.rfind("defaults-", 0) == 0) {
             restore_defaults(id);
             element(id.c_str())->Focus();
@@ -1668,6 +1715,23 @@ public:
                     inspect(e->sdl.drop.data);
                 }
             }
+#if defined(MELEE_STEAM_FRAME)
+            /* The headset's controllers reach the launcher as the GameCube
+             * pad (aurora_xr_get_pad), not as a gamepad SDL sees: the D-pad
+             * or stick moves, A or Start picks, B goes back. */
+            if (PADStatus pad{}; aurora_xr_get_pad(&pad)) {
+                const auto nav =
+                    launcher::pad_nav(xr_nav, pad.button, pad.stickX, pad.stickY, SDL_GetTicks());
+                if (nav.step != 0)
+                    focus_step(nav.step);
+                if (nav.horizontal != 0)
+                    horizontal(nav.horizontal);
+                if (nav.activate)
+                    activate_focus();
+                if (nav.back)
+                    back();
+            }
+#endif
             if (dialog) {
                 bool ready;
                 std::string path, error;
@@ -1863,7 +1927,7 @@ public:
 extern "C" void pc_launcher_configure(AuroraConfig* config) {
     config_path = std::filesystem::path(config->userPath ? config->userPath : ".") / "launcher.cfg";
     prefs = launcher::load_preferences(config_path);
-#if defined(__ANDROID__) && defined(AURORA_ENABLE_OPENXR)
+#if (defined(__ANDROID__) && defined(AURORA_ENABLE_OPENXR)) || defined(MELEE_STEAM_FRAME)
     /* The Quest launcher hides these (platform_class, launcher.rml's
      * no-quest rows), so a value saved before they were hidden could never be
      * changed back: both the panel and the immersive game run with the
@@ -1887,6 +1951,18 @@ extern "C" void pc_launcher_configure(AuroraConfig* config) {
         if (!launcher::save_preferences(config_path, prefs, error))
             SDL_Log("%s", error.c_str());
     }
+#if defined(MELEE_STEAM_FRAME)
+    /* No file picker shows in the headset: the remembered disc, or the first
+     * one found where a player would put it. */
+    {
+        std::error_code ec;
+        if (prefs.disc.empty() || !std::filesystem::is_regular_file(prefs.disc, ec)) {
+            const auto found = launcher::find_discs(steam_frame_disc_dirs(), 1);
+            if (!found.empty())
+                prefs.disc = found.front();
+        }
+    }
+#endif
 #if defined(__APPLE__) || defined(TARGET_OS_IPHONE)
     auto file_accessible = [](const std::filesystem::path& path) -> bool {
         std::error_code ec;
@@ -1990,6 +2066,15 @@ extern "C" const char* pc_launcher_selected_disc(void) { return prefs.disc.c_str
 extern "C" int pc_launcher_run(const char* command_line_disc, SDL_Window* window) {
     try {
         std::string error;
+        /* MELEE_SKIP_LAUNCHER=1 (melee-env.txt): straight into the game with
+         * the remembered disc, as with a disc on the command line. A headset
+         * whose launcher can't be used gets in this way. */
+        const std::string remembered = prefs.disc;
+        if (!command_line_disc && !remembered.empty()) {
+            if (const char* skip = std::getenv("MELEE_SKIP_LAUNCHER");
+                skip != nullptr && *skip == '1')
+                command_line_disc = remembered.c_str();
+        }
         if (command_line_disc) {
             auto info = launcher::inspect_disc(command_line_disc);
             if (info.supported && aurora_dvd_open(command_line_disc)) {
@@ -2667,6 +2752,7 @@ extern "C" void pc_menu_init(SDL_Window* window) {
     pc_spatial_set_enabled(prefs.spatial_audio);
     pc_ambience_set_enabled(prefs.stage_sounds);
     pc_xr_place_set_hold(prefs.xr_place_hold);
+    pc_xr_set_full_vr(prefs.xr_full_vr);
     auto* context = aurora::rmlui::get_context();
     if (!context) {
         SDL_Log("F1 menu: RmlUi context unavailable");
