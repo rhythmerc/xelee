@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 
 ROOT = Path(__file__).resolve().parent.parent
 MELEE = Path(os.environ.get("MELEE_BIN") or ROOT / "build" / "linux-xr" / "melee")
@@ -76,12 +77,14 @@ def sim_summary(pattern, message):
     def check(run):
         text = (run / "stdout.log").read_text(errors="replace")
         m = re.search(r"frame_sim: (\d+) frames; (\d+) blended, (\d+) of them without a projection layer first; "
-                      r"swapchains at most (\d+) alive, (\d+) refused; Frame bindings accepted (\d+), refused (\d+)",
+                      r"(\d+) with a projection layer after the first; swapchains at most (\d+) alive, (\d+) refused; Frame bindings accepted (\d+), refused (\d+)",
                       text)
         if not m:
             return "no frame_sim summary"
-        frames, blended, unprojected, peak, refused, accepted, rejected = map(int, m.groups())
-        return None if pattern(frames, blended, unprojected, peak, refused, accepted, rejected) else message
+        s = types.SimpleNamespace(**dict(zip(
+            ("frames", "blended", "unprojected", "later", "peak", "refused", "accepted", "rejected"),
+            map(int, m.groups()))))
+        return None if pattern(s) else message
     return check
 
 
@@ -111,13 +114,15 @@ CASES = {
               r"XR pad buttons 0x0008", r"XR pad buttons 0x0010", r"XR pad buttons 0x0100", r"3D eyes render"],
         forbid=[r"a tracked hand \(pinches\)"],
         checks=[dump_coverage(0.02, 0.95),
-                sim_summary(lambda f, b, u, p, r, a, j: b > 0 and u == 0 and p <= 16 and r == 0 and a == 1,
-                            "the room needs a projection layer first in every blended frame, within 16 swapchains")]),
+                sim_summary(lambda s: s.blended > 0 and s.unprojected == 0 and s.later == 0 and s.peak <= 16
+                            and s.refused == 0 and s.accepted == 1,
+                            "every blended frame needs one projection layer, first (the room behind it, and the "
+                            "only layer SteamVR reprojects), within 16 swapchains")]),
     "frame-shoulder": dict(
         what="A SteamVR that only knows the shoulder buttons' new name: the bumper bindings are refused, shoulder taken",
         env=dict(FIGHT, **FRAME, AURORA_SIM_FRAME_SHOULDER="shoulder"), frames=600,
         need=[r"Steam Frame controller bindings: /user/hand/left/input/shoulder/click"], forbid=[],
-        checks=[sim_summary(lambda f, b, u, p, r, a, j: a == 1 and j >= 1, "expected one refusal, then shoulder")]),
+        checks=[sim_summary(lambda s: s.accepted == 1 and s.rejected >= 1, "expected one refusal, then shoulder")]),
     "pacing-90-unreported": dict(
         what="90 Hz without a reported rate: the game keeps its own 60 Hz timer (it used to step at 90)",
         env=dict(FIGHT, **SIM, AURORA_SIM_PERIOD_MS="11.111", AURORA_SIM_REPORTED_HZ="0"), frames=600,
@@ -136,7 +141,7 @@ CASES = {
         env={"MELEE_BOOT_SCENE": "place", "AURORA_XR_ARENA_AT_HEAD": "1", **FRAME, "AURORA_SIM_MAX_SWAPCHAINS": "11"},
         frames=900,
         need=[r"The runtime allows 11 swapchains", r"No swapchain to spare for placing picture"], forbid=[],
-        checks=[sim_summary(lambda f, b, u, p, r, a, j: p == 11 and r == 1, "one refusal, at 11")]),
+        checks=[sim_summary(lambda s: s.peak == 11 and s.refused == 1, "one refusal, at 11")]),
     "frame-launcher": dict(
         what="The Steam Frame's build: its launcher in the headset, the disc found in ~/Games, Menu presses Play",
         frame_build=True, no_disc=True,
@@ -145,12 +150,13 @@ CASES = {
                  AURORA_SIM_PRESS="/user/hand/right/input/menu/click@200-203;"
                                   "/user/hand/right/input/menu/click@260-263"), frames=600,
         need=[r"Launcher: (starting the game|pipelines built, starting the game|Play waits)",
-              r"passthrough on \(alpha blend\)", r"XR pad buttons 0x1000", r"3D eyes render"], forbid=[]),
+              r"passthrough on \(alpha blend\)", r"XR pad buttons 0x1000", r"3D eyes render"], forbid=[],
+        checks=[sim_summary(lambda s: s.later == 0, "a fight's 3D view after another layer (SteamVR shows it unreprojected)")]),
     "placing-frame": dict(
         what="The placing hold within the Steam Frame's 16 swapchains, with its own cards",
         env={"MELEE_BOOT_SCENE": "place", "AURORA_XR_ARENA_AT_HEAD": "1", **FRAME}, frames=900,
         need=[r"Swapchains alive: 14"], forbid=[r"No swapchain to spare"],
-        checks=[sim_summary(lambda f, b, u, p, r, a, j: p <= 16 and r == 0, "over 16 swapchains")]),
+        checks=[sim_summary(lambda s: s.peak <= 16 and s.refused == 0, "over 16 swapchains")]),
 }
 
 FORBID_ALWAYS = [r"PANIC", r"\[FATAL\]", r"Segmentation fault", r"AddressSanitizer",
