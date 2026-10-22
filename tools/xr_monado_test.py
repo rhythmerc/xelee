@@ -88,6 +88,15 @@ def sim_summary(pattern, message):
     return check
 
 
+
+def saved_setting(line):
+    def check(run):
+        cfg = run / "home" / ".local" / "share" / "melee-pc" / "launcher.cfg"
+        text = cfg.read_text(errors="replace") if cfg.exists() else ""
+        return None if line in text.splitlines() else "launcher.cfg lacks '%s'" % line
+    return check
+
+
 CASES = {
     "shared-queue": dict(
         what="The runtime shares Dawn's one queue (RADV, Turnip) and Vulkan's validation layer sees no race",
@@ -153,6 +162,15 @@ CASES = {
         need=[r"Launcher: (starting the game|pipelines built, starting the game|Play waits)",
               r"passthrough on \(alpha blend\)", r"XR pad buttons 0x1000", r"3D eyes render"], forbid=[],
         checks=[sim_summary(lambda s: s.later == 0, "a fight's 3D view after another layer (SteamVR shows it unreprojected)")]),
+    "frame-view-switch": dict(
+        what="The Steam Frame's View button: nothing mid-fight; in a pause, the stage's own sky (full VR)",
+        env=dict(FIGHT, **FRAME, MELEE_DEBUG_VS="cpu", AURORA_XR_INPUT_LOG="1",
+                 AURORA_SIM_PRESS="/user/hand/left/input/view/click@200-202;"
+                                  "/user/hand/right/input/menu/click@240-243;"
+                                  "/user/hand/left/input/view/click@300-302"), frames=1500,
+        need=[r"Steam Frame controller bindings: .*/user/hand/left/input/view/click", r"XR View pressed",
+              r"xr: full VR"],
+        forbid=[r"xr: mixed reality"], fresh_home=True, checks=[saved_setting("xr_full_vr 1")]),
     "placing-frame": dict(
         what="The placing hold within the Steam Frame's 16 swapchains, with its own cards",
         env={"MELEE_BOOT_SCENE": "place", "AURORA_XR_ARENA_AT_HEAD": "1", **FRAME}, frames=900,
@@ -192,6 +210,10 @@ def run_case(name, case, disc, out, headless, timeout):
         env["HOME"] = str(home)
         env.pop("XDG_DATA_HOME", None)
         argv = []
+    elif case.get("fresh_home"):
+        # Settings written by the run stay in it.
+        env["HOME"] = str(run / "home")
+        env.pop("XDG_DATA_HOME", None)
     procs = []
     try:
         mon_env = dict(os.environ, XRT_NO_STDIN="1", XRT_COMPOSITOR_NULL="1", QWERTY_ENABLE="1",

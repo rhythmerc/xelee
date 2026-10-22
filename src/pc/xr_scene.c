@@ -5,6 +5,7 @@
 #ifdef AURORA_ENABLE_OPENXR
 
 #include "pc/pc.h"
+#include "pc/launcher.h"
 #include "pc/xr_place.h"
 
 #include <aurora/xr.h>
@@ -1130,6 +1131,11 @@ static void probe_frame(void) {
     s_probe.offscreen = s_probe.magnified = s_probe.blast = s_probe.ko = 0;
 }
 
+/* pc_xr_poll_control's frames, and the one a paused fight last drew in
+ * (xr_view_switch). */
+static unsigned s_poll_frames;
+static unsigned s_paused_frame = (unsigned)-8;
+
 void pc_xr_world_camera(const float view[3][4]) {
     probe_frame();
     if (s_flat_view) {
@@ -1138,7 +1144,11 @@ void pc_xr_world_camera(const float view[3][4]) {
     }
     /* Pause flags 1 and 2: a player paused the match (gm_DoPauseChecksAndRoutine). */
     const bool stopped = gm_GetDbPauseFlag(1) || gm_GetDbPauseFlag(2);
-    aurora_xr_set_paused(stopped || gm_vs_soft_paused());
+    const bool paused = stopped || gm_vs_soft_paused();
+    aurora_xr_set_paused(paused);
+    if (paused) {
+        s_paused_frame = s_poll_frames;
+    }
     s_category = AURORA_XR_WORLD;
     s_drew_3d = true;
     aurora_xr_camera(AURORA_XR_WORLD, view);
@@ -1483,7 +1493,22 @@ static void xr_gamepad_fill_port1(void) {
     }
 }
 
+/* The Steam Frame's View button switches between the room and the stage's
+ * own sky, in a paused fight only: a stray press mid-fight or in a menu is
+ * dropped. The choice becomes the launcher's Room setting, for the next
+ * launch too. */
+static void xr_view_switch(void) {
+    if (!aurora_xr_take_view_press() || s_poll_frames - s_paused_frame > 2) {
+        return;
+    }
+    if (pc_xr_toggle_mode()) {
+        pc_launcher_save_xr_full_vr(s_xr_mode == 0);
+    }
+}
+
 void pc_xr_poll_control(void) {
+    ++s_poll_frames;
+    xr_view_switch();
     xr_gamepad_fill_port1();
     static const char* path;
     static int frames;

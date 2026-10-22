@@ -2083,6 +2083,15 @@ static std::filesystem::path pc_resources_path() {
 
 extern "C" const char* pc_launcher_selected_disc(void) { return prefs.disc.c_str(); }
 
+extern "C" void pc_launcher_save_xr_full_vr(bool full_vr) {
+    if (config_path.empty() || prefs.xr_full_vr == full_vr)
+        return;
+    prefs.xr_full_vr = full_vr;
+    std::string error;
+    if (!launcher::save_preferences(config_path, prefs, error))
+        SDL_Log("Launcher: %s", error.c_str());
+}
+
 extern "C" int pc_launcher_run(const char* command_line_disc, SDL_Window* window) {
     try {
         std::string error;

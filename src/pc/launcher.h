@@ -10,6 +10,9 @@ int pc_launcher_run(const char* command_line_disc, SDL_Window* window);
 /* The disc pc_launcher_run opened (path or content:// URI); valid after it
  * returned 1. */
 const char* pc_launcher_selected_disc(void);
+/* The Room setting (full VR: the stage's own sky; else the room), switched
+ * in a paused fight: saved for the next launch. */
+void pc_launcher_save_xr_full_vr(bool full_vr);
 void pc_menu_init(SDL_Window* window);
 void pc_menu_update(void);
 void pc_menu_toggle(void);
