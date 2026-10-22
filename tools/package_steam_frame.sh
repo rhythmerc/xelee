@@ -25,7 +25,7 @@ if [[ "$(uname -m)" != aarch64 ]] || ! grep -qs "^ID=steamrt" /etc/os-release; t
     echo "=== Rerunning in ${SDK_IMAGE} (${CONTAINER}) ==="
     exec "${CONTAINER}" run --rm --platform linux/arm64 \
         -u "$(id -u):$(id -g)" -e HOME=/src/build/frame-home -e STEAM_FRAME_IN_CONTAINER=1 \
-        -e FRAME_JOBS -e MELEE_VERSION -e BUILD_DIR \
+        -e FRAME_JOBS -e FRAME_STEAM_AUDIO -e MELEE_VERSION -e BUILD_DIR \
         -v "${ROOT_DIR}:/src" -w /src "${SDK_IMAGE}" tools/package_steam_frame.sh "$@"
 fi
 

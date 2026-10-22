@@ -39,7 +39,8 @@ set(CMAKE_C_COMPILER $(command -v gcc-14 || command -v gcc))
 set(CMAKE_CXX_COMPILER $(command -v g++-14 || command -v g++))
 EOF
 echo "=== Its dependencies ==="
-python3 build/get_dependencies.py --platform linux --architecture arm64
+# It runs from core/build and steps up to core itself.
+(cd build && python3 get_dependencies.py --platform linux --architecture arm64)
 echo "=== libphonon.so ==="
 cmake -S . -B build/melee-linux-arm64 -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="${SRC}/core/build/toolchain_linux_arm64.cmake" \
