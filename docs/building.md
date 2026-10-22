@@ -201,6 +201,20 @@ Two traps, both of which read as "the port is broken on Android":
    (`env: applied <path>` / `env: no <path> (errno N)`), because at that
    point no log sink exists yet.
 
+### Steam Frame
+
+`tools/package_steam_frame.sh` builds `dist/Xelee-SteamFrame-arm64.tar.gz`:
+Linux arm64 with `-DMELEE_STEAM_FRAME=ON` (OpenXR on from the start, the
+headset's launcher, no updater), the melee-xr Dawn fork and Khronos' OpenXR
+loader, in Valve's Steam Linux Runtime 3 (sniper) arm64 SDK, pinned by digest.
+Off an arm64 host it reruns itself in that SDK's container (`CONTAINER=podman`
+for podman), which on x86_64 needs arm64 emulation registered with
+binfmt_misc (QEMU; on NixOS `boot.binfmt.emulatedSystems = [ "aarch64-linux" ]`).
+A first build there takes a few hours, mostly Dawn; `build/frame-ccache` keeps
+later ones short. `FRAME_JOBS` bounds the parallel jobs (QEMU's compilers are
+memory-hungry). The script fails if the game needs a newer glibc than the
+runtime's 2.31. docs/steam-frame.md covers installing and testing it.
+
 ### iOS
 
 `tools/build_ios.sh` cross-compiles from Linux with clang/lld, the theos

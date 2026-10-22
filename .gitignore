@@ -15,6 +15,7 @@ docs/*
 !docs/porting-notes.md
 !docs/testing.md
 !docs/quest-xr.md
+!docs/steam-frame.md
 !docs/xr-3d-plan.md
 !docs/xr-frame-rate-plan.md
 !docs/xr-stage-grounding-report.md

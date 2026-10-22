@@ -1496,6 +1496,13 @@ cmake -B build/linux-xr-fork -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DAURORA
 AURORA_XR=1 build/linux-xr-fork/melee disc.rvz
 ```
 
+Where the system's OpenXR SDK is older than 1.1.63 (the META raycast types),
+aurora builds Khronos' (`AURORA_OPENXR_PROVIDER`). On a GPU with a single
+graphics queue (RADV) the runtime shares Dawn's (docs/steam-frame.md, "How the
+presenter tells"). `tools/xr_monado_test.py` runs the desktop cases unattended,
+including the Steam Frame's runtime personality (docs/testing.md); the Steam
+Frame's own build is in docs/steam-frame.md.
+
 ## Controls (Touch controllers, port 1)
 
 | Touch | GameCube |
