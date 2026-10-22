@@ -53,10 +53,13 @@ is GPL-3.0-or-later. Details under [License](#license).
 The Steam Frame runs its own build, a native Linux one
 (`Xelee-SteamFrame-arm64.tar.gz`, built by CI): unpack it in your home folder,
 put your disc image in `Games` or `Downloads`, add `xelee.sh` to Steam as a
-non-Steam game, and set the headset to 120 Hz. The room shows through the
-Frame's passthrough; its controllers play with A/B/X/Y and Menu (Start) on the
-right, the D-pad on the left, Z on either shoulder button, and the grips grab.
-[docs/steam-frame.md](docs/steam-frame.md) has the details.
+non-Steam game (or run the package's `add-to-steam.py`), and keep the headset
+at 120 Hz (at other rates the 3D view shakes as you move your head). The room
+shows through the Frame's passthrough; its controllers play with A/B/X/Y and
+Menu (Start) on the right, the D-pad on the left, Z on either shoulder button,
+the triggers click where the laser points, and the grips grab. In a paused
+fight, View (left controller) switches between your room and the stage's own
+sky. [docs/steam-frame.md](docs/steam-frame.md) has the details.
 
 ## AI Disclosure
 

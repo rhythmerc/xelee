@@ -186,14 +186,21 @@ which gives Monado the Steam Frame's SteamVR personality:
   lock off, the layer must report races.
 - **no-room:** Monado shows no passthrough: full VR, whole stages.
 - **frame-sim:** alpha-blend passthrough (every blended frame starts with a
-  projection layer), the Frame's controller profile, scripted D-pad up,
-  shoulder and A presses reaching the pad as Up, Z and A, joints from held
-  controllers not taken for hands, at most 16 swapchains.
+  projection layer, and has no other: SteamVR reprojects only the first), the
+  Frame's controller profile, scripted D-pad up, shoulder and A presses
+  reaching the pad as Up, Z and A, no hand taken for tracked, at most 16
+  swapchains.
 - **frame-shoulder:** a SteamVR that knows only the shoulder buttons' new
   name: the first bindings are refused, the next taken.
+- **frame-launcher:** the Steam Frame build (`MELEE_FRAME_BIN`) from a fresh
+  home: its launcher in the headset finds the disc in `~/Games`, Menu presses
+  Play, and the fight's 3D view is its frames' only projection layer.
+- **frame-view-switch:** View mid-fight does nothing; paused with Start, View
+  switches to full VR and the launcher's settings keep it (`fresh_home`).
 - **pacing-90-unreported**, **pacing-120-unreported**,
   **pacing-granted-90-runs-72:** the display's rate from `xrWaitFrame`'s
-  period where none is reported or the report is wrong.
+  period where none is reported or the report is wrong; a runtime listing one
+  rate is asked for 120 Hz.
 - **placing-capped**, **placing-frame:** the placing hold under a swapchain cap
   of 11 (the limit learned, pictures waiting) and within the Frame's 16.
 

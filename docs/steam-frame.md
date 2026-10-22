@@ -13,13 +13,15 @@ unchanged.
 |---|---|---|
 | The room | `XR_FB_passthrough`'s layer | `XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND` (monochrome cameras) |
 | Controllers | Touch (`oculus/touch_controller`) | its own (`valve/frame_controller_valve`), Touch emulation as a fallback |
-| Hands | tracked, pinches | none: SteamVR's joints come from the held controllers, and are ignored |
-| Display rate | 120 Hz requested | the player's choice in the headset's settings; 120 Hz recommended |
-| GPU queue | a spare one for the runtime | Turnip may offer one; else shared with Dawn |
+| Hands | tracked, pinches | not tracked: hand tracking is off (SteamVR's joints come from the held controllers), the trigger clicks |
+| Display rate | 120 Hz requested | SteamVR's: it picks among 72, 90, 108, 120 and 144 Hz and refuses requests; keep it at 120 Hz |
+| Application SpaceWarp | on (the loop at half the display's rate) | off: SteamVR switched the loop between full and half rate every few frames |
+| GPU queue | a spare one for the runtime | Turnip's emulated second one (`tu_emulate_second_queue`); else shared with Dawn |
 | Swapchains | no cap met | 16 a session: the optional pictures wait their turn |
-| Stage shadow | on the surface found by depth raycasts | on the floor (`XR_EXT_local_floor`), where colour scale/bias is offered |
+| Layers in a fight | the room's, the shadow, the HUD, the 3D view | the 3D view first (the only layer SteamVR reprojects), the HUD above it; no stage shadow |
 | Room lighting capture, boundary hiding, spatial anchors, colour grade | Meta extensions | not offered |
-| Launcher | a 2D panel in Home | on the virtual screen in the headset, driven by the controller |
+| Launcher | a 2D panel in Home | on the virtual screen in the headset: the laser and trigger, or the D-pad and A |
+| Room or sky | the launcher's Room setting | the same, and View (left controller) in a paused fight |
 | Spatial audio | Steam Audio | Steam Audio, if built for linux-arm64 (see Building) |
 
 Streaming from a PC (SteamVR over the Frame's adapter) offers no passthrough
@@ -36,10 +38,16 @@ a target of this build, but the same presenter handles it.
    `~/Games`, `~/Downloads` or `~/Documents`, or beside `xelee.sh`. There is
    no file picker in the headset: the launcher takes the first one it finds,
    and Choose Disc steps through the others.
-4. In Steam, add `xelee.sh` as a non-Steam game and start it from the library.
-5. Set the display to 120 Hz: each of Melee's 60 frames a second then shows
-   for two display frames. At 72 or 90 Hz the game keeps its own 60 Hz timer
-   and the display repeats frames unevenly.
+4. Add it to Steam's library: Steam's *Add a Non-Steam Game*, browsing to
+   `xelee.sh`; or over SSH with Steam stopped (it rewrites its list when it
+   quits), `systemctl --user stop steam; python3 add-to-steam.py; systemctl
+   --user start steam` (what `tools/frame_deploy.sh shortcut` does). Start it
+   from the library.
+5. Keep the display at 120 Hz: each of Melee's 60 frames a second then shows
+   for two display frames. SteamVR's automatic rate moves it among 72, 90,
+   108, 120 and 144 Hz while a game runs and refuses the game's requests (it
+   logs "refused although offered"); at any rate but 120 the game's frames
+   land unevenly on the display's and the 3D view shakes as the head moves.
 
 `melee-env.txt` beside `xelee.sh` takes the same knobs as on the Quest
 (`melee-env.example.txt` lists a few). `MELEE_SKIP_LAUNCHER=1` boots straight
@@ -58,8 +66,10 @@ into the game with the last disc. Logs are in `logs/` (the last ten).
 | Menu (right) | Start |
 | Either grip | Grabs the stage while placing it or paused, or the screen's bar; not Z |
 | Either trigger, laser on the screen | Clicks (A) where it points |
+| View (left), in a paused fight | Switches the room and the stage's own sky (saved as the launcher's Room setting) |
 
-The launcher: the D-pad or left stick moves, A or Menu picks, B goes back.
+The launcher: the laser and trigger, or the D-pad or left stick to move, A or
+Menu to pick, B to go back. View does nothing mid-fight or in menus.
 Placing the stage works as on the Quest (README, Placing the stage), its cards
 naming the Frame's Menu button.
 
@@ -79,9 +89,14 @@ no updater). On an x86_64 machine it runs the SDK's container under QEMU
 `build/frame-ccache`. CI builds it natively on an arm64 runner
 (`.github/workflows/steam-frame.yml`).
 
-Steam Audio ships no linux-arm64 library, so the package has no positional
-audio unless one is built (its CMake supports Linux aarch64) and placed at
+Steam Audio ships no linux-arm64 library: the script builds one from its
+source (`tools/build_steam_audio.sh`, the release's tag; its CMake supports
+Linux aarch64) into
 `build/deps/steamaudio-<version>/steamaudio/lib/linux-arm64/libphonon.so`.
+`FRAME_STEAM_AUDIO=0` skips it, and the package then has no positional audio.
+The libraries the game needs beyond glibc, zlib and the Vulkan loader go in
+`lib/` beside it (the headset's SteamOS lacks OpenSSL 1.1 and curl's GnuTLS
+build, and the arm64 runtime it has installed is the Steam Linux Runtime 4's).
 
 ## Testing
 
@@ -110,10 +125,17 @@ XR thread waited for it and who held it.
 ## How the presenter tells (aurora lib/xr)
 
 - **The room:** `xrEnumerateEnvironmentBlendModes`. With an `XR_FB_passthrough`
-  layer, that; else ALPHA_BLEND, each frame starting with a clear 16x16
-  projection layer (the Frame shows the room only behind one, and menus are
-  quads); else none, and `aurora_xr_passthrough_available` turns false, so
-  the game shows full VR (`src/pc/xr_scene.c`). `AURORA_XR_ROOM=auto|fb|blend|none`.
+  layer, that; else ALPHA_BLEND, each frame starting with a projection layer
+  (the Frame shows the room only behind one): in a fight the 3D view itself,
+  see-through where nothing drew, and in menus (all quads) a clear 16x16 one;
+  else none, and `aurora_xr_passthrough_available` turns false, so the game
+  shows full VR (`src/pc/xr_scene.c`). `AURORA_XR_ROOM=auto|fb|blend|none`.
+- **Layer order:** SteamVR reprojects only a frame's first layer for the head.
+  The 3D view under the clear room layer flickered between three places (60
+  game frames on a 72 Hz display: drawn one to three display frames before);
+  first, it holds (`policy::fight_layer_first`, `AURORA_XR_FIGHT_FIRST`). The
+  HUD goes above it, and the stage's shadow quad, which would cover the stage,
+  is left out.
 - **The queue:** `xr::device_created` after Dawn's device exists. No spare
   queue in Dawn's family: the runtime and the XR thread use Dawn's, and every
   Dawn entry point that can reach it is wrapped at link time to hold a lock
@@ -122,11 +144,31 @@ XR thread waited for it and who held it.
   queue. Before all that, Turnip is asked for its emulated second queue
   (`tu_emulate_second_queue`). `AURORA_XR_SHARED_QUEUE=1` forces sharing.
 - **Pacing:** the reported rate while `xrWaitFrame`'s period agrees with it,
-  else the period: SteamVR can grant 90 Hz and run at 72.
+  else the period: SteamVR can grant 90 Hz and run at 72. A period change
+  counts once it has lasted 12 frames (SteamVR reports a held frame's now and
+  then). A runtime listing one rate is asked for 120 Hz until it refuses one
+  it offers (SteamVR does). Application SpaceWarp is off on SteamVR
+  (`AURORA_XR_APPSW=1` turns it on).
 - **Controllers:** `XR_VALVE_frame_controller_interaction` when offered,
   bindings tried in turn (bumper, then shoulder; then without the D-pad; then
-  without haptics), and each hand's interaction profile followed so a held
-  controller's joints never count as a bare hand.
+  without haptics; the first with the View button), and each hand's
+  interaction profile followed so a held controller's joints never count as a
+  bare hand. Hand tracking is off where the Frame's controllers are offered
+  (`AURORA_XR_HANDS=1`), so the trigger clicks.
 - **Swapchains:** counted; optional ones within `AURORA_XR_MAX_SWAPCHAINS` or
   the count at which the runtime first refused one.
 - **Defaults:** 2x MSAA on tile-based GPUs (the Frame's Adreno, on Linux).
+
+## Tested on
+
+A Steam Frame with SteamOS 0.5.6, SteamVR 2.18.2 and Mesa 26.3's Turnip on
+the Adreno 750 (2026-10-22/23): the launcher on the virtual screen (laser,
+trigger, D-pad), the disc found in `~/Downloads`, menus clicked with the
+trigger, placing with the Frame's cards and grips, fights in the room and in
+full VR, View switching them in a pause, the 3D view steady with both eyes
+at 120 Hz, Turnip's second queue, at most 12 swapchains alive, and the game
+in Steam's library. Not on the headset yet: the 12-frame period settling and
+SpaceWarp off by default (on the desktop harness only). No Quest was at hand:
+its paths are unchanged by construction (each new one is chosen by something
+the Quest's runtime doesn't offer), held by aurora's policy tests' Quest
+cases, and its build compiled (`tools/build_android.sh`'s native library).
