@@ -48,7 +48,7 @@ run)
             while IFS= read -r -d '' kv; do case \"\$kv\" in \
                 DISPLAY=*|WAYLAND_DISPLAY=*|XDG_RUNTIME_DIR=*|DBUS_SESSION_BUS_ADDRESS=*|PULSE_SERVER=*|XR_RUNTIME_JSON=*|STEAM_*|SteamGameId=*) export \"\$kv\";; \
             esac; done < /proc/\$pid/environ; \
-            cd '${DEST}' && nohup ./xelee.sh $* > logs/console.txt 2>&1 &"
+            cd '${DEST}' && mkdir -p logs && nohup ./xelee.sh $* > logs/console.txt 2>&1 &"
     fi
     echo "started on ${HOST}"
     ;;

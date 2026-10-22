@@ -98,10 +98,25 @@ cp "${ROOT_DIR}/platforms/steam-frame/README.txt" "${STAGE}/README.txt"
 cp "${ROOT_DIR}/platforms/linux/melee.png" "${STAGE}/xelee.png"
 chmod +x "${STAGE}/xelee.sh" "${STAGE}/melee"
 
+# The libraries it needs from the SDK go beside it: the headset's SteamOS
+# lacks some (OpenSSL 1.1, curl's GnuTLS build) and has newer sonames of
+# others, and the arm64 runtime it has installed isn't this one. glibc, zlib
+# and the Vulkan loader (the headset's GPU driver) stay the system's.
+LD_LIBRARY_PATH="${STAGE}/lib:${STAGE}/lib/openxr" ldd "${STAGE}/melee" | awk '$3 ~ /^\// {print $1, $3}' |
+    while read -r name path; do
+        case "${name}" in
+        ld-linux* | libc.so.* | libdl.so.* | libm.so.* | libpthread.so.* | librt.so.* | libvulkan.so.* | libz.so.*) ;;
+        *) [[ -e "${STAGE}/lib/${name}" || -e "${STAGE}/lib/openxr/${name}" ]] || cp -L "${path}" "${STAGE}/lib/${name}" ;;
+        esac
+    done
+echo "Bundled: $(ls "${STAGE}/lib" | grep -v '^openxr$' | tr '\n' ' ')"
+
 echo "=== Checking what it needs ==="
 # The Steam Linux Runtime 3 (sniper) has glibc 2.31: nothing may need newer.
-newest="$(objdump -T "${STAGE}/melee" "${STAGE}"/lib/*.so* "${STAGE}"/lib/openxr/*.so* 2>/dev/null |
+shopt -s nullglob
+newest="$(objdump -T "${STAGE}/melee" "${STAGE}"/lib/*.so* "${STAGE}"/lib/openxr/*.so* |
     grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -n1)"
+shopt -u nullglob
 echo "Newest glibc symbol: ${newest}"
 if [[ "$(printf '%s\n' "${newest#GLIBC_}" 2.31 | sort -V | tail -n1)" != 2.31 ]]; then
     echo "error: ${newest} is newer than the Steam Linux Runtime's glibc 2.31" >&2
