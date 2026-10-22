@@ -1491,6 +1491,10 @@ public:
         if (!pc::log_report::can_upload())
             if (auto* e = element("logs-row"))
                 e->SetProperty("display", "none");
+#ifdef MELEE_STEAM_FRAME
+        if (auto* e = element("spacewarp-row"))  // SteamVR runs it unsteadily: off there
+            e->SetProperty("display", "none");
+#endif
 #ifndef MELEE_SPATIAL_AUDIO
         if (auto* e = element("spatial-row"))  // built without Steam Audio
             e->SetProperty("display", "none");
