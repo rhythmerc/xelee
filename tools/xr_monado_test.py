@@ -135,7 +135,8 @@ CASES = {
         what="A rate granted but not run at (SteamVR: 90 granted, 72 shown): the frames' period decides",
         env=dict(FIGHT, **SIM, AURORA_SIM_PERIOD_MS="13.889", AURORA_SIM_REPORTED_HZ="90", AURORA_SIM_RATES="90"),
         frames=600,
-        need=[r"Display at 72\.0 Hz \(the runtime reports 90 Hz", r"keeping the headset's"], forbid=[]),
+        need=[r"Display at 72\.0 Hz \(the runtime reports 90 Hz",
+              r"Display refresh rates offered: 90; (requested 120 Hz|120 Hz refused)"], forbid=[]),
     "placing-capped": dict(
         what="The placing hold under a swapchain cap of 11: the runtime's limit learned, pictures wait, no failure",
         env={"MELEE_BOOT_SCENE": "place", "AURORA_XR_ARENA_AT_HEAD": "1", **FRAME, "AURORA_SIM_MAX_SWAPCHAINS": "11"},
