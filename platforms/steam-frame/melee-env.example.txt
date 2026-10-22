@@ -1,0 +1,18 @@
+# Knobs for Xelee on the Steam Frame, one NAME=VALUE a line, as on the Quest
+# (docs/quest-xr.md lists them). Copy this file to melee-env.txt beside
+# xelee.sh to use it; a variable already set in the environment wins.
+#
+# Log every OpenXR extension the headset offers:
+#AURORA_XR_LOG_EXTENSIONS=1
+#
+# Full VR instead of mixed reality (also the launcher's Room setting):
+#MELEE_XR_MODE=vr
+#
+# Eye resolution, as a fraction of the headset's recommendation:
+#AURORA_XR_EYE_SCALE=1.0
+#
+# Start the fight without placing the stage first:
+#MELEE_XR_PLACE=0
+#
+# Skip the launcher: boot straight into the game with the last disc:
+#XELEE_BOOT=game

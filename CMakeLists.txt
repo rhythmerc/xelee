@@ -35,6 +35,14 @@ set(AURORA_ENABLE_DVD ON CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_CARD ON CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_THP ON CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_RMLUI ON CACHE BOOL "" FORCE)
+# The Steam Frame's own build (tools/package_steam_frame.sh, docs/steam-frame.md):
+# Linux arm64 presenting to the headset through OpenXR from the start, with
+# the headset launcher's layout (no flat-screen settings) and no updater.
+option(MELEE_STEAM_FRAME "Build for the Steam Frame headset: OpenXR on by default, the headset's launcher" OFF)
+if (MELEE_STEAM_FRAME)
+    set(AURORA_ENABLE_OPENXR ON CACHE BOOL "" FORCE)
+    set(AURORA_XR_DEFAULT_ON ON CACHE BOOL "" FORCE)
+endif ()
 if (IOS OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(PNG_SHARED OFF CACHE BOOL "" FORCE)
     set(PNG_STATIC ON CACHE BOOL "" FORCE)
@@ -593,6 +601,11 @@ if (NOT MELEE_STATE_SECTIONS)
     message(FATAL_ERROR "Rollback snapshot sections are required on this platform")
 endif ()
 target_compile_definitions(melee PRIVATE MELEE_STATE_SECTIONS=1)
+if (MELEE_STEAM_FRAME)
+    target_compile_definitions(melee PRIVATE MELEE_STEAM_FRAME=1)
+    # Pages up to 16 KiB, in case the headset's kernel uses them (Android's do).
+    target_link_options(melee PRIVATE -Wl,-z,max-page-size=16384)
+endif ()
 if (NOT WIN32 AND NOT APPLE)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_custom_command(TARGET melee POST_BUILD

@@ -1,0 +1,80 @@
+name: Steam Frame
+
+# Xelee's build for the Valve Steam Frame: Linux arm64, presenting through
+# OpenXR from the start (docs/steam-frame.md). Built in Valve's Steam Linux
+# Runtime 3 (sniper) arm64 SDK, natively on an arm64 runner, so it runs on the
+# headset's SteamOS in the runtime or outside it. Kept as an artifact; releases
+# don't carry it yet.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frame:
+    name: Steam Frame package
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    container:
+      # tools/package_steam_frame.sh's pin.
+      image: registry.gitlab.steamos.cloud/steamrt/sniper/sdk/arm64@sha256:966ad3ef70751b98253f031d22c5b75798ceb9c49612b0a3489fc5f8f58858fc
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/build/frame-ccache
+      CCACHE_MAXSIZE: 3G
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Dawn's pinned commit
+        id: dawn
+        run: echo "ref=$(sed -n 's/.*MELEE_DAWN_REF:-\([0-9a-f]*\)}.*/\1/p' tools/build_android.sh)" >> "$GITHUB_OUTPUT"
+
+      # Dawn from source (the melee-xr fork) with its dependencies, once per
+      # pinned commit, as the Quest build does.
+      - uses: actions/cache@v4
+        with:
+          path: build/dawn-src
+          key: dawn-src-${{ steps.dawn.outputs.ref }}
+
+      - uses: actions/cache@v4
+        with:
+          path: build/frame-ccache
+          key: frame-ccache-${{ steps.dawn.outputs.ref }}-${{ github.sha }}
+          restore-keys: frame-ccache-${{ steps.dawn.outputs.ref }}-
+
+      - name: Build and package
+        run: |
+          ccache --zero-stats
+          tools/package_steam_frame.sh
+          ccache --show-stats
+
+      - name: Unit tests
+        run: |
+          ninja -C build/steam-frame unit_tests launcher_data_test xr_policy_tests
+          ctest --test-dir build/steam-frame -L melee --output-on-failure
+          build/steam-frame/launcher_data_test
+          build/steam-frame/extern/aurora/tests/xr_policy_tests
+
+      - name: Smoke tests (no disc)
+        run: MELEE_BIN=build/steam-frame/xelee/melee python3 tools/smoke_test.py --no-disc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xelee-steam-frame
+          path: dist/Xelee-SteamFrame-arm64.tar.gz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xelee-steam-frame-symbols
+          path: build/steam-frame/melee.debug
+          if-no-files-found: error
