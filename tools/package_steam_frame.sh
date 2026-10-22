@@ -95,8 +95,9 @@ cp -r "${ROOT_DIR}/resources" "${STAGE}/resources"
 cp "${ROOT_DIR}/platforms/steam-frame/xelee.sh" "${STAGE}/xelee.sh"
 cp "${ROOT_DIR}/platforms/steam-frame/melee-env.example.txt" "${STAGE}/melee-env.example.txt"
 cp "${ROOT_DIR}/platforms/steam-frame/README.txt" "${STAGE}/README.txt"
+cp "${ROOT_DIR}/tools/frame_shortcut.py" "${STAGE}/add-to-steam.py"
 cp "${ROOT_DIR}/platforms/linux/melee.png" "${STAGE}/xelee.png"
-chmod +x "${STAGE}/xelee.sh" "${STAGE}/melee"
+chmod +x "${STAGE}/xelee.sh" "${STAGE}/melee" "${STAGE}/add-to-steam.py"
 
 # The libraries it needs from the SDK go beside it: the headset's SteamOS
 # lacks some (OpenSSL 1.1, curl's GnuTLS build) and has newer sonames of

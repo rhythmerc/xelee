@@ -10,6 +10,9 @@
 #                                       shortcut, else directly, in the running
 #                                       Steam client's environment
 #   tools/frame_deploy.sh stop          ends it
+#   tools/frame_deploy.sh shortcut      adds it to Steam's library (a non-Steam
+#                                       game; Steam restarts) and prints its
+#                                       FRAME_APPID
 #   tools/frame_deploy.sh env 'K=V ...' writes melee-env.txt (knobs, one a line)
 #   tools/frame_deploy.sh log           the newest log, as it grows
 #   tools/frame_deploy.sh fetch DIR     the logs, frame dumps (AURORA_XR_DUMP=dumps)
@@ -62,6 +65,13 @@ run)
     ;;
 stop)
     remote "${STOP}"
+    ;;
+shortcut)
+    # Steam stopped meanwhile: it rewrites its list when it quits.
+    remote "systemctl --user stop steam.service; \
+        for i in \$(seq 1 30); do pgrep -x steam >/dev/null || break; sleep 1; done; \
+        python3 '${DEST}/add-to-steam.py' '${DEST}'; r=\$?; \
+        systemctl --user start steam.service; exit \$r"
     ;;
 env)
     printf '%s\n' ${2:-} | remote "cat > '${DEST}/melee-env.txt'"
