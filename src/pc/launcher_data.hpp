@@ -71,7 +71,8 @@ struct Preferences {
     bool ctf_home = true;    // your own flag must be home to score
     bool ctf_slow = true;    // carriers walk and dash slower
     bool ctf_items = false;  // Melee's own item settings, or none
-    bool xr_full_vr = false;   // XR: full VR (whole stages) instead of mixed reality
+    // XR: full VR (whole stages) instead of mixed reality.
+    bool xr_full_vr = false;
     uint64_t install_id = 0;  // random once per install (LAN host election); 0 = not yet
 };
 DiscInfo inspect_disc(const std::string& path);

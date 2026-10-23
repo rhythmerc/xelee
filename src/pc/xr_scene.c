@@ -1377,7 +1377,7 @@ static bool joint_log_due(int grkind, int map_id) {
 static int s_center_grkind = -1;
 static bool s_clip_active;
 
-static int s_xr_mode = -1; /* 1 mixed reality, 0 full VR */
+static int s_xr_mode = -1;  /* 1 mixed reality, 0 full VR */
 static bool s_full_vr_pref; /* the launcher's Room setting */
 static bool s_room_missing; /* the headset can't show the room: full VR */
 
