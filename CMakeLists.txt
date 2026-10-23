@@ -225,8 +225,13 @@ elseif (APPLE)
         set(MELEE_NETWORK_LIBS)
     endif ()
 else ()
-    find_package(OpenSSL COMPONENTS Crypto QUIET)
-    if (OpenSSL_FOUND)
+    # The Steam Frame's package ships no OpenSSL (builtin SHA-1, as on macOS):
+    # the SDK's is 1.1, which the headset's SteamOS lacks, and OpenSSL 1.1's
+    # licence doesn't go with the GPL's in a binary distribution.
+    if (NOT MELEE_STEAM_FRAME)
+        find_package(OpenSSL COMPONENTS Crypto QUIET)
+    endif ()
+    if (OpenSSL_FOUND AND NOT MELEE_STEAM_FRAME)
         set(MELEE_CRYPTO_LIBS OpenSSL::Crypto)
         add_compile_definitions(MELEE_USE_OPENSSL)
     else ()

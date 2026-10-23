@@ -95,8 +95,11 @@ Linux aarch64) into
 `build/deps/steamaudio-<version>/steamaudio/lib/linux-arm64/libphonon.so`.
 `FRAME_STEAM_AUDIO=0` skips it, and the package then has no positional audio.
 The libraries the game needs beyond glibc, zlib and the Vulkan loader go in
-`lib/` beside it (the headset's SteamOS lacks OpenSSL 1.1 and curl's GnuTLS
-build, and the arm64 runtime it has installed is the Steam Linux Runtime 4's).
+`lib/` beside it (the headset's SteamOS lacks curl's GnuTLS build, and the arm64
+runtime it has installed is the Steam Linux Runtime 4's). No OpenSSL: the disc
+check's SHA-1 is the game's own here, as on macOS and the Quest (the SDK's
+OpenSSL is 1.1, which the headset lacks and whose licence doesn't go with the
+GPL's); the script fails if anything links it again.
 
 ## Testing
 

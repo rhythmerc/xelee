@@ -100,9 +100,9 @@ cp "${ROOT_DIR}/platforms/linux/melee.png" "${STAGE}/xelee.png"
 chmod +x "${STAGE}/xelee.sh" "${STAGE}/melee" "${STAGE}/add-to-steam.py"
 
 # The libraries it needs from the SDK go beside it: the headset's SteamOS
-# lacks some (OpenSSL 1.1, curl's GnuTLS build) and has newer sonames of
-# others, and the arm64 runtime it has installed isn't this one. glibc, zlib
-# and the Vulkan loader (the headset's GPU driver) stay the system's.
+# lacks some (curl's GnuTLS build) and has newer sonames of others, and the
+# arm64 runtime it has installed isn't this one. glibc, zlib and the Vulkan
+# loader (the headset's GPU driver) stay the system's.
 LD_LIBRARY_PATH="${STAGE}/lib:${STAGE}/lib/openxr" ldd "${STAGE}/melee" | awk '$3 ~ /^\// {print $1, $3}' |
     while read -r name path; do
         case "${name}" in
@@ -111,6 +111,12 @@ LD_LIBRARY_PATH="${STAGE}/lib:${STAGE}/lib/openxr" ldd "${STAGE}/melee" | awk '$
         esac
     done
 echo "Bundled: $(ls "${STAGE}/lib" | grep -v '^openxr$' | tr '\n' ' ')"
+# No OpenSSL: the game uses its builtin SHA-1 here (CMakeLists.txt), and
+# OpenSSL 1.1's licence doesn't go with the GPL's in a binary distribution.
+if compgen -G "${STAGE}/lib/libcrypto.so*" >/dev/null || compgen -G "${STAGE}/lib/libssl.so*" >/dev/null; then
+    echo "error: OpenSSL in the package (lib/): something links it again" >&2
+    exit 1
+fi
 
 echo "=== Checking what it needs ==="
 # The Steam Linux Runtime 3 (sniper) has glibc 2.31: nothing may need newer.
