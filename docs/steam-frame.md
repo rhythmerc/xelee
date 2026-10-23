@@ -167,8 +167,8 @@ trigger, D-pad), the disc found in `~/Downloads`, menus clicked with the
 trigger, placing with the Frame's cards and grips, fights in the room and in
 full VR, View switching them in a pause, the 3D view steady with both eyes
 at 120 Hz, Turnip's second queue, at most 12 swapchains alive, and the game
-in Steam's library. Not on the headset yet: the 12-frame period settling and
-SpaceWarp off by default (on the desktop harness only). No Quest was at hand:
+started from Steam's library, with the 12-frame period settling and SpaceWarp
+off by default. No Quest was at hand:
 its paths are unchanged by construction (each new one is chosen by something
 the Quest's runtime doesn't offer), held by aurora's policy tests' Quest
 cases, and its build compiled (`tools/build_android.sh`'s native library).
