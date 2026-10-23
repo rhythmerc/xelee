@@ -57,16 +57,6 @@ jobs:
           tools/package_steam_frame.sh
           ccache --show-stats
 
-      - name: Unit tests
-        run: |
-          ninja -C build/steam-frame unit_tests launcher_data_test xr_policy_tests
-          ctest --test-dir build/steam-frame -L melee --output-on-failure
-          build/steam-frame/launcher_data_test
-          build/steam-frame/extern/aurora/tests/xr_policy_tests
-
-      - name: Smoke tests (no disc)
-        run: MELEE_BIN=build/steam-frame/xelee/melee python3 tools/smoke_test.py --no-disc
-
       - uses: actions/upload-artifact@v4
         with:
           name: xelee-steam-frame
@@ -78,3 +68,15 @@ jobs:
           name: xelee-steam-frame-symbols
           path: build/steam-frame/melee.debug
           if-no-files-found: error
+
+      # What this build adds: the launcher's headset logic, the presenter's
+      # decisions, and the package starting at all. The whole melee suite is
+      # the Build workflow's (its desktop tests aren't the Frame's).
+      - name: Unit tests
+        run: |
+          ninja -C build/steam-frame launcher_data_test xr_policy_tests
+          build/steam-frame/launcher_data_test
+          build/steam-frame/extern/aurora/tests/xr_policy_tests
+
+      - name: Smoke tests (no disc)
+        run: MELEE_BIN=build/steam-frame/xelee/melee python3 tools/smoke_test.py --no-disc
