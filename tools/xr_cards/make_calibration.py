@@ -295,9 +295,10 @@ def text_pieces():
 
 
 # The intro's clip: footage/calibration-look.mp4, 2.5 s of the user's
-# headset recording (2026-10-25, 4.3-6.8 s of calibration-example.mp4: the
-# look up from the door to the ceiling light, its ring, the count going to
-# 1), played forward and looped at CLIP_FPS, CLIP_SIZE square a frame. As a
+# headset recording of the restyled step (2026-10-25, 3.5-6.0 s of
+# calibration-example-v2.mp4: the strip at 0, the look up from the door to
+# the ceiling light, its ring, the count going to 1), played forward and
+# looped at CLIP_FPS, CLIP_SIZE square a frame. As a
 # JPEG grid like the placing cards' clips: no decoding as it plays, and a
 # 1.8 x 1.5k texture only while the intro shows.
 CLIP_FPS = 15
