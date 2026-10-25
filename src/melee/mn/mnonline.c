@@ -70,6 +70,9 @@ const char* mnOnline_Label(MenuKind kind, int selection)
     if (kind == MENU_KIND_MAIN && selection == SEL_MAIN_ONLINE) {
         return "Online Mode";
     }
+    if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_SOUND) {
+        return "Audio";
+    }
     if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_PLACE) {
         return "Place Stage";
     }
@@ -96,6 +99,9 @@ const char* mnOnline_Description(MenuKind kind, int selection)
 {
     if (kind == MENU_KIND_MAIN && selection == SEL_MAIN_ONLINE) {
         return "Play against other players over the network.";
+    }
+    if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_SOUND) {
+        return "Set the volumes and how the game sounds.";
     }
     if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_PLACE) {
         return slippi_in_descriptions[row_place];

@@ -110,7 +110,7 @@ static u16 mn_803EAE7C[] = {
     0x2, 0x3, 0x4, 0x9, 0xB, 0xC, 0xD, 0x0,
 };
 #ifdef TARGET_PC
-#define MENU_KIND_TABLE_LEN (MENU_KIND_SLIPPI_PAGE + 1)
+#define MENU_KIND_TABLE_LEN (MENU_KIND_SETTINGS_AUDIO + 1)
 #else
 #define MENU_KIND_TABLE_LEN 0x22
 #endif
@@ -308,6 +308,11 @@ static AnimLoopSettings mn_803EAE8C[MENU_KIND_TABLE_LEN][3] = {
         { 3000, 3049, 3020 },
         { 3050, 3099, 3070 },
         { 3100, 3199, 3120 },
+    },
+    { /* MENU_KIND_SETTINGS_AUDIO: Erase Data's, as Controls' */
+        { 4200, 4249, 4220 },
+        { 4250, 4299, 4270 },
+        { 4300, 4399, 4320 },
     },
 #endif
 };
@@ -710,6 +715,13 @@ MenuKindData mn_803EB6B0[MENU_KIND_TABLE_LEN] = {
         NULL,
     },
     { /* MENU_KIND_SLIPPI_PAGE: its own GObjs (mnslippi.c) */
+        NULL,
+        0,
+        NULL,
+        0x01,
+        NULL,
+    },
+    { /* MENU_KIND_SETTINGS_AUDIO: its own GObjs (mnfight.c) */
         NULL,
         0,
         NULL,
@@ -2258,6 +2270,7 @@ int mn_8022C010(int menu_kind, int selection)
     case MENU_KIND_SETTINGS_ERASE:
 #ifdef TARGET_PC
     case MENU_KIND_SETTINGS_FIGHT:
+    case MENU_KIND_SETTINGS_AUDIO:
 #endif
         return 3;
     case MENU_KIND_DATA:
@@ -2850,7 +2863,13 @@ void mn_8022D104(HSD_GObj* gp)
             break;
         case SEL_SETTINGS_SOUND:
             sfxForward();
+#ifdef TARGET_PC
+            /* Our Audio page in its place: the stock one's mono and balance
+             * mean nothing beside the volumes (gm_801603B0). */
+            mnFight_Open(MENU_KIND_SETTINGS_AUDIO);
+#else
             mnSound_8024A09C(1);
+#endif
             HSD_GObjFree(gp);
             break;
         case SEL_SETTINGS_DISPLAY:
@@ -2874,7 +2893,7 @@ void mn_8022D104(HSD_GObj* gp)
             break;
         case SEL_SETTINGS_FIGHT:
             sfxForward();
-            mnFight_Init();
+            mnFight_Open(MENU_KIND_SETTINGS_FIGHT);
             HSD_GObjFree(gp);
             break;
 #endif

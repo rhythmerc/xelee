@@ -305,6 +305,7 @@ set(PC_SOURCES
         src/pc/disc_open.c
         src/pc/fight_map.c
         src/pc/fight_menu.cpp
+        src/pc/audio_menu.cpp
         src/pc/slippi_menu.cpp
         src/pc/rml_picklist.cpp
         src/pc/discfont.c

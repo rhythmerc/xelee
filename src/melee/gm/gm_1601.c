@@ -688,6 +688,12 @@ void gm_801603B0(void)
     s8 temp_r3;
 
     temp_r3 = gmMainLib_8015ED74();
+#ifdef TARGET_PC
+    /* The stock Sound page's music/effects balance, saved on the card, is
+     * not offered (Options > Audio's volumes do it): an old save's is kept
+     * but heard even. */
+    temp_r3 = 0;
+#endif
     temp_r31 = gm_80160244_noinline(temp_r3);
 
     lbAudioAx_80024614(gm_801601C4_noinline(temp_r3));

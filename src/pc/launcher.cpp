@@ -11,6 +11,7 @@
 #include "net_match.h"
 #include "net.h"
 #include "pc.h"
+#include "settings.h"
 #include "spatial_audio.h"
 #include "stage_ambience.h"
 #include "xr_place.h"
@@ -2785,6 +2786,41 @@ extern "C" float pc_get_music_volume(void) {
 }
 extern "C" float pc_get_sfx_volume(void) {
     return prefs.sfx_volume;
+}
+
+/* The in-game Options pages' settings (settings.h). */
+extern "C" void pc_settings_audio(PcAudioSettings* out) {
+    *out = {prefs.volume, prefs.music_volume, prefs.sfx_volume, prefs.mute, prefs.reverb,
+        prefs.spatial_audio, prefs.stage_sounds};
+}
+extern "C" void pc_settings_set_audio(const PcAudioSettings* s) {
+    prefs.volume = std::clamp(s->volume, 0.0f, 1.0f);
+    prefs.music_volume = std::clamp(s->music, 0.0f, 1.0f);
+    prefs.sfx_volume = std::clamp(s->sfx, 0.0f, 1.0f);
+    prefs.mute = s->mute;
+    prefs.reverb = s->reverb;
+    prefs.spatial_audio = s->spatial;
+    prefs.stage_sounds = s->stage_sounds;
+    pc_audio_set_volume(prefs.mute ? 0 : prefs.volume);
+    pc_audio_set_music_volume(prefs.music_volume);
+    pc_audio_set_sfx_volume(prefs.sfx_volume);
+    pc_audio_set_reverb(prefs.reverb);
+    pc_spatial_set_enabled(prefs.spatial_audio);
+    pc_ambience_set_enabled(prefs.stage_sounds);
+    std::string error;
+    if (!launcher::save_preferences(config_path, prefs, error))
+        SDL_Log("settings: not saved: %s", error.c_str());
+}
+extern "C" void pc_settings_audio_defaults(PcAudioSettings* out) {
+    const launcher::Preferences d;
+    *out = {d.volume, d.music_volume, d.sfx_volume, d.mute, d.reverb, d.spatial_audio, d.stage_sounds};
+}
+extern "C" bool pc_settings_spatial_built(void) {
+#ifdef MELEE_SPATIAL_AUDIO
+    return true;
+#else
+    return false;
+#endif
 }
 
 extern "C" const char* pc_get_net_name(void) {
