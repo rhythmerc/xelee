@@ -28,7 +28,8 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 OUT = os.path.join(ROOT, "resources", "xr")
-FONT = os.path.join(ROOT, "resources", "font-bold.ttf")
+FONT = os.path.join(ROOT, "resources", "font-bold.ttf")  # Melee's slanted headings
+TEXT_FONT = os.path.join(ROOT, "resources", "menu-bold.ttf")  # the menus' Noto Sans, as the Options pages
 
 DONE = False  # the Place Stage menu flow: the cards say "done", not "fight"
 
@@ -45,6 +46,7 @@ GRID_BG = (22, 24, 48)
 GRID_LINE = (52, 62, 120)
 LASER = (115, 217, 255)
 WHITE = (250, 250, 250)
+CREAM = (255, 248, 224)  # the Options pages' row names (options-page.rcss)
 
 BUTTONS = {
     # label: (fill, text colour, shape)
@@ -59,6 +61,10 @@ BUTTONS = {
 
 def font(size):
     return ImageFont.truetype(FONT, size * SS)
+
+
+def text_font(size):
+    return ImageFont.truetype(TEXT_FONT, size * SS)
 
 
 def s(v):
@@ -100,9 +106,9 @@ def button(d, x, y, label, size=34):
     return x + w
 
 
-def rich_line(d, x, y, parts, size, fill=WHITE):
+def rich_line(d, x, y, parts, size, fill=CREAM):
     """A line of text with button glyphs: parts are strings or ("btn", label)."""
-    f = font(size)
+    f = text_font(size)
     for p in parts:
         if isinstance(p, tuple):
             x = button(d, x, y, p[1], size=size * 1.25) + s(8)
