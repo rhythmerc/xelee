@@ -348,12 +348,14 @@ static void publish_locked(void) {
         any_active = true;
     }
 
-    /* Clicks on the menus with the headset's lasers (xr_pointer.c). */
+    /* Clicks on the menus with the headset's lasers (xr_pointer.c). Pointing
+     * isn't playing on a device: a pinch or a trigger on a laser leaves the
+     * active device (rumble's, and the one Options > Controls shows) as it
+     * was, so a hand can set the gamepad's controls. */
     const u16 pointer_buttons = pc_xr_pointer_frame(&st);
     if (pointer_buttons != 0) {
         st.button |= pointer_buttons;
         any_active = true;
-        engaged |= 1u << PC_PAD_DEVICE_XR;
     }
     pc_pad_rumble_engaged(engaged);
 
