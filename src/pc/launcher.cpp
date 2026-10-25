@@ -473,7 +473,7 @@ class Launcher final : public Rml::EventListener {
     std::vector<std::string> page_focus() const {
         switch (tab) {
         case 0:
-            return {"display", "sync", "resolution", "xr-resolution", "spacewarp", "xr-foveation", "xr-shadow", "xr-place",
+            return {"display", "sync", "resolution", "xr-resolution", "spacewarp", "xr-foveation", "xr-shadow",
                 "xr-lighting", "aspect",
                 "hud-mode", "aa", "filter-mode", "fps", "custom-textures", "backend",
                 "performance", "defaults-graphics"};
@@ -482,7 +482,7 @@ class Launcher final : public Rml::EventListener {
                 "stage-sounds", "defaults-audio"};
         case 2:
             return {"unlock-all", "frozen-stadium", "free-camera", "ucf", "slippi-fixes",
-                "cstick-1p", "defaults-cheats"};
+                "cstick-1p", "xr-place", "defaults-cheats"};
         case 4:
             return {"auth-sign-in", "auth-sign-out", "auth-email", "auth-password", "net-name",
                 "net-delay"};
@@ -1057,7 +1057,6 @@ class Launcher final : public Rml::EventListener {
             prefs.xr_spacewarp = d.xr_spacewarp;
             prefs.xr_foveation = d.xr_foveation;
             prefs.xr_shadow = d.xr_shadow;
-            prefs.xr_place_hold = d.xr_place_hold;
             prefs.xr_lighting = d.xr_lighting;
             message = "Graphics settings are back to their defaults.";
             if (restart)
@@ -1078,6 +1077,7 @@ class Launcher final : public Rml::EventListener {
             prefs.ucf = d.ucf;
             prefs.slippi_fixes = d.slippi_fixes;
             prefs.cstick_1p = d.cstick_1p;
+            prefs.xr_place_hold = d.xr_place_hold;
             message = "Gameplay settings are back to their defaults.";
         } else if (id == "defaults-launcher") {
             prefs.scale = d.scale;

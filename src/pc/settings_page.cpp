@@ -203,7 +203,7 @@ void Page::refresh() {
         e->SetClass("open", asking_);
     if (!asking_)
         return;
-    // "SpaceWarp and Foveation change when Xelee restarts."
+    // "SpaceWarp and Foveated rendering (FFR) change when Xelee restarts."
     std::vector<const char*> names;
     for (int i = 0; i < n; i++)
         if (rows_[i].pending && rows_[i].pending())

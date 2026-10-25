@@ -54,7 +54,7 @@ struct Preferences {
     bool xr_spacewarp = true;
     // Quest: fixed foveated rendering, 0 (off) to 3 (high): the edges of each
     // eye drawn at a lower density (AuroraConfig::xrFoveation).
-    int xr_foveation = 0;
+    int xr_foveation = 2;
     int xr_lighting = 0; // XR: 0 the game's own; 1 Roomtone, the room's light (needs the headset cameras)
     // Quest, mixed reality: the stage's contact shadow on the real surface.
     bool xr_shadow = true;

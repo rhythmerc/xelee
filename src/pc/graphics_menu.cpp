@@ -167,7 +167,7 @@ std::vector<Row> quest_rows() {
                     &PcGraphicsSettings::xr_spacewarp);
     sw.pending = [] { return s_g.xr_spacewarp != s_launch.xr_spacewarp; };
     v.push_back(sw);
-    Row fov = choice(nullptr, "Foveation",
+    Row fov = choice(nullptr, "Foveated rendering (FFR)",
                      "The edges of each eye drawn at a lower resolution, leaving the GPU more room.",
                      &PcGraphicsSettings::xr_foveation, {0, 1, 2, 3}, {"Off", "Low", "Medium", "High"});
     fov.pending = [] { return s_g.xr_foveation != s_launch.xr_foveation; };

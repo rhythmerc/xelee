@@ -757,7 +757,8 @@ Stadium rock not even 1.0.
 
 ### Foveation
 
-The launcher's Foveation row (AuroraConfig::xrFoveation, Off/Low/Medium/High;
+The Foveated rendering (FFR) row, in the launcher and Options > Graphics
+(AuroraConfig::xrFoveation, Off/Low/Medium/High, Medium by default;
 `AURORA_XR_FOVEATION=0-3` overrides) gives the eyes' pass a fragment density
 map of ours (VK_EXT_fragment_density_map, enabled on Dawn's device in
 `hook_create_device`; the Dawn fork's `RenderPassMultiview::
