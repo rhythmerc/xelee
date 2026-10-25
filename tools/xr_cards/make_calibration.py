@@ -202,11 +202,11 @@ def strip():
     img, d = frame(w, h, "Room Light")
     y = TAB + h // 2 - s(2)
     d.text((s(52), y), "Look at each bright light", font=mfont(34, True), fill=NAME, anchor="lm")
-    label = "LIGHTS FOUND"
-    d.text((w - s(150), TAB + s(40)), label, font=mfont(18, True), fill=LABEL, anchor="mm")
-    # The count goes under the label (slot "count"); "Room changed" under the
-    # line (slot "changed").
-    return img, (w - s(230), TAB + s(52), s(160), s(80)), (s(54), TAB + s(98))
+    # The count goes right of its label, on the line (slot "count", as wide as
+    # two digits); "Room changed" under the line (slot "changed").
+    count = (w - s(52) - s(84), y - s(40), s(84), s(80))
+    d.text((count[0] - s(4), y), "LIGHTS FOUND", font=mfont(22, True), fill=LABEL, anchor="rm")
+    return img, count, (s(54), TAB + s(98))
 
 
 def done():
