@@ -74,7 +74,7 @@ const char* mnOnline_Label(MenuKind kind, int selection)
         return "Place Stage";
     }
     if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_FIGHT) {
-        return "Fight Controls";
+        return "Controls";
     }
     if (kind == MENU_KIND_ONLINE && selection >= 0 &&
         selection < (int) ARRAY_SIZE(online_labels))

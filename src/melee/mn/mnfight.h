@@ -5,9 +5,9 @@
 
 #include <sysdolphin/baselib/forward.h>
 
-/* PC only: Options > Fight Controls (MENU_KIND_SETTINGS_FIGHT), what each
+/* PC only: Options > Controls (MENU_KIND_SETTINGS_FIGHT), what each
  * input does in a fight (src/pc/fight_map.h). An Options screen like Sound:
- * the Options rows leave, the frame's tab says "Fight Controls" (Erase
+ * the Options rows leave, the frame's tab says "Controls" (Erase
  * Data's panel animation, its title swapped for SIS text), and B goes back.
  * The hint box says what the cursor is on. */
 

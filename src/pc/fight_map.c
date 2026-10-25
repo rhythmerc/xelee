@@ -143,7 +143,7 @@ static void save(void) {
         pc_log_line("fight controls: can't write %s", tmp);
         return;
     }
-    fprintf(f, "# Fight Controls: what each input does in a fight (Options > Fight Controls).\n");
+    fprintf(f, "# Controls: what each input does in a fight (Options > Controls).\n");
     for (int d = 0; d < PAD_FIGHT_DEVICE_COUNT; d++) {
         const int n = pc_fight_map_input_count((PADFightDevice) d);
         for (int i = 0; i < n; i++) {

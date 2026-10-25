@@ -250,7 +250,7 @@ static const char* mnFight_PageTitle(MenuKind kind)
 {
     switch (kind) {
     case MENU_KIND_SETTINGS_FIGHT:
-        return "Fight Controls";
+        return "Controls";
     case MENU_KIND_SLIPPI_PAGE:
         return mnSlippi_Title();
     default:
