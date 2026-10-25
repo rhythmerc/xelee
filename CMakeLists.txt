@@ -47,14 +47,31 @@ endif ()
 add_subdirectory(extern/aurora EXCLUDE_FROM_ALL)
 # Slippi's in-app login (src/pc/slippi/slp_user.c): its Firebase API key and
 # GraphQL endpoint, compiled in from the configure environment (CI: repository
-# secrets). Unset, the build has no in-app login unless the runtime
-# environment supplies them.
-set(_slippi_login_defs)
-if (NOT "$ENV{MELEE_SLIPPI_FIREBASE_KEY}" STREQUAL "")
-    list(APPEND _slippi_login_defs "PC_SLIPPI_FIREBASE_KEY_BUILTIN=\"$ENV{MELEE_SLIPPI_FIREBASE_KEY}\"")
+# secrets), else from a local, gitignored slippi-login.env beside this file
+# (NAME=value lines, as the environment would give them). Unset, the build has
+# no in-app login unless the runtime environment supplies them.
+set(_slippi_login_file "${CMAKE_CURRENT_SOURCE_DIR}/slippi-login.env")
+set(_slippi_login_lines)
+if (EXISTS "${_slippi_login_file}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_slippi_login_file}")
+    file(STRINGS "${_slippi_login_file}" _slippi_login_lines REGEX "^[A-Z_]+=")
 endif ()
-if (NOT "$ENV{MELEE_SLIPPI_GRAPHQL_ENDPOINT}" STREQUAL "")
-    list(APPEND _slippi_login_defs "PC_SLIPPI_GRAPHQL_ENDPOINT_BUILTIN=\"$ENV{MELEE_SLIPPI_GRAPHQL_ENDPOINT}\"")
+foreach (_name MELEE_SLIPPI_FIREBASE_KEY MELEE_SLIPPI_GRAPHQL_ENDPOINT)
+    set(_slippi_${_name} "$ENV{${_name}}")
+    if ("${_slippi_${_name}}" STREQUAL "")
+        foreach (_line IN LISTS _slippi_login_lines)
+            if (_line MATCHES "^${_name}=(.*)$")
+                string(STRIP "${CMAKE_MATCH_1}" _slippi_${_name})
+            endif ()
+        endforeach ()
+    endif ()
+endforeach ()
+set(_slippi_login_defs)
+if (NOT "${_slippi_MELEE_SLIPPI_FIREBASE_KEY}" STREQUAL "")
+    list(APPEND _slippi_login_defs "PC_SLIPPI_FIREBASE_KEY_BUILTIN=\"${_slippi_MELEE_SLIPPI_FIREBASE_KEY}\"")
+endif ()
+if (NOT "${_slippi_MELEE_SLIPPI_GRAPHQL_ENDPOINT}" STREQUAL "")
+    list(APPEND _slippi_login_defs "PC_SLIPPI_GRAPHQL_ENDPOINT_BUILTIN=\"${_slippi_MELEE_SLIPPI_GRAPHQL_ENDPOINT}\"")
 endif ()
 if (_slippi_login_defs)
     set_source_files_properties(src/pc/slippi/slp_user.c PROPERTIES COMPILE_DEFINITIONS "${_slippi_login_defs}")
@@ -63,7 +80,7 @@ list(LENGTH _slippi_login_defs _slippi_login_n)
 if (_slippi_login_n EQUAL 2)
     message(STATUS "melee: Slippi in-app login compiled in")
 else ()
-    message(STATUS "melee: Slippi in-app login not compiled in (set MELEE_SLIPPI_FIREBASE_KEY and MELEE_SLIPPI_GRAPHQL_ENDPOINT)")
+    message(STATUS "melee: Slippi in-app login not compiled in (set MELEE_SLIPPI_FIREBASE_KEY and MELEE_SLIPPI_GRAPHQL_ENDPOINT, or put them in slippi-login.env)")
 endif ()
 # Send logs' log drop (src/pc/log_report.cpp, tools/log-drop), compiled in the
 # same way from XELEE_LOGS_URL. Unset, Send logs saves the bundle as a file.
