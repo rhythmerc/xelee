@@ -25,5 +25,8 @@ void mnFight_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, bool leavi
 /* A scene that frees every SIS text (HSD_SisLib_803A5E70) and its panel to
  * build another screen calls this: the title went with them. */
 void mnFight_PanelTitleForget(void);
+/* The menu scene starting: a page left open when the last one ended
+ * (Gameplay's Place stage) went with its GObjs, and its screen is hidden. */
+void mnFight_SceneForget(void);
 
 #endif

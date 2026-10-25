@@ -76,6 +76,9 @@ const char* mnOnline_Label(MenuKind kind, int selection)
     if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_DISPLAY) {
         return "Audio";
     }
+    if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_ERASE) {
+        return "Gameplay";
+    }
     if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_PLACE) {
         return "Place Stage";
     }
@@ -108,6 +111,9 @@ const char* mnOnline_Description(MenuKind kind, int selection)
     }
     if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_DISPLAY) {
         return "Set the volumes and how the game sounds.";
+    }
+    if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_ERASE) {
+        return "Set how fights play, and your saved progress.";
     }
     if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_PLACE) {
         return slippi_in_descriptions[row_place];

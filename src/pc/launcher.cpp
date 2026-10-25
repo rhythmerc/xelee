@@ -2850,6 +2850,31 @@ extern "C" void pc_settings_graphics_at_launch(PcGraphicsSettings* out) {
 extern "C" void pc_settings_graphics_defaults(PcGraphicsSettings* out) {
     *out = graphics_of(launcher::Preferences{});
 }
+static PcGameplaySettings gameplay_of(const launcher::Preferences& p) {
+    return {p.unlock_all, p.frozen_stadium, p.free_camera, p.ucf, p.slippi_fixes, p.cstick_1p,
+        p.xr_place_hold};
+}
+extern "C" void pc_settings_gameplay(PcGameplaySettings* out) {
+    *out = gameplay_of(prefs);
+}
+extern "C" void pc_settings_gameplay_defaults(PcGameplaySettings* out) {
+    *out = gameplay_of(launcher::Preferences{});
+}
+extern "C" void pc_settings_set_gameplay(const PcGameplaySettings* s) {
+    prefs.unlock_all = s->unlock_all;
+    prefs.frozen_stadium = s->frozen_stadium;
+    prefs.free_camera = s->free_camera;
+    prefs.ucf = s->ucf;
+    prefs.slippi_fixes = s->slippi_fixes;
+    prefs.cstick_1p = s->cstick_1p;
+    if (s->place_hold != prefs.xr_place_hold) {
+        prefs.xr_place_hold = s->place_hold;
+        pc_xr_place_set_hold(prefs.xr_place_hold);
+    }
+    std::string error;
+    if (!launcher::save_preferences(config_path, prefs, error))
+        SDL_Log("settings: not saved: %s", error.c_str());
+}
 /* As the F1 menu applies each (PortMenu::action); the rest take effect at
  * the next launch, or are read live (the HUD layout, the FPS counter). */
 extern "C" void pc_settings_set_graphics(const PcGraphicsSettings* s) {

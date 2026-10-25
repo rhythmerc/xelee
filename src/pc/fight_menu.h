@@ -28,6 +28,15 @@ enum {
     PC_FIGHT_MENU_BACK,
 };
 
+/* Where an Options screen asks its page (src/melee/mn/mnfight.c) to go, as
+ * the page polls it each frame. */
+enum {
+    PC_OPTIONS_STAY,
+    PC_OPTIONS_BACK,        /* to the Options list */
+    PC_OPTIONS_ERASE_DATA,  /* Melee's Erase Data page (Gameplay's Clear game progress) */
+    PC_OPTIONS_PLACE_STAGE, /* the stage-placement scene (Gameplay's Place stage) */
+};
+
 void pc_fight_menu_show(bool show);
 /* The page's fade, each frame while shown: 0 gone, 1 shown. Input waits for 1. */
 void pc_fight_menu_presence(float presence);

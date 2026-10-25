@@ -150,7 +150,8 @@ void Page::build() {
            "<button id=\"ask-0\" class=\"ask\" data-ask=\"0\" style=\"left: 70px;\">Restart now</button>"
            "<button id=\"ask-1\" class=\"ask\" data-ask=\"1\" style=\"left: 340px;\">Later</button></div></div>";
     document_->GetElementById("board")->SetInnerRML(rml);
-    cursor_ = 0;
+    cursor_ = resume_ >= 0 && resume_ <= n ? resume_ : 0;
+    resume_ = -1;
     refresh();
 }
 
@@ -244,13 +245,13 @@ void Page::answer(int choice) {
     }
     putOff_ = waiting();
     ask(false);
-    leave_ = true;
+    go_ = PC_OPTIONS_BACK;
 }
 
-bool Page::leaving() {
-    const bool leave = leave_;
-    leave_ = false;
-    return leave;
+int Page::leaving() {
+    const int where = go_;
+    go_ = PC_OPTIONS_STAY;
+    return where;
 }
 
 void Page::changed() {
@@ -270,7 +271,8 @@ void Page::show(bool show) {
         return;
     build();
     shown_ = true;
-    asking_ = leave_ = false;
+    asking_ = false;
+    go_ = PC_OPTIONS_STAY;
     presence_ = 0.f;
     placedPresence_ = -1.f;
     document_->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);

@@ -27,6 +27,7 @@ extern void browser_yield(void);
 #include "pc/pc.h"
 #include "pc/fight_map.h"
 #include "pc/audio_menu.h"
+#include "pc/gameplay_menu.h"
 #include "pc/graphics_menu.h"
 #include "pc/fight_menu.h"
 #include "pc/slippi_menu.h"
@@ -278,6 +279,7 @@ void pc_frame_boundary(void) {
     pc_fight_menu_update();
     pc_audio_menu_update();
     pc_graphics_menu_update();
+    pc_gameplay_menu_update();
     pc_slippi_menu_update();
     /* Nothing draws while the overlay pauses the game, so hold the last
      * frame instead of clearing the EFB to black underneath the menu. */

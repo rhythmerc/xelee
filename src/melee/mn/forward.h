@@ -133,6 +133,9 @@ typedef enum MenuKind {
     /* PC: Options > Graphics, in the stock Sound row's place (the first row
      * shown: Rumble's is hidden). */
     MENU_KIND_SETTINGS_GRAPHICS = 39,
+    /* PC: Options > Gameplay, in the stock Erase Data row's place (Erase
+     * Data and Place Stage are its actions). */
+    MENU_KIND_SETTINGS_GAMEPLAY = 40,
 #endif
 } MenuKind;
 
@@ -226,9 +229,9 @@ typedef enum SettingsMenuSelection {
     SEL_SETTINGS_DISPLAY = 2,
     SEL_SETTINGS_3 = 3, ///< hidden
     SEL_SETTINGS_LANG = 4,
-    SEL_SETTINGS_ERASE = 5,
+    SEL_SETTINGS_ERASE = 5, ///< PC: Gameplay (Erase Data is inside)
 #ifdef TARGET_PC
-    SEL_SETTINGS_PLACE = 6, ///< XR only: the stage-placement scene
+    SEL_SETTINGS_PLACE = 6, ///< hidden on PC: in Gameplay
     SEL_SETTINGS_FIGHT = 7, ///< PC: Fight Controls (src/pc/fight_menu.h)
 #endif
 } SettingsMenuSelection;

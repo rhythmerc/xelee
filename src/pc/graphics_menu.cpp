@@ -213,4 +213,4 @@ extern "C" void pc_graphics_menu_presence(float presence) { s_page.presence(pres
 extern "C" bool pc_graphics_menu_input(int what) { return s_page.input(what); }
 extern "C" const char* pc_graphics_menu_hint(void) { return s_page.hint(); }
 extern "C" void pc_graphics_menu_update(void) { s_page.update(); }
-extern "C" bool pc_graphics_menu_leaving(void) { return s_page.leaving(); }
+extern "C" int pc_graphics_menu_leaving(void) { return s_page.leaving(); }

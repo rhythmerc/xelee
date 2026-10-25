@@ -24,8 +24,9 @@ void pc_graphics_menu_show(bool show);
 void pc_graphics_menu_presence(float presence);
 bool pc_graphics_menu_input(int what);
 const char* pc_graphics_menu_hint(void);
-/* The restart question's Later was picked: the page goes back (once). */
-bool pc_graphics_menu_leaving(void);
+/* Where the page asks to go, PC_OPTIONS_* (fight_menu.h): back after the
+ * restart question's Later. */
+int pc_graphics_menu_leaving(void);
 /* Once a frame (vi.c). */
 void pc_graphics_menu_update(void);
 

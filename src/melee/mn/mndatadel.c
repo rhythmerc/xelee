@@ -8,6 +8,9 @@
 #include "inlines.h"
 #include "mnmain.h"
 #include "mnmainrule.h"
+#ifdef TARGET_PC
+#include "mnfight.h"
+#endif
 #include "types.h"
 #include <melee/gm/gm_1601.h>
 #include <melee/gm/gm_16F1.h>
@@ -694,7 +697,13 @@ void fn_8024F840(HSD_GObj* gobj)
     if (buttons & 0x20) {
         sfxBack();
         mn_804A04F0.entering_menu = zero;
+#ifdef TARGET_PC
+        /* Back in Options > Gameplay, which opened it (Clear game progress). */
+        mnFight_Open(MENU_KIND_SETTINGS_GAMEPLAY);
+        HSD_GObjFree(HSD_GObj_CurrentInvokedProcGObj);
+#else
         mn_80229894(4, 5U, 3);
+#endif
         return;
     }
     if ((buttons & 0x10) && ((u8*) &user_data->x3)[user_data->x0] == 0) {

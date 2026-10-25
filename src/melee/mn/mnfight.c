@@ -4,8 +4,11 @@
 #include "inlines.h"
 #include "mnmain.h"
 #include "types.h"
+#include "mndatadel.h"
+#include "mnonline.h"
 #include "mnslippi.h"
 #include "pc/audio_menu.h"
+#include "pc/gameplay_menu.h"
 #include "pc/graphics_menu.h"
 #include "pc/fight_menu.h"
 #include <melee/it/forward.h>
@@ -60,7 +63,7 @@ typedef struct PcOptionsPage {
     void (*presence)(float presence);
     bool (*input)(int what);
     const char* (*hint)(void);
-    bool (*leaving)(void); ///< the screen asks to go back (or NULL)
+    int (*leaving)(void); ///< where the screen asks to go, PC_OPTIONS_* (or NULL)
 } PcOptionsPage;
 
 static const PcOptionsPage mnFight_pages[] = {
@@ -71,6 +74,9 @@ static const PcOptionsPage mnFight_pages[] = {
     { MENU_KIND_SETTINGS_GRAPHICS, SEL_SETTINGS_SOUND, "Graphics", "Set the resolution and picture quality.",
       pc_graphics_menu_show, pc_graphics_menu_presence, pc_graphics_menu_input, pc_graphics_menu_hint,
       pc_graphics_menu_leaving },
+    { MENU_KIND_SETTINGS_GAMEPLAY, SEL_SETTINGS_ERASE, "Gameplay", "Set how fights play, and your saved progress.",
+      pc_gameplay_menu_show, pc_gameplay_menu_presence, pc_gameplay_menu_input, pc_gameplay_menu_hint,
+      pc_gameplay_menu_leaving },
 };
 
 static const PcOptionsPage* mnFight_Page(MenuKind kind)
@@ -225,6 +231,7 @@ static void mnFight_Think(HSD_GObj* gobj)
 {
     const PcOptionsPage* page = mnFight_open;
     u64 events;
+    int where;
 
     if (mn_804D6BC8.cooldown != 0) {
         Menu_DecrementAnimTimer();
@@ -233,7 +240,7 @@ static void mnFight_Think(HSD_GObj* gobj)
     events = Menu_GetAllInputs();
     /* The screen takes the menus' input; B with nothing to back out of
      * leaves the page, as does the screen's own asking (Graphics' restart
-     * question's Later). */
+     * question's Later), which can also go on to a stock page or scene. */
     if (events & MenuInput_Up) {
         page->input(PC_FIGHT_MENU_UP);
     } else if (events & MenuInput_Down) {
@@ -245,9 +252,21 @@ static void mnFight_Think(HSD_GObj* gobj)
     } else if (events & MenuInput_Confirm) {
         page->input(PC_FIGHT_MENU_CONFIRM);
     }
-    if (((events & MenuInput_Back) && !page->input(PC_FIGHT_MENU_BACK)) ||
-        (page->leaving != NULL && page->leaving()))
-    {
+    where = page->leaving != NULL ? page->leaving() : PC_OPTIONS_STAY;
+    switch (where) {
+    case PC_OPTIONS_ERASE_DATA:
+        mn_804A04F0.entering_menu = 1;
+        mnDataDel_80250170();
+        HSD_GObjFree(gobj);
+        return;
+    case PC_OPTIONS_PLACE_STAGE:
+        page->show(false); /* the scene ends under it */
+        mnOnline_PlaceFromOptions();
+        return;
+    default:
+        break;
+    }
+    if (where == PC_OPTIONS_BACK || ((events & MenuInput_Back) && !page->input(PC_FIGHT_MENU_BACK))) {
         sfxBack();
         mn_804A04F0.entering_menu = 0;
         mn_80229894(MENU_KIND_SETTINGS, page->row, 3);
@@ -417,4 +436,16 @@ void mnFight_PanelTitleForget(void)
 {
     mnFight_title = NULL;
     mnFight_titleHidden = false;
+}
+
+void mnFight_SceneForget(void)
+{
+    size_t i;
+
+    for (i = 0; i < ARRAY_SIZE(mnFight_pages); i++) {
+        mnFight_pages[i].show(false);
+    }
+    mnFight_gobj = NULL;
+    mnFight_open = NULL;
+    mnFight_PanelTitleForget();
 }

@@ -57,8 +57,14 @@ public:
     bool input(int what);
     const char* hint();
     void update();
-    // The restart question's Later was picked: go back, once.
-    bool leaving();
+    // Where the page asks to go, PC_OPTIONS_* (fight_menu.h), once: back
+    // after the restart question's Later, or an action's (go).
+    int leaving();
+    // The next showing opens on the row that went (back from where it went).
+    void go(int where) {
+        go_ = where;
+        resume_ = cursor_;
+    }
 
     void ProcessEvent(Rml::Event& event) override;
 
@@ -94,7 +100,8 @@ private:
     bool asking_ = false;
     int askCursor_ = 0;
     std::string putOff_;
-    bool leave_ = false, restarting_ = false;
+    int go_ = 0, resume_ = -1;
+    bool restarting_ = false;
 };
 
 } // namespace pc::settings
