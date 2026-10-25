@@ -36,6 +36,10 @@ void gmOnline_SetModeAfterPlace(int mode);
  * Taken (and cleared) by the menu as it comes back. */
 void gmOnline_SetPlaceFromOptions(bool from_options);
 bool gmOnline_TakePlaceFromOptions(void);
+/* B in the placement scene's room light calibration, asked for by a fight
+ * mode: that mode (a GameModeKind), for the menu to come back as from it
+ * (its menu, its row lit), else -1. Taken (and cleared) by the menu. */
+int gmOnline_TakeCancelledMode(void);
 
 /* The online CSS's status text (src/melee/mn/mnonlinecss.c), drawn by the
  * Slippi flow's state in gmonlinemode.c. */

@@ -879,17 +879,38 @@ bool gmOnline_TakePlaceFromOptions(void)
     return r;
 }
 
+static int cancelled_mode = -1;
+
+int gmOnline_TakeCancelledMode(void)
+{
+    const int r = cancelled_mode;
+    cancelled_mode = -1;
+    return r;
+}
+
 void onEnterPlace(GameModeState* state)
 {
     pc_log_line("online: stage placement scene");
     gm_vs_place_dummy = true;
-    pc_xr_place_dummy_start();
-    gmVsMode_PlaceDummyEnter(state);
+    gmVsMode_PlaceDummyEnter(state); /* starts the placing (pc_xr_place_dummy_start), once */
 }
 
 void onExitPlace(UNUSED GameModeState* state)
 {
     gm_vs_place_dummy = false;
+    if (pc_xr_place_take_cancelled()) {
+        /* B in the room light calibration: back to the menu that asked,
+         * nothing started; it asks again next time (src/pc/xr_calibrate.h). */
+        if (mode_after_place >= 0) {
+            cancelled_mode = mode_after_place;
+            mode_after_place = -1;
+        } else if (kind_after_place != ONLINE_KIND_PLACE) {
+            online_kind = kind_after_place; /* the menu's row for Unranked, Direct or LAN */
+            kind_after_place = ONLINE_KIND_PLACE;
+        }
+        gm_ChangeGameModeAfterCurrentScene(GM_MENU);
+        return;
+    }
     if (mode_after_place >= 0) {
         const int mode = mode_after_place; /* straight on to VS, 1P... */
         mode_after_place = -1;
@@ -909,6 +930,10 @@ void gmOnline_SetPlaceFromOptions(UNUSED bool from_options) {}
 bool gmOnline_TakePlaceFromOptions(void)
 {
     return false;
+}
+int gmOnline_TakeCancelledMode(void)
+{
+    return -1;
 }
 #endif
 

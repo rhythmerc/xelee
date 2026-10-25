@@ -13,6 +13,7 @@
 
 #include "pc/net_match.h"
 #include "pc/slippi/slp_user.h"
+#include "pc/xr_calibrate.h"
 #include "pc/xr_place.h"
 
 /* Main Menu > Online Mode. Each entry selects its GM_ONLINE lobby mode. The
@@ -132,13 +133,21 @@ static void enterOnline(OnlineKind kind)
     gm_801A4B60();
 }
 
-/* Unranked, Direct or LAN with a headset presenting places the stage first
- * if Place Stage hasn't run this launch, even with a stage spot found in the
- * room: online there is no hold before each fight, so this is the player's
- * only chance (src/pc/xr_place.h). Then it goes on to the mode. */
+/* Unranked, Direct or LAN with a headset presenting calibrates the room
+ * light first, once a launch with Roomtone (src/pc/xr_calibrate.h), and
+ * places the stage if Place Stage hasn't run this launch, even with a stage
+ * spot found in the room: online there is no hold before each fight, so
+ * this is the player's only chance (src/pc/xr_place.h). Then it goes on to
+ * the mode. */
 static void enterAfterPlacing(OnlineKind kind)
 {
-    if (pc_xr_place_needed_online()) {
+    const bool calibrate = pc_xr_calibrate_needed();
+    const bool place = pc_xr_place_needed_online();
+    if (calibrate || place) {
+        pc_xr_place_plan(calibrate, place,
+                         place ? "PLACE THE STAGE" :
+                         kind == ONLINE_KIND_UNRANKED ? "UNRANKED" :
+                         kind == ONLINE_KIND_DIRECT ? "DIRECT" : "LAN");
         gmOnline_SetKindAfterPlace(kind);
         enterOnline(ONLINE_KIND_PLACE);
         return;
@@ -148,6 +157,13 @@ static void enterAfterPlacing(OnlineKind kind)
 
 void mnOnline_PlaceFromOptions(void)
 {
+    gmOnline_SetPlaceFromOptions(true);
+    enterOnline(ONLINE_KIND_PLACE);
+}
+
+void mnOnline_CalibrateFromOptions(void)
+{
+    pc_xr_place_plan(true, false, "BACK TO OPTIONS");
     gmOnline_SetPlaceFromOptions(true);
     enterOnline(ONLINE_KIND_PLACE);
 }

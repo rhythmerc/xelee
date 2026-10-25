@@ -326,9 +326,14 @@ static void mnPage_Think(HSD_GObj* gobj)
         HSD_GObjFree(gobj);
         return;
     case PC_SCREEN_GO_PLACE_STAGE:
+    case PC_SCREEN_GO_CALIBRATE:
         mnPage_away = page;
         screen->show(false); /* the scene ends under it */
-        mnOnline_PlaceFromOptions();
+        if (where == PC_SCREEN_GO_CALIBRATE) {
+            mnOnline_CalibrateFromOptions();
+        } else {
+            mnOnline_PlaceFromOptions();
+        }
         return;
     default:
         break;

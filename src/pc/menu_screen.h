@@ -31,6 +31,7 @@ enum {
     PC_SCREEN_GO_BACK,        /* to the Options list */
     PC_SCREEN_GO_ERASE_DATA,  /* Melee's Erase Data page; B there comes back */
     PC_SCREEN_GO_PLACE_STAGE, /* the stage-placement scene; it comes back */
+    PC_SCREEN_GO_CALIBRATE,   /* the room light calibration (that scene's); it comes back */
 };
 
 typedef struct PcMenuScreen {

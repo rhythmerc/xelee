@@ -18,6 +18,7 @@
 #include <melee/mn/mnpage.h>
 #ifdef TARGET_PC
 #include "pc/net_match.h"
+#include "pc/xr_calibrate.h"
 #include "pc/xr_place.h"
 #endif
 #endif
@@ -118,6 +119,16 @@ void onEnter(GameModeState* scene)
     if (previous_mode == GM_CHALLENGER_APPROACH) {
         previous_mode = gm_801737D8();
     }
+#ifdef TARGET_PC
+    /* B in the room light calibration a fight mode asked for: back as from
+     * that mode, its menu with its row lit (src/pc/xr_calibrate.h). */
+    if (previous_mode == GM_ONLINE) {
+        const int cancelled = gmOnline_TakeCancelledMode();
+        if (cancelled >= 0) {
+            previous_mode = (GameModeKind) cancelled;
+        }
+    }
+#endif
     switch (previous_mode) {
     case GM_CLASSIC:
         data->menu_kind = MENU_KIND_REG;
@@ -326,6 +337,43 @@ static bool isFightMode(int mode)
         return false;
     }
 }
+
+/* A fight mode as the room light calibration's done card names what comes
+ * next (resources/xr/calibrate-layout.txt's "next:" pieces). */
+static const char* fightModeName(int mode)
+{
+    switch (mode) {
+    case GM_VS:
+        return "VS. MODE";
+    case GM_TOURNAMENT:
+        return "TOURNAMENT";
+    case GM_CLASSIC:
+        return "CLASSIC";
+    case GM_ADVENTURE:
+        return "ADVENTURE";
+    case GM_ALLSTAR:
+        return "ALL-STAR";
+    case GM_EVENT:
+        return "EVENT MATCH";
+    case GM_TRAINING:
+        return "TRAINING";
+    case GM_TARGET_TEST:
+        return "TARGET TEST";
+    case GM_HOME_RUN_CONTEST:
+        return "HOME-RUN CONTEST";
+    case GM_10MAN_VS:
+    case GM_100MAN_VS:
+    case GM_3MIN_VS:
+    case GM_15MIN_VS:
+    case GM_ENDLESS_VS:
+    case GM_CRUEL_VS:
+        return "MULTI-MAN MELEE";
+    case GM_CAMERA_MODE:
+        return "CAMERA MODE";
+    default:
+        return "SPECIAL MELEE";
+    }
+}
 #endif
 
 void onExit(GameModeState* arg0)
@@ -334,13 +382,20 @@ void onExit(GameModeState* arg0)
 
     if (data != NULL && data->pending_mode < GM_COUNT) {
 #ifdef TARGET_PC
-        /* XR: the first fight mode of a launch with no stage spot places
-         * the stage first (the online mode's placement scene), then goes
-         * on to it (src/pc/xr_place.h). */
-        if (isFightMode(data->pending_mode) && pc_xr_place_needed()) {
-            gmOnline_SetModeAfterPlace(data->pending_mode);
-            gmOnline_SetKind(ONLINE_KIND_PLACE);
-            data->pending_mode = GM_ONLINE;
+        /* XR: the first fight mode of a launch calibrates the room light
+         * (with Roomtone, src/pc/xr_calibrate.h) and, with no stage spot,
+         * places the stage first (the online mode's placement scene), then
+         * goes on to it (src/pc/xr_place.h). */
+        if (isFightMode(data->pending_mode)) {
+            const bool calibrate = pc_xr_calibrate_needed();
+            const bool place = pc_xr_place_needed();
+            if (calibrate || place) {
+                pc_xr_place_plan(calibrate, place,
+                                 place ? "PLACE THE STAGE" : fightModeName(data->pending_mode));
+                gmOnline_SetModeAfterPlace(data->pending_mode);
+                gmOnline_SetKind(ONLINE_KIND_PLACE);
+                data->pending_mode = GM_ONLINE;
+            }
         }
 #endif
         gm_SetPendingGameMode(data->pending_mode);

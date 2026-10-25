@@ -4,7 +4,9 @@
  * pc_graphics_screen (menu_screen.h). On the Quest: the eyes' resolution,
  * SpaceWarp, foveation, custom textures, the stage's shadow and the
  * lighting; on a screen: the window, sync, resolution, aspect, HUD, FPS
- * counter, anti-aliasing, post-processing, textures and the backend. What
+ * counter, anti-aliasing, post-processing, textures and the backend. The
+ * lighting's Calibrate room light runs the room light calibration again
+ * (src/pc/xr_calibrate.h) and comes back. What
  * only applies at launch (SpaceWarp, foveation, anti-aliasing, the backend)
  * says so until then, and leaving the page offers to restart. Rows on the
  * Options pages' engine (settings_page.hpp), in the native page of
@@ -12,8 +14,11 @@
  */
 #include "settings.h"
 #include "settings_page.hpp"
+#include "xr_calibrate.h"
+#include "xr_place.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -26,6 +31,8 @@ using pc::settings::Row;
 PcGraphicsSettings s_g, s_launch;
 
 void save() { pc_settings_set_graphics(&s_g); }
+
+pc::settings::Page& page();
 
 Row toggle(const char* group, const char* name, const char* hint, bool PcGraphicsSettings::*field) {
     Row r;
@@ -119,6 +126,35 @@ Row lighting() {
     return r;
 }
 
+// Calibrate room light: the calibration again, Roomtone only; beside it
+// this launch's result. Restore defaults leaves it be.
+Row calibrate() {
+    Row r;
+    r.name = "Calibrate room light";
+    r.hint = "Look at your room's bright lights again. Worth doing when the light changes, like after dark.";
+    r.kind = Kind::Action;
+    r.get = [] { return 0; };
+    r.set = [](int) { page().go(PC_SCREEN_GO_CALIBRATE); };
+    r.label = [](int) { return std::string("Start"); };
+    r.available = [] { return s_g.xr_lighting == 1 && pc_xr_place_available(); };
+    r.note = []() -> const char* {
+        if (s_g.xr_lighting != 1)
+            return "";
+        static char text[24];
+        const int n = pc_xr_calibrate_result();
+        if (n < 0)
+            return "NOT YET";
+        if (n == 0)
+            return "NO LIGHT";
+        std::snprintf(text, sizeof text, n == 1 ? "%d LIGHT" : "%d LIGHTS", n);
+        return text;
+    };
+    r.hint_now = []() -> const char* {
+        return s_g.xr_lighting != 1 ? "Roomtone only. Pick Roomtone above first." : nullptr;
+    };
+    return r;
+}
+
 std::vector<Row> quest_rows() {
     std::vector<Row> v;
     Row res = choice("PICTURE", "Resolution",
@@ -144,6 +180,7 @@ std::vector<Row> quest_rows() {
     Row light = lighting();
     light.group = nullptr;
     v.push_back(light);
+    v.push_back(calibrate());
     return v;
 }
 
@@ -212,6 +249,8 @@ std::vector<Row> rows() {
 }
 
 pc::settings::Page s_page("options-page.rml", rows);
+
+pc::settings::Page& page() { return s_page; }
 
 } // namespace
 

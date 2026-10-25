@@ -1,0 +1,44 @@
+slot count 790 52 160 100
+slot changed 46 110 0 0
+slot found 40 150 920 80
+slot next 40 270 920 80
+piece 0 0 69 57 big-0
+piece 69 0 39 46 small-0
+piece 108 0 69 56 big-1
+piece 177 0 39 45 small-1
+piece 216 0 69 57 big-2
+piece 285 0 39 46 small-2
+piece 324 0 69 57 big-3
+piece 393 0 39 46 small-3
+piece 432 0 69 56 big-4
+piece 501 0 39 45 small-4
+piece 540 0 69 57 big-5
+piece 609 0 39 46 small-5
+piece 648 0 69 57 big-6
+piece 717 0 39 46 small-6
+piece 756 0 69 56 big-7
+piece 825 0 39 45 small-7
+piece 864 0 69 57 big-8
+piece 933 0 39 46 small-8
+piece 0 57 69 57 big-9
+piece 69 57 39 46 small-9
+piece 108 57 273 57 light-found
+piece 381 57 300 57 lights-found
+piece 0 114 386 39 changed
+piece 386 114 474 38 next:PLACE THE STAGE
+piece 0 153 474 38 next:BACK TO OPTIONS
+piece 474 153 314 38 next:VS. MODE
+piece 0 191 394 38 next:TOURNAMENT
+piece 394 191 428 38 next:SPECIAL MELEE
+piece 0 229 296 38 next:CLASSIC
+piece 296 229 361 38 next:ADVENTURE
+piece 657 229 314 38 next:ALL-STAR
+piece 0 267 396 38 next:EVENT MATCH
+piece 396 267 312 38 next:TRAINING
+piece 0 305 386 38 next:TARGET TEST
+piece 386 305 518 38 next:HOME-RUN CONTEST
+piece 0 343 474 38 next:MULTI-MAN MELEE
+piece 474 343 413 38 next:CAMERA MODE
+piece 0 381 344 38 next:UNRANKED
+piece 344 381 272 38 next:DIRECT
+piece 616 381 212 37 next:LAN

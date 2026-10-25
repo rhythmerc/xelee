@@ -20,6 +20,7 @@
 #include <dolphin/ai.h>
 #include "pc/pc.h"
 #include "pc/music_stream.h"
+#include "pc/room_chime.h"
 #include "pc/spatial_audio.h"
 #include "pc/stage_ambience.h"
 #include "pc/stage_mix.h"
@@ -782,6 +783,8 @@ static void render_frame(float* out) {
     } else if (pc_spatial_bypassed()) {
         pc_ambience_mix(out, AX_FRAME, AX_RATE);
     }
+    /* XR: the room light calibration's chimes, at the lights (pc/room_chime.h). */
+    pc_room_chime_mix(out, AX_FRAME);
     pc_spatial_frame_end(out);
 
     /* 3. Schroeder reverb aux effects execute under audio_lock so
