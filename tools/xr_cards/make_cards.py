@@ -205,8 +205,6 @@ def card(w, h, title, picture, lines):
     # The title: a gold pill with black text, like Melee's selected item.
     pill_h = s(56)
     d.rounded_rectangle((s(16), s(16), w - s(16), s(16) + pill_h), radius=pill_h // 2, fill=GOLD)
-    d.rounded_rectangle((s(16), s(16) + pill_h - s(10), w - s(16), s(16) + pill_h), radius=s(5), fill=GOLD_DARK)
-    d.rounded_rectangle((s(16), s(16), w - s(16), s(16) + pill_h - s(6)), radius=pill_h // 2, fill=GOLD)
     italic_text(img, (w // 2 - font(32).getlength(title) // 2, s(16) + pill_h * 0.72), title, 32, (16, 12, 4))
     # The picture.
     px, py = s(20), s(16) + pill_h + s(14)
