@@ -1,5 +1,6 @@
 #include "gmscene.h"
 #ifdef TARGET_PC
+#include "pc/frame_probe.h"
 #include "pc/net.h"
 #include "pc/pc.h"
 #include "pc/slp.h"
@@ -325,7 +326,17 @@ static bool gm_RunSimTick(void (*on_frame)(void), struct gm_80479D58_t* temp_r25
     if (DbLevel >= DbLKind_DebugRom) {
         db_CheckScreenshot();
     }
+#ifdef TARGET_PC
+    {
+        const unsigned long long start = pc_frame_probe_on ? pc_frame_probe_now() : 0;
+        lbAudioAx_80027DF8();
+        if (pc_frame_probe_on) {
+            pc_frame_probe_audio(start);
+        }
+    }
+#else
     lbAudioAx_80027DF8();
+#endif
     if (temp_r25->unk_10.pre_gobj_proc != NULL) {
         temp_r25->unk_10.pre_gobj_proc();
     }
@@ -335,7 +346,13 @@ static bool gm_RunSimTick(void (*on_frame)(void), struct gm_80479D58_t* temp_r25
     HSD_GObj_RunProcs();
 #ifdef TARGET_PC
     pc_slp_tick_end(temp_r25->unk_10.unk_28);
-    pc_ambience_tick(temp_r25->unk_10.unk_28);
+    {
+        const unsigned long long start = pc_frame_probe_on ? pc_frame_probe_now() : 0;
+        pc_ambience_tick(temp_r25->unk_10.unk_28);
+        if (pc_frame_probe_on) {
+            pc_frame_probe_audio(start);
+        }
+    }
 #endif
     if (temp_r25->unk_0 != -2) {
         temp_r25->unk_0++;
@@ -401,6 +418,9 @@ void gm_801A4D34(void (*on_frame)(void), GameSceneInfo* info)
 #endif
 
     while (temp_r25->unk_C == 0) {
+#ifdef TARGET_PC
+        pc_frame_probe_begin();
+#endif
         hsd_80392E80();
         gmMainLib_8046B0F0.xC = false;
 
@@ -413,6 +433,9 @@ void gm_801A4D34(void (*on_frame)(void), GameSceneInfo* info)
 #endif
         }
         lb_800195D0();
+#ifdef TARGET_PC
+        pc_frame_probe_ready();
+#endif
 
         if (HSD_PadGetResetSwitch()) {
             gmMainLib_8046B0F0.resetting = true;
@@ -488,6 +511,7 @@ void gm_801A4D34(void (*on_frame)(void), GameSceneInfo* info)
         }
 
 #ifdef TARGET_PC
+        pc_frame_probe_sim_end(i);
         pc_net_render_audit(false);
 #endif
         lb_800195D0();
@@ -495,6 +519,9 @@ void gm_801A4D34(void (*on_frame)(void), GameSceneInfo* info)
         GXInvalidateTexAll();
         HSD_StartRender(HSD_RP_SCREEN);
         HSD_GObj_80390FC0();
+#ifdef TARGET_PC
+        pc_frame_probe_drawn();
+#endif
         HSD_Init_803755A8();
         HSD_PerfSetDrawTime();
         HSD_VICopyXFBAsync(HSD_RP_SCREEN);

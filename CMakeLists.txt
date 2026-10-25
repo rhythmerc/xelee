@@ -324,6 +324,7 @@ set(PC_SOURCES
         src/pc/slp.c
         src/pc/slp_play.c
         src/pc/spatial_audio.c
+        src/pc/frame_probe.c
         src/pc/stage_ambience.c
         src/pc/stage_mix.c
         src/pc/slp_format.c

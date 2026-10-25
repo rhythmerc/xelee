@@ -32,6 +32,7 @@ static void pc_mark_link(int link)
 #include "gobjproc.h"
 #include "lobj.h"
 #ifdef TARGET_PC
+#include "pc/frame_probe.h"
 #include "pc/spatial_audio.h"
 #endif
 
@@ -127,8 +128,16 @@ void HSD_GObj_RunProcs(void)
                     /* Sounds this proc starts come from its fighter or
                      * item (pc/spatial_audio.h; output only). */
                     pc_spatial_proc(gobj);
-#endif
+                    if (pc_frame_probe_on) {
+                        const unsigned long long start = pc_frame_probe_now();
+                        proc->on_invoke(proc->gobj);
+                        pc_frame_probe_proc((const void*) proc->on_invoke, gobj->p_link, start);
+                    } else {
+                        proc->on_invoke(proc->gobj);
+                    }
+#else
                     proc->on_invoke(proc->gobj);
+#endif
 #ifdef TARGET_PC
                     pc_spatial_proc(NULL);
 #endif
@@ -171,7 +180,17 @@ static inline void render_gobj(HSD_GObj* cur, int i)
 {
     HSD_GObj* saved = HSD_GObj_804D7814;
     HSD_GObj_804D7814 = cur;
+#ifdef TARGET_PC
+    if (pc_frame_probe_on) {
+        const unsigned long long start = pc_frame_probe_now();
+        cur->render_cb(cur, i);
+        pc_frame_probe_render((const void*) cur->render_cb, cur->gx_link, start);
+    } else {
+        cur->render_cb(cur, i);
+    }
+#else
     cur->render_cb(cur, i);
+#endif
     HSD_GObj_804D7814 = saved;
 }
 
