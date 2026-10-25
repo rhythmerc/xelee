@@ -108,25 +108,38 @@ static const struct {
  * MELEE_SPATIAL_AUDIO_STATS; made up so an A/B compares placement, not level. */
 #define SP_MAKEUP 1.15f
 
-static int s_on = -1;
-static bool s_pref = true; /* the launcher's Audio setting */
+static int s_forced = -1;  /* MELEE_SPATIAL_AUDIO: 1 on, 0 off, -1 the setting */
+static bool s_pref = true; /* the Audio setting; read on any thread (__atomic) */
+static bool s_ready;       /* audio thread: the Steam Audio objects are made */
 
 void pc_spatial_set_enabled(bool on) {
-    s_pref = on;
+    __atomic_store_n(&s_pref, on, __ATOMIC_RELAXED);
 }
 
-/* MELEE_SPATIAL_AUDIO, when set, overrides the setting. Decided once, at the
- * first sound (AXInit): the Steam Audio objects exist only if it was on. */
-static bool enabled(void) {
-    if (s_on < 0) {
+static int forced(void) {
+    if (s_forced == -1) {
         const char* v = getenv("MELEE_SPATIAL_AUDIO");
-        s_on = v != NULL && v[0] != '\0' ? v[0] != '0' : s_pref;
+        s_forced = v != NULL && v[0] != '\0' ? v[0] != '0' : -2;
     }
-    return s_on != 0;
+    return s_forced;
+}
+
+/* Whether spatial audio can be on this run: the Steam Audio objects are made
+ * at the first sound (AXInit) unless MELEE_SPATIAL_AUDIO=0, so the setting
+ * can turn it on and off as it plays. Emitters are tagged either way. */
+static bool enabled(void) {
+    return forced() != 0;
+}
+
+/* Whether it's on now: MELEE_SPATIAL_AUDIO, else the setting. Off, voices
+ * mix plain and the menus as without it, as if it were never made. */
+static bool on_now(void) {
+    const int f = forced();
+    return f >= 0 ? f != 0 : __atomic_load_n(&s_pref, __ATOMIC_RELAXED);
 }
 
 bool pc_spatial_enabled(void) {
-    return enabled();
+    return __atomic_load_n(&s_ready, __ATOMIC_ACQUIRE) && on_now();
 }
 
 static int stats_on(void) {
@@ -520,6 +533,7 @@ typedef struct Snapshot {
     uint64_t stamp; /* now_ns() when published; 0: never */
     bool xr3d;      /* the fight is in 3D in a headset: the head is the listener */
     bool bypass;    /* spatial audio bypassed (dev tools): every voice plain stereo */
+    bool off;       /* the setting off: every voice plain, no stage sounds */
     float view[3][4];
     int n;
     struct {
@@ -641,6 +655,7 @@ void pc_spatial_frame(const float view[3][4]) {
     memcpy(s.view, view, sizeof(s.view));
     s.xr3d = pc_xr_world_3d();
     s.bypass = dev_bypass();
+    s.off = !on_now();
     s.stamp = now_ns();
     pthread_mutex_lock(&s_snap_mutex);
     s_snap = s;
@@ -693,7 +708,6 @@ static SpVoice s_v[SP_VOICES + SP_PLACED];
 static IPLContext s_ctx;
 static IPLHRTF s_hrtf;
 static IPLAudioSettings s_settings;
-static bool s_ready;
 
 /* The crowd: its 32 kHz stereo bus this frame, the bus at 48 kHz in delay
  * lines, and a binaural effect per seat. */
@@ -928,10 +942,10 @@ void pc_spatial_init(int rate, int frame) {
     }
     make_filters();
     seat_fir_init();
-    s_ready = true;
-    pc_log_line("spatial: on, Steam Audio %d.%d.%d, HRTF binaural at %d Hz (resampled from %d) in %d-sample frames"
+    __atomic_store_n(&s_ready, true, __ATOMIC_RELEASE);
+    pc_log_line("spatial: ready (%s), Steam Audio %d.%d.%d, HRTF binaural at %d Hz (resampled from %d) in %d-sample frames"
                 " (set up in %.1f ms)",
-                STEAMAUDIO_VERSION_MAJOR, STEAMAUDIO_VERSION_MINOR, STEAMAUDIO_VERSION_PATCH, SP_RATE, rate,
+                on_now() ? "on" : "off for now", STEAMAUDIO_VERSION_MAJOR, STEAMAUDIO_VERSION_MINOR, STEAMAUDIO_VERSION_PATCH, SP_RATE, rate,
                 SP_FRAME, (now_ns() - t0) / 1e6);
 }
 
@@ -987,6 +1001,9 @@ void pc_spatial_frame_begin(void) {
     const Snapshot* s = &s_audio_snap;
     if (s->stamp == 0 || now_ns() - s->stamp > SP_STALE_NS) {
         return; /* no fight drawing (menus, scene changes) */
+    }
+    if (s->off) {
+        return; /* turned off: every voice plain, as if it were never made */
     }
     if (s->bypass) {
         s_bypassed = true;
@@ -1380,7 +1397,10 @@ void pc_spatial_output(float* out) {
         const char* v = getenv("MELEE_MENU_GAIN");
         menu_trim = powf(10.f, (v != NULL && v[0] != '\0' ? (float)atof(v) : SP_MENU_DB) / 20.f);
     }
-    const float menu_want = s_active ? 1.f : menu_trim;
+    /* Turned off: the menus' trim and the XR speakers glide out, as it was
+     * without spatial audio. */
+    const bool off = !on_now();
+    const float menu_want = s_active || off ? 1.f : menu_trim;
     const float menu0 = menu_gain;
     const float menu_step = (1.f - menu_trim) * (float)SP_AX_FRAME / (SP_MENU_GLIDE_S * (float)SP_AX_RATE);
     menu_gain = menu_gain < menu_want ? fminf(menu_want, menu_gain + menu_step) : fmaxf(menu_want, menu_gain - menu_step);
@@ -1415,7 +1435,7 @@ void pc_spatial_output(float* out) {
 #ifdef AURORA_ENABLE_OPENXR
     /* XR menus: no fight is drawing and the flat screen is up. */
     float c[3], r[3], w;
-    const bool want = !s_active && aurora_xr_audio_screen(c, r, &w);
+    const bool want = !s_active && !off && aurora_xr_audio_screen(c, r, &w);
     if (want) {
         for (int k = 0; k < 2; k++) {
             const float side = (k == 0 ? -1.f : 1.f) * (0.5f * w + SP_SPEAKER_GAP);

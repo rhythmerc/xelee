@@ -55,8 +55,8 @@ extern "C" {
 
 #ifdef MELEE_SPATIAL_AUDIO
 
-/* Before the game starts (the launcher's Audio setting, on by default);
- * MELEE_SPATIAL_AUDIO=0/1 overrides it. */
+/* The Audio setting (on by default), any time: it takes effect at the next
+ * mix. MELEE_SPATIAL_AUDIO=0/1 overrides it (0: never made at all). */
 void pc_spatial_set_enabled(bool on);
 
 /* ---- game thread ---- */
@@ -110,8 +110,8 @@ float* pc_spatial_music_bus(void);
 /* Audio thread: the crowd's bus for sounds of the place itself (stage
  * ambience), heard from the same seats all around; NULL: mix them plain. */
 float* pc_spatial_ambient_bus(void);
-/* Spatial audio is on for this run (the launcher's setting or
- * MELEE_SPATIAL_AUDIO, decided at the first sound). Any thread. */
+/* Spatial audio is working now: made, and on (the setting or
+ * MELEE_SPATIAL_AUDIO). Any thread. */
 bool pc_spatial_enabled(void);
 /* Audio thread: a fight draws with spatial audio bypassed (the dev tools'
  * A/B): what would be placed is mixed plain. */
