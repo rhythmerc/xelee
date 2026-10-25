@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* The RmlUi Options pages' rows (Audio, Graphics; audio_menu.h,
- * graphics_menu.h): a column of rows in Controls' gold line work, under
- * group headings, with Restore defaults at the bottom. Drawn into the native
- * Options page's frame (src/melee/mn/mnfight.c, which owns the frame, the
- * tab, the hint box and the input) over the running menu.
+/* The RmlUi Options pages' rows (Graphics, Audio, Gameplay:
+ * graphics_menu.cpp and the rest): a column of rows in Controls' gold line
+ * work, under group headings, with Restore defaults at the bottom. Drawn
+ * into the native Options page's frame (src/melee/mn/mnpage.c, which owns
+ * the frame, the tab, the hint box and the input) over the running menu.
+ * A page is its rows, a Page over them and PC_SETTINGS_SCREEN for its
+ * screen (menu_screen.h); docs/adding-menu-pages.md has the steps.
  *
  * A row is a bar (steps, left and right move it, a click sets a step), a
  * switch (Off and On), a choice (its values cycled by left, right and A) or
@@ -18,6 +20,8 @@
  * asks again only once the waiting changes are different ones.
  */
 #pragma once
+
+#include "menu_screen.h"
 
 #include <RmlUi/Core.h>
 
@@ -53,11 +57,11 @@ public:
 
     void show(bool show);
     void presence(float presence) { presence_ = presence; }
-    // PC_FIGHT_MENU_* (fight_menu.h); false when there was nothing to do.
+    // PC_SCREEN_* (menu_screen.h); false when there was nothing to do.
     bool input(int what);
     const char* hint();
     void update();
-    // Where the page asks to go, PC_OPTIONS_* (fight_menu.h), once: back
+    // Where the page asks to go, PC_SCREEN_GO_* (menu_screen.h), once: back
     // after the restart question's Later, or an action's (go).
     int leaving();
     // The next showing opens on the row that went (back from where it went).
@@ -105,3 +109,15 @@ private:
 };
 
 } // namespace pc::settings
+
+// `name`, the screen (menu_screen.h) of `page`, a Page at namespace scope:
+//     PC_SETTINGS_SCREEN(pc_audio_screen, s_page);
+#define PC_SETTINGS_SCREEN(name, page)                                                         \
+    extern "C" const PcMenuScreen name = {                                                    \
+        [](bool show) { page.show(show); },                                                   \
+        [](float presence) { page.presence(presence); },                                      \
+        [](int what) { return page.input(what); },                                            \
+        [] { return page.hint(); },                                                           \
+        [] { page.update(); },                                                                \
+        [] { return page.leaving(); },                                                        \
+    }

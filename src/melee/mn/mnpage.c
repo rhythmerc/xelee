@@ -1,4 +1,4 @@
-#include "mnfight.h"
+#include "mnpage.h"
 
 #include "forward.h"
 #include "inlines.h"
@@ -7,10 +7,7 @@
 #include "mndatadel.h"
 #include "mnonline.h"
 #include "mnslippi.h"
-#include "pc/audio_menu.h"
-#include "pc/gameplay_menu.h"
-#include "pc/graphics_menu.h"
-#include "pc/fight_menu.h"
+#include "pc/menu_screen.h"
 #include <melee/it/forward.h>
 #include <melee/lb/lb_00B0.h>
 #include <melee/lb/lbaudio_ax.h>
@@ -34,73 +31,140 @@
  * 84 is "Options", 85 the screen's own, Erase Data's in our frames). */
 #define PANEL_TITLE_JOINT 85
 
-/* A page's RmlUi screen (src/pc/fight_menu.cpp, audio_menu.cpp) way in and
- * out, in frames: hidden while the Options rows leave (as Sound's panel
- * waits, its cursor = 0x14), a fade and a rise in, and a fade out while the
- * rows come back. */
-enum {
-    FIGHT_HOLD_FRAMES = 20,
-    FIGHT_IN_FRAMES = 10,
-    FIGHT_OUT_FRAMES = 8,
-};
-
-typedef enum FightPhase {
-    FIGHT_HOLD,
-    FIGHT_IN,
-    FIGHT_SHOWN,
-    FIGHT_OUT,
-} FightPhase;
-
-/* An Options page drawn in RmlUi: its kind, the Options row it opens from
- * and goes back to, its tab and first hint, and its screen. The screens take
- * fight_menu.h's PC_FIGHT_MENU_* input. */
+/* The Options pages, each in one of the Options rows (SettingsMenuSelection;
+ * a row with no page is hidden). The list's order is the rows'. */
 typedef struct PcOptionsPage {
-    MenuKind kind;
-    int row;
-    const char* title;
-    const char* intro;
-    void (*show)(bool show);
-    void (*presence)(float presence);
-    bool (*input)(int what);
-    const char* (*hint)(void);
-    int (*leaving)(void); ///< where the screen asks to go, PC_OPTIONS_* (or NULL)
+    int row;              ///< the Options row it opens from and goes back to
+    const char* name;     ///< the row's label and the page's tab title
+    const char* about;    ///< the row's description and the page's first hint
+    AnimLoopSettings preview; ///< the preview pane's frames while the row is lit
+    const PcMenuScreen* screen;
 } PcOptionsPage;
 
-static const PcOptionsPage mnFight_pages[] = {
-    { MENU_KIND_SETTINGS_FIGHT, SEL_SETTINGS_FIGHT, "Controls", "Choose what each button does in a fight.",
-      pc_fight_menu_show, pc_fight_menu_presence, pc_fight_menu_input, pc_fight_menu_hint, NULL },
-    { MENU_KIND_SETTINGS_AUDIO, SEL_SETTINGS_DISPLAY, "Audio", "Set the volumes and how the game sounds.",
-      pc_audio_menu_show, pc_audio_menu_presence, pc_audio_menu_input, pc_audio_menu_hint, NULL },
-    { MENU_KIND_SETTINGS_GRAPHICS, SEL_SETTINGS_SOUND, "Graphics", "Set the resolution and picture quality.",
-      pc_graphics_menu_show, pc_graphics_menu_presence, pc_graphics_menu_input, pc_graphics_menu_hint,
-      pc_graphics_menu_leaving },
-    { MENU_KIND_SETTINGS_GAMEPLAY, SEL_SETTINGS_ERASE, "Gameplay", "Set how fights play, and your saved progress.",
-      pc_gameplay_menu_show, pc_gameplay_menu_presence, pc_gameplay_menu_input, pc_gameplay_menu_hint,
-      pc_gameplay_menu_leaving },
+static const PcOptionsPage mnPage_pages[] = {
+    /* Screen Display's preview (a screen). */
+    { SEL_SETTINGS_SOUND, "Graphics", "Set the resolution and picture quality.", { 1400, 1449, 1420 },
+      &pc_graphics_screen },
+    /* Sound's (speakers). The stock Sound page's mono and balance mean
+     * nothing beside the volumes (gm_801603B0), as Screen Display's
+     * deflicker and video modes. */
+    { SEL_SETTINGS_DISPLAY, "Audio", "Set the volumes and how the game sounds.", { 1350, 1399, 1370 },
+      &pc_audio_screen },
+    /* Erase Data's (the progress it erases, Gameplay's last action): no
+     * stock preview shows rules. */
+    { SEL_SETTINGS_ERASE, "Gameplay", "Set how fights play, and your saved progress.", { 1550, 1599, 1570 },
+      &pc_gameplay_screen },
+    /* Rumble's (a controller): Rumble's switch is in Controls. */
+    { SEL_SETTINGS_FIGHT, "Controls", "Choose what each button does in a fight.", { 1300, 1349, 1320 },
+      &pc_controls_screen },
 };
 
-static const PcOptionsPage* mnFight_Page(MenuKind kind)
+static const PcOptionsPage* mnPage_ForRow(int row)
 {
     size_t i;
 
-    for (i = 0; i < ARRAY_SIZE(mnFight_pages); i++) {
-        if (mnFight_pages[i].kind == kind) {
-            return &mnFight_pages[i];
+    for (i = 0; i < ARRAY_SIZE(mnPage_pages); i++) {
+        if (mnPage_pages[i].row == row) {
+            return &mnPage_pages[i];
         }
     }
     return NULL;
 }
 
-typedef struct FightMenu {
+bool mnPage_HasRow(int row)
+{
+    return mnPage_ForRow(row) != NULL;
+}
+
+const char* mnPage_Label(int row)
+{
+    const PcOptionsPage* page = mnPage_ForRow(row);
+
+    return page != NULL ? page->name : NULL;
+}
+
+const char* mnPage_Description(int row)
+{
+    const PcOptionsPage* page = mnPage_ForRow(row);
+
+    return page != NULL ? page->about : NULL;
+}
+
+int mnPage_FirstRow(void)
+{
+    int row = mnPage_pages[0].row;
+    size_t i;
+
+    for (i = 1; i < ARRAY_SIZE(mnPage_pages); i++) {
+        if (mnPage_pages[i].row < row) {
+            row = mnPage_pages[i].row;
+        }
+    }
+    return row;
+}
+
+int mnPage_RowCount(void)
+{
+    int count = 0;
+    size_t i;
+
+    for (i = 0; i < ARRAY_SIZE(mnPage_pages); i++) {
+        if (mnPage_pages[i].row + 1 > count) {
+            count = mnPage_pages[i].row + 1;
+        }
+    }
+    return count;
+}
+
+void mnPage_Previews(AnimLoopSettings* rows, int count)
+{
+    size_t i;
+
+    for (i = 0; i < ARRAY_SIZE(mnPage_pages); i++) {
+        if (mnPage_pages[i].row < count) {
+            rows[mnPage_pages[i].row] = mnPage_pages[i].preview;
+        }
+    }
+}
+
+void mnPage_Update(void)
+{
+    size_t i;
+
+    for (i = 0; i < ARRAY_SIZE(mnPage_pages); i++) {
+        mnPage_pages[i].screen->update();
+    }
+}
+
+/* A page's screen way in and out, in frames: hidden while the Options rows
+ * leave (as Sound's panel waits, its cursor = 0x14), a fade and a rise in,
+ * and a fade out while the rows come back. */
+enum {
+    PAGE_HOLD_FRAMES = 20,
+    PAGE_IN_FRAMES = 10,
+    PAGE_OUT_FRAMES = 8,
+};
+
+typedef enum PagePhase {
+    PAGE_HOLD,
+    PAGE_IN,
+    PAGE_SHOWN,
+    PAGE_OUT,
+} PagePhase;
+
+typedef struct PageState {
     const PcOptionsPage* page;
     HSD_Text* hint;
     char hint_text[128]; ///< what the hint box shows
-    FightPhase phase;
+    PagePhase phase;
     int frames; ///< into the phase
-} FightMenu;
+} PageState;
 
-static HSD_GObj* mnFight_gobj;
-static const PcOptionsPage* mnFight_open; ///< the page taking input
+static HSD_GObj* mnPage_gobj;
+static const PcOptionsPage* mnPage_open; ///< the page taking input (or last open)
+/* The page that sent the player to a stock page or scene (Erase Data,
+ * placing the stage), to come back to; NULL for none. */
+static const PcOptionsPage* mnPage_away;
 
 /* The hint box at the stock size holds about 40 letters on its one line;
  * smaller, two lines of about 48. */
@@ -110,7 +174,7 @@ enum { HINT_FIT = 40, HINT_FIT_TWO = 48 };
 #define HINT_CELL 32.0f /* a glyph cell, in the text's own units */
 #define HINT_LINE 36.0f /* two lines' pitch, a little apart */
 
-HSD_Text* mnFight_HintText(const char* text)
+HSD_Text* mnPage_HintText(const char* text)
 {
     HSD_Text* t = HSD_SisLib_803A6754(0, mn_804D6BB4);
     const size_t n = strlen(text);
@@ -163,73 +227,74 @@ HSD_Text* mnFight_HintText(const char* text)
 
 /* The hint box's text: literal, sized and placed as the PC descriptions in
  * mnmain.c's (mnOnline_Description). */
-static void mnFight_SetHint(FightMenu* menu, const char* text)
+static void mnPage_SetHint(PageState* state, const char* text)
 {
-    if (menu->hint != NULL) {
-        HSD_SisLib_803A5CC4(menu->hint);
+    if (state->hint != NULL) {
+        HSD_SisLib_803A5CC4(state->hint);
     }
-    menu->hint = mnFight_HintText(text);
+    state->hint = mnPage_HintText(text);
 }
 
-static void mnFight_FreeHint(FightMenu* menu)
+static void mnPage_FreeHint(PageState* state)
 {
-    if (menu->hint != NULL) {
-        HSD_SisLib_803A5CC4(menu->hint);
-        menu->hint = NULL;
+    if (state->hint != NULL) {
+        HSD_SisLib_803A5CC4(state->hint);
+        state->hint = NULL;
     }
 }
 
 /* The page's own GObj: the screen's fades and the hint box. It outlives the
  * page by the fade out (the Options rows already back), then goes. */
-static void mnFight_Frame(HSD_GObj* gobj)
+static void mnPage_Frame(HSD_GObj* gobj)
 {
-    FightMenu* menu = HSD_GObjGetUserData(gobj);
-    const PcOptionsPage* page = menu->page;
+    PageState* state = HSD_GObjGetUserData(gobj);
+    const PcMenuScreen* screen = state->page->screen;
     const char* hint;
 
-    if (mn_804A04F0.cur_menu != page->kind && menu->phase != FIGHT_OUT) {
+    if (mn_804A04F0.cur_menu != MENU_KIND_SETTINGS_PAGE && state->phase != PAGE_OUT) {
         /* Options writes its own hint as its rows come back. */
-        mnFight_FreeHint(menu);
-        menu->phase = FIGHT_OUT;
-        menu->frames = 0;
+        mnPage_FreeHint(state);
+        state->phase = PAGE_OUT;
+        state->frames = 0;
     }
-    menu->frames++;
-    switch (menu->phase) {
-    case FIGHT_HOLD:
-        if (menu->frames >= FIGHT_HOLD_FRAMES) {
-            page->show(true);
-            page->presence(0.0f);
-            menu->phase = FIGHT_IN;
-            menu->frames = 0;
+    state->frames++;
+    switch (state->phase) {
+    case PAGE_HOLD:
+        if (state->frames >= PAGE_HOLD_FRAMES) {
+            screen->show(true);
+            screen->presence(0.0f);
+            state->phase = PAGE_IN;
+            state->frames = 0;
         }
         return;
-    case FIGHT_IN:
-        page->presence((f32) menu->frames / FIGHT_IN_FRAMES);
-        if (menu->frames >= FIGHT_IN_FRAMES) {
-            menu->phase = FIGHT_SHOWN;
+    case PAGE_IN:
+        screen->presence((f32) state->frames / PAGE_IN_FRAMES);
+        if (state->frames >= PAGE_IN_FRAMES) {
+            state->phase = PAGE_SHOWN;
         }
         break;
-    case FIGHT_SHOWN:
+    case PAGE_SHOWN:
         break;
-    case FIGHT_OUT:
-        page->presence(1.0f - (f32) menu->frames / FIGHT_OUT_FRAMES);
-        if (menu->frames >= FIGHT_OUT_FRAMES) {
-            page->show(false);
-            mnFight_gobj = NULL;
+    case PAGE_OUT:
+        screen->presence(1.0f - (f32) state->frames / PAGE_OUT_FRAMES);
+        if (state->frames >= PAGE_OUT_FRAMES) {
+            screen->show(false);
+            mnPage_gobj = NULL;
             HSD_GObjFree(gobj);
         }
         return;
     }
-    hint = page->hint();
-    if (hint != NULL && strcmp(hint, menu->hint_text) != 0) {
-        snprintf(menu->hint_text, sizeof menu->hint_text, "%s", hint);
-        mnFight_SetHint(menu, menu->hint_text);
+    hint = screen->hint();
+    if (hint != NULL && strcmp(hint, state->hint_text) != 0) {
+        snprintf(state->hint_text, sizeof state->hint_text, "%s", hint);
+        mnPage_SetHint(state, state->hint_text);
     }
 }
 
-static void mnFight_Think(HSD_GObj* gobj)
+static void mnPage_Think(HSD_GObj* gobj)
 {
-    const PcOptionsPage* page = mnFight_open;
+    const PcOptionsPage* page = mnPage_open;
+    const PcMenuScreen* screen = page->screen;
     u64 events;
     int where;
 
@@ -242,31 +307,33 @@ static void mnFight_Think(HSD_GObj* gobj)
      * leaves the page, as does the screen's own asking (Graphics' restart
      * question's Later), which can also go on to a stock page or scene. */
     if (events & MenuInput_Up) {
-        page->input(PC_FIGHT_MENU_UP);
+        screen->input(PC_SCREEN_UP);
     } else if (events & MenuInput_Down) {
-        page->input(PC_FIGHT_MENU_DOWN);
+        screen->input(PC_SCREEN_DOWN);
     } else if (events & MenuInput_Left) {
-        page->input(PC_FIGHT_MENU_LEFT);
+        screen->input(PC_SCREEN_LEFT);
     } else if (events & MenuInput_Right) {
-        page->input(PC_FIGHT_MENU_RIGHT);
+        screen->input(PC_SCREEN_RIGHT);
     } else if (events & MenuInput_Confirm) {
-        page->input(PC_FIGHT_MENU_CONFIRM);
+        screen->input(PC_SCREEN_CONFIRM);
     }
-    where = page->leaving != NULL ? page->leaving() : PC_OPTIONS_STAY;
+    where = screen->leaving != NULL ? screen->leaving() : PC_SCREEN_STAY;
     switch (where) {
-    case PC_OPTIONS_ERASE_DATA:
+    case PC_SCREEN_GO_ERASE_DATA:
+        mnPage_away = page;
         mn_804A04F0.entering_menu = 1;
         mnDataDel_80250170();
         HSD_GObjFree(gobj);
         return;
-    case PC_OPTIONS_PLACE_STAGE:
-        page->show(false); /* the scene ends under it */
+    case PC_SCREEN_GO_PLACE_STAGE:
+        mnPage_away = page;
+        screen->show(false); /* the scene ends under it */
         mnOnline_PlaceFromOptions();
         return;
     default:
         break;
     }
-    if (where == PC_OPTIONS_BACK || ((events & MenuInput_Back) && !page->input(PC_FIGHT_MENU_BACK))) {
+    if (where == PC_SCREEN_GO_BACK || ((events & MenuInput_Back) && !screen->input(PC_SCREEN_BACK))) {
         sfxBack();
         mn_804A04F0.entering_menu = 0;
         mn_80229894(MENU_KIND_SETTINGS, page->row, 3);
@@ -274,56 +341,73 @@ static void mnFight_Think(HSD_GObj* gobj)
     }
 }
 
-void mnFight_Open(MenuKind kind)
+bool mnPage_Open(int row)
 {
-    const PcOptionsPage* page = mnFight_Page(kind);
+    const PcOptionsPage* page = mnPage_ForRow(row);
     HSD_GObj* gobj;
     HSD_GObjProc* proc;
-    FightMenu* menu;
+    PageState* state;
 
     if (page == NULL) {
-        return;
+        return false;
     }
     /* Back in before the last fade out finished: that one goes now. */
-    if (mnFight_gobj != NULL) {
-        FightMenu* old = HSD_GObjGetUserData(mnFight_gobj);
-        old->page->show(false);
-        mnFight_FreeHint(old);
-        HSD_GObjFree(mnFight_gobj);
-        mnFight_gobj = NULL;
+    if (mnPage_gobj != NULL) {
+        PageState* old = HSD_GObjGetUserData(mnPage_gobj);
+        old->page->screen->show(false);
+        mnPage_FreeHint(old);
+        HSD_GObjFree(mnPage_gobj);
+        mnPage_gobj = NULL;
     }
     mn_804D6BC8.cooldown = 5;
     mn_804A04F0.prev_menu = mn_804A04F0.cur_menu;
-    mn_804A04F0.cur_menu = kind;
+    mn_804A04F0.cur_menu = MENU_KIND_SETTINGS_PAGE;
     mn_804A04F0.hovered_selection = 0;
-    mnFight_open = page;
+    mnPage_open = page;
 
     gobj = GObj_Create(HSD_GOBJ_CLASS_ITEM, 7U, 0x80U);
-    mnFight_gobj = gobj;
-    menu = HSD_MemAlloc(sizeof(FightMenu));
-    menu->page = page;
-    menu->hint = NULL;
-    menu->hint_text[0] = '\0';
-    menu->phase = FIGHT_HOLD;
-    menu->frames = 0;
-    GObj_InitUserData(gobj, 0U, HSD_Free, menu);
-    proc = HSD_GObj_SetupProc(gobj, mnFight_Frame, 0U);
+    mnPage_gobj = gobj;
+    state = HSD_MemAlloc(sizeof(PageState));
+    state->page = page;
+    state->hint = NULL;
+    state->hint_text[0] = '\0';
+    state->phase = PAGE_HOLD;
+    state->frames = 0;
+    GObj_InitUserData(gobj, 0U, HSD_Free, state);
+    proc = HSD_GObj_SetupProc(gobj, mnPage_Frame, 0U);
     proc->flags_3 = HSD_GObj_804D783C;
-    mnFight_SetHint(menu, page->intro);
+    mnPage_SetHint(state, page->about);
 
-    proc = HSD_GObj_SetupProc(GObj_Create(0, 1, 0x80), mnFight_Think, 0);
+    proc = HSD_GObj_SetupProc(GObj_Create(0, 1, 0x80), mnPage_Think, 0);
     proc->flags_3 = HSD_GObj_804D783C;
+    return true;
 }
 
-static HSD_JObj* mnFight_titleJoint;
+bool mnPage_Return(void)
+{
+    const PcOptionsPage* page = mnPage_away;
+
+    mnPage_away = NULL;
+    return page != NULL && mnPage_Open(page->row);
+}
+
+int mnPage_ReturnRow(void)
+{
+    const int row = mnPage_away != NULL ? mnPage_away->row : mnPage_FirstRow();
+
+    mnPage_away = NULL;
+    return row;
+}
+
+static HSD_JObj* mnPage_titleJoint;
 
 /* The stock titles are slanted (italic) textures on the tab's joint; the
  * font is upright. Before the glyphs go out, the text's position matrix is
  * the joint's world rotation with an x-by-y shear, about the joint's origin
  * (as mnmain.c's mn_PcLabelLean leans the PC row labels). */
-static void mnFight_TitleItalic(void* gobj_)
+static void mnPage_TitleItalic(void* gobj_)
 {
-    HSD_JObj* jobj = mnFight_titleJoint;
+    HSD_JObj* jobj = mnPage_titleJoint;
     Mtx view, rot, out;
     float a[3], len;
     int c, r;
@@ -368,84 +452,82 @@ static void mnFight_TitleItalic(void* gobj_)
 }
 
 /* The tab's sub-title of a PC page, or NULL for a stock kind. */
-static const char* mnFight_PageTitle(MenuKind kind)
+static const char* mnPage_Title(MenuKind kind)
 {
-    const PcOptionsPage* page = mnFight_Page(kind);
-
-    if (page != NULL) {
-        return page->title;
+    if (kind == MENU_KIND_SETTINGS_PAGE) {
+        return mnPage_open != NULL ? mnPage_open->name : NULL;
     }
     return kind == MENU_KIND_SLIPPI_PAGE ? mnSlippi_Title() : NULL;
 }
 
 /* The tab's title on a PC page: the borrowed page's texture hidden, ours in
  * SIS text where it sits, following it through the tab's slide in and out. */
-static HSD_Text* mnFight_title;
-static char mnFight_titleShown[32];
-static bool mnFight_titleHidden;
+static HSD_Text* mnPage_title;
+static char mnPage_titleShown[32];
+static bool mnPage_titleHidden;
 
-void mnFight_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, bool leaving)
+void mnPage_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, bool leaving)
 {
     /* Sampled from the stock sub-titles: a light grey. */
     static const GXColor colour = { 0x9C, 0x9C, 0x9C, 0xFF };
-    const char* text = mnFight_PageTitle(cur);
+    const char* text = mnPage_Title(cur);
     HSD_JObj* joint = NULL;
     Vec3 pos;
 
     if (text == NULL && leaving) {
-        text = mnFight_PageTitle(prev);
+        text = mnPage_Title(prev);
     }
     lb_80011E24(panel, &joint, PANEL_TITLE_JOINT, -1);
     if (joint == NULL) {
         return;
     }
-    mnFight_titleJoint = joint;
-    if (mnFight_title != NULL && (text == NULL || strcmp(text, mnFight_titleShown) != 0)) {
-        HSD_SisLib_803A5CC4(mnFight_title);
-        mnFight_title = NULL;
+    mnPage_titleJoint = joint;
+    if (mnPage_title != NULL && (text == NULL || strcmp(text, mnPage_titleShown) != 0)) {
+        HSD_SisLib_803A5CC4(mnPage_title);
+        mnPage_title = NULL;
     }
     if (text == NULL) {
-        if (mnFight_titleHidden) {
+        if (mnPage_titleHidden) {
             HSD_JObjClearFlagsAll(joint, JOBJ_HIDDEN);
-            mnFight_titleHidden = false;
+            mnPage_titleHidden = false;
         }
         return;
     }
     HSD_JObjSetFlagsAll(joint, JOBJ_HIDDEN);
-    mnFight_titleHidden = true;
-    if (mnFight_title == NULL) {
-        snprintf(mnFight_titleShown, sizeof mnFight_titleShown, "%s", text);
-        mnFight_title = HSD_SisLib_803A6754(0, mn_804D6BB4);
-        mnFight_title->default_kerning = 1;
+    mnPage_titleHidden = true;
+    if (mnPage_title == NULL) {
+        snprintf(mnPage_titleShown, sizeof mnPage_titleShown, "%s", text);
+        mnPage_title = HSD_SisLib_803A6754(0, mn_804D6BB4);
+        mnPage_title->default_kerning = 1;
         /* Condensed a little: 14 letters in the tab that holds "Erase Data". */
-        mnFight_title->font_size.x = 0.031f;
-        mnFight_title->font_size.y = 0.038f;
-        HSD_SisLib_803A6B98(mnFight_title, 0.0f, 0.0f, "%s", mnFight_titleShown);
-        mnFight_title->render_callback = mnFight_TitleItalic;
+        mnPage_title->font_size.x = 0.031f;
+        mnPage_title->font_size.y = 0.038f;
+        HSD_SisLib_803A6B98(mnPage_title, 0.0f, 0.0f, "%s", mnPage_titleShown);
+        mnPage_title->render_callback = mnPage_TitleItalic;
     }
     lb_8000B1CC(joint, NULL, &pos);
     /* The stock sub-titles start a little in from the tab's slanted left edge
      * (Name Entry's, measured: ~12 px of 1280); the joint's origin is on it. */
-    mnFight_title->pos_x = pos.x + 0.4f;
-    mnFight_title->pos_y = -pos.y - 16.0f * mnFight_title->font_size.y;
-    mnFight_title->pos_z = pos.z;
-    HSD_SisLib_803A74F0(mnFight_title, 0, (GXColor*) &colour);
+    mnPage_title->pos_x = pos.x + 0.4f;
+    mnPage_title->pos_y = -pos.y - 16.0f * mnPage_title->font_size.y;
+    mnPage_title->pos_z = pos.z;
+    HSD_SisLib_803A74F0(mnPage_title, 0, (GXColor*) &colour);
 }
 
-void mnFight_PanelTitleForget(void)
+void mnPage_PanelTitleForget(void)
 {
-    mnFight_title = NULL;
-    mnFight_titleHidden = false;
+    mnPage_title = NULL;
+    mnPage_titleHidden = false;
 }
 
-void mnFight_SceneForget(void)
+void mnPage_SceneForget(void)
 {
     size_t i;
 
-    for (i = 0; i < ARRAY_SIZE(mnFight_pages); i++) {
-        mnFight_pages[i].show(false);
+    for (i = 0; i < ARRAY_SIZE(mnPage_pages); i++) {
+        mnPage_pages[i].screen->show(false);
     }
-    mnFight_gobj = NULL;
-    mnFight_open = NULL;
-    mnFight_PanelTitleForget();
+    mnPage_gobj = NULL;
+    mnPage_open = NULL;
+    mnPage_PanelTitleForget();
 }

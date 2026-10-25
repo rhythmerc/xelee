@@ -122,20 +122,12 @@ typedef enum MenuKind {
     MENU_KIND_ONLINE = 34,
     /* PC: VS Mode > Online > Slippi (Unranked, Direct, ...). */
     MENU_KIND_ONLINE_SLIPPI = 35,
-    /* PC: Options > Fight Controls (mnfight.c). */
-    MENU_KIND_SETTINGS_FIGHT = 36,
+    /* PC: an Options page (Graphics, Audio, Gameplay, Controls), whichever
+     * mnpage.c has open: every one is the same to the menu's tables. */
+    MENU_KIND_SETTINGS_PAGE = 36,
     /* PC: the Slippi sign-in, sign-up and setup pages (mnslippi.c), shown in
      * the online lobby scene. */
     MENU_KIND_SLIPPI_PAGE = 37,
-    /* PC: Options > Audio (mnfight.c's host; src/pc/audio_menu.h), in the
-     * stock Screen Display row's place. */
-    MENU_KIND_SETTINGS_AUDIO = 38,
-    /* PC: Options > Graphics, in the stock Sound row's place (the first row
-     * shown: Rumble's is hidden). */
-    MENU_KIND_SETTINGS_GRAPHICS = 39,
-    /* PC: Options > Gameplay, in the stock Erase Data row's place (Erase
-     * Data and Place Stage are its actions). */
-    MENU_KIND_SETTINGS_GAMEPLAY = 40,
 #endif
 } MenuKind;
 
@@ -225,14 +217,14 @@ typedef enum SpecialVsMenuSelection {
 
 typedef enum SettingsMenuSelection {
     SEL_SETTINGS_RUMBLE = 0,
-    SEL_SETTINGS_SOUND = 1,
-    SEL_SETTINGS_DISPLAY = 2,
+    SEL_SETTINGS_SOUND = 1,   ///< PC: Graphics (rows with a page: mnpage.c)
+    SEL_SETTINGS_DISPLAY = 2, ///< PC: Audio
     SEL_SETTINGS_3 = 3, ///< hidden
     SEL_SETTINGS_LANG = 4,
     SEL_SETTINGS_ERASE = 5, ///< PC: Gameplay (Erase Data is inside)
 #ifdef TARGET_PC
-    SEL_SETTINGS_PLACE = 6, ///< hidden on PC: in Gameplay
-    SEL_SETTINGS_FIGHT = 7, ///< PC: Fight Controls (src/pc/fight_menu.h)
+    SEL_SETTINGS_PLACE = 6, ///< PC, hidden: Place Stage is in Gameplay now
+    SEL_SETTINGS_FIGHT = 7, ///< PC: Controls
 #endif
 } SettingsMenuSelection;
 

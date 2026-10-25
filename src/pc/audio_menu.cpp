@@ -1,8 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* The Audio screen (audio_menu.h): its rows on the Options pages' engine
- * (settings_page.hpp). */
-#include "audio_menu.h"
-
+/* The Audio screen (Options > Audio, in the stock Screen Display row's
+ * place; the settings are settings.h's, the launcher's own), pc_audio_screen
+ * (menu_screen.h).
+ *
+ * Two groups of rows in Melee's line work: Volume (master, music, effects as
+ * bars of twenty steps, and mute) and Sound (reverb, spatial audio, the
+ * expanded stage sounds), then Restore defaults. Rows on the Options pages'
+ * engine (settings_page.hpp), in the native page of src/melee/mn/mnpage.c.
+ * Every change is live and saved.
+ */
 #include "settings.h"
 #include "settings_page.hpp"
 
@@ -88,8 +94,4 @@ pc::settings::Page s_page("options-page.rml", rows);
 
 } // namespace
 
-extern "C" void pc_audio_menu_show(bool show) { s_page.show(show); }
-extern "C" void pc_audio_menu_presence(float presence) { s_page.presence(presence); }
-extern "C" bool pc_audio_menu_input(int what) { return s_page.input(what); }
-extern "C" const char* pc_audio_menu_hint(void) { return s_page.hint(); }
-extern "C" void pc_audio_menu_update(void) { s_page.update(); }
+PC_SETTINGS_SCREEN(pc_audio_screen, s_page);

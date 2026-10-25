@@ -16,7 +16,7 @@ void mnSlippi_Frame(void);
 /* From the scene's exit. */
 void mnSlippi_End(void);
 
-/* The tab's sub-title while the page is up (mnfight.c draws it). */
+/* The tab's sub-title while the page is up (mnpage.c draws it). */
 const char* mnSlippi_Title(void);
 
 #endif

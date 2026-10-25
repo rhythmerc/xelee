@@ -1,6 +1,18 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* The Fight Controls screen (fight_menu.h). */
-#include "fight_menu.h"
+/* The Controls screen (Options > Controls; fight_map.h), pc_controls_screen
+ * (menu_screen.h).
+ *
+ * The active device's picture in the middle, a box per input down both sides
+ * with a gold line to its part, in Melee's line work, and the Rumble switch
+ * at the top. Picking a box lists what that input can do in a fight, (none)
+ * first. Drawn in RmlUi into the native Options page's frame
+ * (src/melee/mn/mnpage.c) over the running menu, with no backdrop of its
+ * own: the page owns the frame, the tab, the hint box and the input, and
+ * fades the screen in and out with its transitions. Lasers and the mouse
+ * point and click; the menus' input moves between boxes, A picks, B backs
+ * out.
+ */
+#include "menu_screen.h"
 
 #include "fight_map.h"
 #include "launcher.h"
@@ -689,37 +701,40 @@ struct Menu : Rml::EventListener {
 
 Menu s_menu;
 
-} // namespace
-
-extern "C" void pc_fight_menu_show(bool show) {
+void show(bool show) {
     if (show)
         s_menu.show();
     else
         s_menu.hide();
 }
 
-extern "C" void pc_fight_menu_presence(float presence) { s_menu.presence = presence; }
-
-extern "C" bool pc_fight_menu_input(int what) {
+bool input(int what) {
     if (!s_menu.shown || s_menu.presence < 1.f)
         return false;
     switch (what) {
-    case PC_FIGHT_MENU_UP:
-    case PC_FIGHT_MENU_DOWN:
-    case PC_FIGHT_MENU_LEFT:
-    case PC_FIGHT_MENU_RIGHT:
+    case PC_SCREEN_UP:
+    case PC_SCREEN_DOWN:
+    case PC_SCREEN_LEFT:
+    case PC_SCREEN_RIGHT:
         s_menu.move(what);
         return true;
-    case PC_FIGHT_MENU_CONFIRM:
+    case PC_SCREEN_CONFIRM:
         s_menu.select();
         return true;
-    case PC_FIGHT_MENU_BACK:
+    case PC_SCREEN_BACK:
         return s_menu.back();
     default:
         return false;
     }
 }
 
-extern "C" const char* pc_fight_menu_hint(void) { return s_menu.hint(); }
+} // namespace
 
-extern "C" void pc_fight_menu_update(void) { s_menu.update(); }
+extern "C" const PcMenuScreen pc_controls_screen = {
+    show,
+    [](float presence) { s_menu.presence = presence; },
+    input,
+    [] { return s_menu.hint(); },
+    [] { s_menu.update(); },
+    nullptr,
+};

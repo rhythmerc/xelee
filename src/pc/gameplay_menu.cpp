@@ -1,9 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* The Gameplay screen (gameplay_menu.h): its rows on the Options pages'
- * engine (settings_page.hpp). */
-#include "gameplay_menu.h"
-
-#include "fight_menu.h"
+/* The Gameplay screen (Options > Gameplay, in the stock Erase Data row's
+ * place; the settings are settings.h's, the launcher's own),
+ * pc_gameplay_screen (menu_screen.h). The fights' rules: UCF, Slippi's
+ * fixes, the C-stick in 1P, hazardless stages and (on a screen) the free
+ * camera; on the Quest the stage's placing, Before each fight and Place
+ * stage now; then progress: Unlock everything, and Clear game progress,
+ * which opens Melee's Erase Data page. Each applies as the game runs. Rows
+ * on the Options pages' engine (settings_page.hpp), in the native page of
+ * src/melee/mn/mnpage.c.
+ */
+#include "menu_screen.h"
 #include "settings.h"
 #include "settings_page.hpp"
 #include "xr_place.h"
@@ -42,7 +48,7 @@ Row toggle(const char* group, const char* name, const char* hint, bool PcGamepla
     return r;
 }
 
-// An action that leaves the page for `where` (PC_OPTIONS_*).
+// An action that leaves the page for `where` (PC_SCREEN_GO_*).
 Row leave_to(const char* group, const char* name, const char* hint, const char* button, int where) {
     Row r;
     r.group = group;
@@ -82,7 +88,7 @@ std::vector<Row> rows() {
         hold.label = [](int i) { return std::string(i == 1 ? "Place the stage" : "Start right away"); };
         v.push_back(hold);
         Row place = leave_to(nullptr, "Place stage", "Move, turn and size the stage now.", "Place",
-                             PC_OPTIONS_PLACE_STAGE);
+                             PC_SCREEN_GO_PLACE_STAGE);
         place.available = [] { return pc_xr_place_available(); };
         v.push_back(place);
     }
@@ -91,7 +97,7 @@ std::vector<Row> rows() {
                        &PcGameplaySettings::unlock_all));
     v.push_back(leave_to(nullptr, "Clear game progress",
                          "Erase the unlocks, high scores, records or trophies, or all of it. It asks first.",
-                         "Erase", PC_OPTIONS_ERASE_DATA));
+                         "Erase", PC_SCREEN_GO_ERASE_DATA));
     Row reset;
     reset.name = "Restore defaults";
     reset.hint = "Put every gameplay setting back to how a new install has it.";
@@ -110,9 +116,4 @@ pc::settings::Page& page() { return s_page; }
 
 } // namespace
 
-extern "C" void pc_gameplay_menu_show(bool show) { s_page.show(show); }
-extern "C" void pc_gameplay_menu_presence(float presence) { s_page.presence(presence); }
-extern "C" bool pc_gameplay_menu_input(int what) { return s_page.input(what); }
-extern "C" const char* pc_gameplay_menu_hint(void) { return s_page.hint(); }
-extern "C" void pc_gameplay_menu_update(void) { s_page.update(); }
-extern "C" int pc_gameplay_menu_leaving(void) { return s_page.leaving(); }
+PC_SETTINGS_SCREEN(pc_gameplay_screen, s_page);

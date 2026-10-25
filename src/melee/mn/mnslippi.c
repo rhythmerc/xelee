@@ -2,7 +2,7 @@
 
 #include "forward.h"
 #include "inlines.h"
-#include "mnfight.h"
+#include "mnpage.h"
 #include "mnmain.h"
 #include "mnnamenew.h"
 #include "types.h"
@@ -44,7 +44,7 @@ const char* mnSlippi_Title(void)
     return s.active ? pc_slippi_menu_title() : "Login";
 }
 
-/* The hint box: literal text, placed as the PC descriptions are (mnfight.c). */
+/* The hint box: literal text, placed as the PC descriptions are (mnpage.c). */
 static void mnSlippi_SetHint(const char* text)
 {
     HSD_Text* t;
@@ -52,7 +52,7 @@ static void mnSlippi_SetHint(const char* text)
     if (s.hint != NULL) {
         HSD_SisLib_803A5CC4(s.hint);
     }
-    t = mnFight_HintText(text);
+    t = mnPage_HintText(text);
     s.hint = t;
 }
 
@@ -111,7 +111,7 @@ static void mnSlippi_TearDown(void)
     s.hint = NULL; /* freed with every other text: */
     HSD_SisLib_803A5E70();
     mn_8022EBDC();
-    mnFight_PanelTitleForget();
+    mnPage_PanelTitleForget();
     s.page_up = false;
 }
 
@@ -266,6 +266,6 @@ void mnSlippi_End(void)
         lbArchive_80016EFC(s.ext);
         s.ext = NULL;
     }
-    mnFight_PanelTitleForget();
+    mnPage_PanelTitleForget();
     s.active = false;
 }

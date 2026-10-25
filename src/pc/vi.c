@@ -26,10 +26,6 @@ extern void browser_yield(void);
 
 #include "pc/pc.h"
 #include "pc/fight_map.h"
-#include "pc/audio_menu.h"
-#include "pc/gameplay_menu.h"
-#include "pc/graphics_menu.h"
-#include "pc/fight_menu.h"
 #include "pc/slippi_menu.h"
 #include "pc/launcher.h"
 #include "pc/touch.h"
@@ -39,6 +35,7 @@ extern void browser_yield(void);
 #include "pc/slp.h"
 #include "pc/net_chat.h"
 #include <melee/if/ifnetchat.h>
+#include <melee/mn/mnpage.h>
 #include <dolphin/pad.h>
 #include <melee/lb/lb_0195.h>
 #include "pc/net_lan.h"
@@ -276,10 +273,7 @@ void pc_frame_boundary(void) {
     }
     pc_xr_poll_control();
     pc_menu_update();
-    pc_fight_menu_update();
-    pc_audio_menu_update();
-    pc_graphics_menu_update();
-    pc_gameplay_menu_update();
+    mnPage_Update(); /* the Options pages' screens */
     pc_slippi_menu_update();
     /* Nothing draws while the overlay pauses the game, so hold the last
      * frame instead of clearing the EFB to black underneath the menu. */

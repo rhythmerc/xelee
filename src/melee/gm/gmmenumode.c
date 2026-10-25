@@ -15,6 +15,7 @@
 #include <sysdolphin/baselib/memory.h>
 #ifdef TARGET_PC
 #include "gmonlinemode.h"
+#include <melee/mn/mnpage.h>
 #ifdef TARGET_PC
 #include "pc/net_match.h"
 #include "pc/xr_place.h"
@@ -213,9 +214,9 @@ void onEnter(GameModeState* scene)
             break;
         case ONLINE_KIND_PLACE:
             if (gmOnline_TakePlaceFromOptions()) {
-                /* Back in Options > Gameplay, which placed it. */
-                data->menu_kind = MENU_KIND_SETTINGS_GAMEPLAY;
-                data->hovered_selection = 0;
+                /* Back on the page that placed it (Gameplay). */
+                data->menu_kind = MENU_KIND_SETTINGS_PAGE;
+                data->hovered_selection = mnPage_ReturnRow();
                 break;
             }
             data->menu_kind = MENU_KIND_ONLINE_SLIPPI;

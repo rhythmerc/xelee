@@ -1,8 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* The Graphics screen (graphics_menu.h): its rows on the Options pages'
- * engine (settings_page.hpp). */
-#include "graphics_menu.h"
-
+/* The Graphics screen (Options > Graphics, in the stock Sound row's
+ * place; the settings are settings.h's, the launcher's own),
+ * pc_graphics_screen (menu_screen.h). On the Quest: the eyes' resolution,
+ * SpaceWarp, foveation, custom textures, the stage's shadow and the
+ * lighting; on a screen: the window, sync, resolution, aspect, HUD, FPS
+ * counter, anti-aliasing, post-processing, textures and the backend. What
+ * only applies at launch (SpaceWarp, foveation, anti-aliasing, the backend)
+ * says so until then, and leaving the page offers to restart. Rows on the
+ * Options pages' engine (settings_page.hpp), in the native page of
+ * src/melee/mn/mnpage.c.
+ */
 #include "settings.h"
 #include "settings_page.hpp"
 
@@ -208,9 +215,4 @@ pc::settings::Page s_page("options-page.rml", rows);
 
 } // namespace
 
-extern "C" void pc_graphics_menu_show(bool show) { s_page.show(show); }
-extern "C" void pc_graphics_menu_presence(float presence) { s_page.presence(presence); }
-extern "C" bool pc_graphics_menu_input(int what) { return s_page.input(what); }
-extern "C" const char* pc_graphics_menu_hint(void) { return s_page.hint(); }
-extern "C" void pc_graphics_menu_update(void) { s_page.update(); }
-extern "C" int pc_graphics_menu_leaving(void) { return s_page.leaving(); }
+PC_SETTINGS_SCREEN(pc_graphics_screen, s_page);

@@ -5,7 +5,7 @@
 #include <math.h>
 #ifdef TARGET_PC
 #include "pc/pc.h"
-#include "mnfight.h"
+#include "mnpage.h"
 #include "pc/xr_place.h"
 #endif
 
@@ -110,7 +110,7 @@ static u16 mn_803EAE7C[] = {
     0x2, 0x3, 0x4, 0x9, 0xB, 0xC, 0xD, 0x0,
 };
 #ifdef TARGET_PC
-#define MENU_KIND_TABLE_LEN (MENU_KIND_SETTINGS_GAMEPLAY + 1)
+#define MENU_KIND_TABLE_LEN (MENU_KIND_SLIPPI_PAGE + 1)
 #else
 #define MENU_KIND_TABLE_LEN 0x22
 #endif
@@ -297,7 +297,7 @@ static AnimLoopSettings mn_803EAE8C[MENU_KIND_TABLE_LEN][3] = {
         { 450, 499, 450 },
         { 500, 599, 500 },
     },
-    { /* MENU_KIND_SETTINGS_FIGHT: Erase Data's (a plain inside); mnfight.c
+    { /* MENU_KIND_SETTINGS_PAGE: Erase Data's (a plain inside); mnpage.c
        * swaps the tab's title */
         { 4200, 4249, 4220 },
         { 4250, 4299, 4270 },
@@ -308,21 +308,6 @@ static AnimLoopSettings mn_803EAE8C[MENU_KIND_TABLE_LEN][3] = {
         { 3000, 3049, 3020 },
         { 3050, 3099, 3070 },
         { 3100, 3199, 3120 },
-    },
-    { /* MENU_KIND_SETTINGS_AUDIO: Erase Data's, as Controls' */
-        { 4200, 4249, 4220 },
-        { 4250, 4299, 4270 },
-        { 4300, 4399, 4320 },
-    },
-    { /* MENU_KIND_SETTINGS_GRAPHICS: Erase Data's, as Controls' */
-        { 4200, 4249, 4220 },
-        { 4250, 4299, 4270 },
-        { 4300, 4399, 4320 },
-    },
-    { /* MENU_KIND_SETTINGS_GAMEPLAY: Erase Data's, as Controls' */
-        { 4200, 4249, 4220 },
-        { 4250, 4299, 4270 },
-        { 4300, 4399, 4320 },
     },
 #endif
 };
@@ -387,15 +372,13 @@ static AnimLoopSettings mn_803EB4C8[] = {
 };
 
 #ifdef TARGET_PC
-/* Rumble's row is hidden (Controls has the switch); Sound's row is Graphics
- * with Screen Display's preview, Screen Display's Audio with Sound's, and
- * Erase Data's Gameplay with Erase Data's (what it erases: the progress in
- * it). No stock preview shows the rules. */
+/* The stock rows' and two PC rows' (Place Stage, hidden, and Controls'):
+ * each page's row gets the page's preview (mnPage_Previews, as the menu is
+ * built). */
 static AnimLoopSettings mn_803EB4F8[] = {
-    { 1300, 1349, 1320 }, { 1400, 1449, 1420 }, { 1350, 1399, 1370 },
+    { 1300, 1349, 1320 }, { 1350, 1399, 1370 }, { 1400, 1449, 1420 },
     { 1450, 1499, 1470 }, { 1500, 1549, 1520 }, { 1550, 1599, 1570 },
-    { 1400, 1449, 1420 }, /* Place Stage (hidden; in Gameplay) */
-    { 1300, 1349, 1320 }, /* Controls: Rumble's preview (a controller) */
+    { 1400, 1449, 1420 }, { 1300, 1349, 1320 },
 };
 #else
 static AnimLoopSettings mn_803EB4F8[] = {
@@ -726,7 +709,7 @@ MenuKindData mn_803EB6B0[MENU_KIND_TABLE_LEN] = {
         ARRAY_SIZE(mn_OnlineSlippiPreview),
         mnOnline_SlippiThink,
     },
-    { /* MENU_KIND_SETTINGS_FIGHT: its own GObjs (mnfight.c), as Sound's */
+    { /* MENU_KIND_SETTINGS_PAGE: its own GObjs (mnpage.c), as Sound's */
         NULL,
         0,
         NULL,
@@ -734,27 +717,6 @@ MenuKindData mn_803EB6B0[MENU_KIND_TABLE_LEN] = {
         NULL,
     },
     { /* MENU_KIND_SLIPPI_PAGE: its own GObjs (mnslippi.c) */
-        NULL,
-        0,
-        NULL,
-        0x01,
-        NULL,
-    },
-    { /* MENU_KIND_SETTINGS_AUDIO: its own GObjs (mnfight.c) */
-        NULL,
-        0,
-        NULL,
-        0x01,
-        NULL,
-    },
-    { /* MENU_KIND_SETTINGS_GRAPHICS: its own GObjs (mnfight.c) */
-        NULL,
-        0,
-        NULL,
-        0x01,
-        NULL,
-    },
-    { /* MENU_KIND_SETTINGS_GAMEPLAY: its own GObjs (mnfight.c) */
         NULL,
         0,
         NULL,
@@ -953,15 +915,12 @@ bool mn_80229938(MenuKind menu_kind, s32 selection)
         return false;
     }
 #ifdef TARGET_PC
-    /* Graphics, Audio, Gameplay, Controls (Sound's, Screen Display's,
-     * Erase Data's and our own row). Rumble's switch is in Controls, Place
-     * Stage and Erase Data are in Gameplay, and the Japanese language switch
+    /* Options shows its pages' rows (mnpage.c: Graphics, Audio, Gameplay,
+     * Controls) and no others: Rumble's switch is in Controls, Erase Data
+     * and Place Stage are in Gameplay, and the Japanese language switch
      * means nothing here. */
-    if (menu_kind == MENU_KIND_SETTINGS &&
-        (selection == SEL_SETTINGS_RUMBLE || selection == SEL_SETTINGS_LANG ||
-         selection == SEL_SETTINGS_PLACE))
-    {
-        return false;
+    if (menu_kind == MENU_KIND_SETTINGS) {
+        return mnPage_HasRow(selection);
     }
 #endif
     if (menu_kind == MENU_KIND_1P && selection == SEL_1P_2) {
@@ -1014,8 +973,8 @@ static void mn_80229A7C(MainMenuData* data, MenuKind menu_kind, int selection)
         if (literal != NULL) {
             /* ponytail: literal text; SdMenu has no SIS strings for PC
              * entries. Sized and placed to sit where the stock ones do, on
-             * two lines when long (mnFight_HintText). */
-            data->description = mnFight_HintText(literal);
+             * two lines when long (mnPage_HintText). */
+            data->description = mnPage_HintText(literal);
             return;
         }
     }
@@ -1135,7 +1094,7 @@ static void mn_UpdatePcLabels(MainMenuData* data, bool alive)
         if (notice != NULL) {
             /* Made again rather than its line rewritten: either may be two. */
             HSD_SisLib_803A5CC4(data->description);
-            data->description = mnFight_HintText(notice);
+            data->description = mnPage_HintText(notice);
         }
     }
     /* i is the row (the slot the text sits on), sel the selection in it. */
@@ -1266,7 +1225,7 @@ void fn_80229BF4(HSD_GObj* gobj)
     }
     mn_8022ED6C(sp20, &mn_803EB354);
 #ifdef TARGET_PC
-    mnFight_PanelTitle(temp_r28, (MenuKind) data->cur_menu, (MenuKind) data->prev_menu, data->state == 1);
+    mnPage_PanelTitle(temp_r28, (MenuKind) data->cur_menu, (MenuKind) data->prev_menu, data->state == 1);
 #endif
 }
 
@@ -1929,9 +1888,10 @@ HSD_GObj* mn_8022B3A0(u8 state)
         mnOnline_SlippiBuilt();
     }
     if (cur_menu == MENU_KIND_SETTINGS) {
-        /* Place Stage while a headset is presenting (locked, so hidden,
-         * otherwise), then Fight Controls. */
-        mn_803EB6B0[MENU_KIND_SETTINGS].selection_count = SEL_SETTINGS_FIGHT + 1;
+        /* Up to the last page's row (mnpage.c); the rows between without a
+         * page are locked, so hidden. */
+        mn_803EB6B0[MENU_KIND_SETTINGS].selection_count = (u8) mnPage_RowCount();
+        mnPage_Previews(mn_803EB4F8, ARRAY_SIZE(mn_803EB4F8));
     }
 #endif
     /// @todo Idiomatic spellings put the pointer in a named local, not a temp.
@@ -2296,10 +2256,7 @@ int mn_8022C010(int menu_kind, int selection)
     case MENU_KIND_SETTINGS_LANG:
     case MENU_KIND_SETTINGS_ERASE:
 #ifdef TARGET_PC
-    case MENU_KIND_SETTINGS_FIGHT:
-    case MENU_KIND_SETTINGS_AUDIO:
-    case MENU_KIND_SETTINGS_GRAPHICS:
-    case MENU_KIND_SETTINGS_GAMEPLAY:
+    case MENU_KIND_SETTINGS_PAGE:
 #endif
         return 3;
     case MENU_KIND_DATA:
@@ -2884,6 +2841,15 @@ void mn_8022D104(HSD_GObj* gp)
     if (buttons & MenuInput_Confirm) {
         mn_804D6BC8.cooldown = 5;
         mn_804A04F0.entering_menu = 1;
+#ifdef TARGET_PC
+        /* Every row shown is a page's (mnpage.c). */
+        if (mnPage_HasRow(mn_804A04F0.hovered_selection)) {
+            sfxForward();
+            mnPage_Open(mn_804A04F0.hovered_selection);
+            HSD_GObjFree(gp);
+            return;
+        }
+#endif
         switch (mn_804A04F0.hovered_selection) {
         case SEL_SETTINGS_RUMBLE:
             sfxForward();
@@ -2892,25 +2858,12 @@ void mn_8022D104(HSD_GObj* gp)
             break;
         case SEL_SETTINGS_SOUND:
             sfxForward();
-#ifdef TARGET_PC
-            /* Our Graphics page, first as the list goes (Screen Display's
-             * row has Audio). */
-            mnFight_Open(MENU_KIND_SETTINGS_GRAPHICS);
-#else
             mnSound_8024A09C(1);
-#endif
             HSD_GObjFree(gp);
             break;
         case SEL_SETTINGS_DISPLAY:
             sfxForward();
-#ifdef TARGET_PC
-            /* Our Audio page: the stock Sound page's mono and balance mean
-             * nothing beside the volumes (gm_801603B0), as Screen Display's
-             * deflicker and video modes. */
-            mnFight_Open(MENU_KIND_SETTINGS_AUDIO);
-#else
             mnDeflicker_8024A6C4(1);
-#endif
             HSD_GObjFree(gp);
             break;
         case SEL_SETTINGS_LANG:
@@ -2920,24 +2873,9 @@ void mn_8022D104(HSD_GObj* gp)
             break;
         case SEL_SETTINGS_ERASE:
             sfxForward();
-#ifdef TARGET_PC
-            /* Our Gameplay page, which has Erase Data as an action. */
-            mnFight_Open(MENU_KIND_SETTINGS_GAMEPLAY);
-#else
             mnDataDel_80250170();
-#endif
             HSD_GObjFree(gp);
             break;
-#ifdef TARGET_PC
-        case SEL_SETTINGS_PLACE:
-            mnOnline_PlaceFromOptions();
-            break;
-        case SEL_SETTINGS_FIGHT:
-            sfxForward();
-            mnFight_Open(MENU_KIND_SETTINGS_FIGHT);
-            HSD_GObjFree(gp);
-            break;
-#endif
         }
     } else if (buttons & MenuInput_Back) {
         sfxBack();
@@ -3288,7 +3226,7 @@ void mn_8022DB10(HSD_GObj* gp)
         case SEL_MAIN_SETTINGS:
             menu_kind = MENU_KIND_SETTINGS;
 #ifdef TARGET_PC
-            hovered_selection = SEL_SETTINGS_SOUND; /* Graphics: Rumble's row is hidden */
+            hovered_selection = mnPage_FirstRow(); /* Rumble's row is hidden */
 #else
             hovered_selection = 0;
 #endif
@@ -3370,7 +3308,7 @@ void mnMain_Scene_OnEnter(void* user_data)
     void (*var_r4)(HSD_GObj*);
     MenuEnterData* data = user_data;
 #ifdef TARGET_PC
-    bool open_gameplay;
+    int open_page = -1;
 #endif
 
     u8 _[0x14];
@@ -3381,14 +3319,13 @@ void mnMain_Scene_OnEnter(void* user_data)
     mn_804A04F0.buttons = 0;
     hovered_selection = &mn_804A04F0.hovered_selection;
 #ifdef TARGET_PC
-    mnFight_SceneForget();
-    /* Back from placing the stage (Gameplay's Place stage): Options on its
-     * Gameplay row, the page opened from there as A does (below); the page
-     * has no panel of its own to start on. */
-    open_gameplay = data->menu_kind == MENU_KIND_SETTINGS_GAMEPLAY;
-    if (open_gameplay) {
+    mnPage_SceneForget();
+    /* Back on a page (from placing the stage, Gameplay's Place stage):
+     * Options on the page's row, the page opened from there as A does
+     * (below); a page has no panel of its own to start on. */
+    if (data->menu_kind == MENU_KIND_SETTINGS_PAGE) {
+        open_page = data->hovered_selection;
         data->menu_kind = MENU_KIND_SETTINGS;
-        data->hovered_selection = SEL_SETTINGS_ERASE;
     }
 #endif
     menu_kind = data->menu_kind;
@@ -3661,8 +3598,7 @@ void mnMain_Scene_OnEnter(void* user_data)
         HSD_GObj_SetupProc(temp_r3_8, var_r4, 0);
         mn_8022B3A0(0);
 #ifdef TARGET_PC
-        if (open_gameplay) {
-            mnFight_Open(MENU_KIND_SETTINGS_GAMEPLAY);
+        if (open_page >= 0 && mnPage_Open(open_page)) {
             HSD_GObjFree(temp_r3_8);
         }
 #endif

@@ -870,7 +870,6 @@ src/melee/mn/mndiagram.c
 src/melee/mn/mndiagram2.c
 src/melee/mn/mndiagram3.c
 src/melee/mn/mnevent.c
-src/melee/mn/mnfight.c
 src/melee/mn/mngallery.c
 src/melee/mn/mnhyaku.c
 src/melee/mn/mninfo.c
@@ -884,6 +883,7 @@ src/melee/mn/mnnamenew.c
 src/melee/mn/mnonline.c
 src/melee/mn/mnonlinecss.c
 src/melee/mn/mnonlinelobby.c
+src/melee/mn/mnpage.c
 src/melee/mn/mnruleplus.c
 src/melee/mn/mnslippi.c
 src/melee/mn/mnsnap.c

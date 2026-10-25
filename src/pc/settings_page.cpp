@@ -2,7 +2,7 @@
 /* The RmlUi Options pages' rows (settings_page.hpp). */
 #include "settings_page.hpp"
 
-#include "fight_menu.h"
+#include "menu_screen.h"
 #include "launcher.h"
 #include "pc.h"
 
@@ -245,12 +245,12 @@ void Page::answer(int choice) {
     }
     putOff_ = waiting();
     ask(false);
-    go_ = PC_OPTIONS_BACK;
+    go_ = PC_SCREEN_GO_BACK;
 }
 
 int Page::leaving() {
     const int where = go_;
-    go_ = PC_OPTIONS_STAY;
+    go_ = PC_SCREEN_STAY;
     return where;
 }
 
@@ -272,7 +272,7 @@ void Page::show(bool show) {
     build();
     shown_ = true;
     asking_ = false;
-    go_ = PC_OPTIONS_STAY;
+    go_ = PC_SCREEN_STAY;
     presence_ = 0.f;
     placedPresence_ = -1.f;
     document_->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
@@ -349,16 +349,16 @@ bool Page::input(int what) {
         return true;
     if (asking_) {
         switch (what) {
-        case PC_FIGHT_MENU_LEFT:
-        case PC_FIGHT_MENU_RIGHT:
+        case PC_SCREEN_LEFT:
+        case PC_SCREEN_RIGHT:
             askCursor_ ^= 1;
             lbAudioAx_80024030(SFX_MOVE);
             refresh();
             return true;
-        case PC_FIGHT_MENU_CONFIRM:
+        case PC_SCREEN_CONFIRM:
             answer(askCursor_);
             return true;
-        case PC_FIGHT_MENU_BACK:
+        case PC_SCREEN_BACK:
             // Later, and back at once.
             putOff_ = waiting();
             ask(false);
@@ -367,7 +367,7 @@ bool Page::input(int what) {
             return true;
         }
     }
-    if (what == PC_FIGHT_MENU_BACK) {
+    if (what == PC_SCREEN_BACK) {
         const std::string key = waiting();
         if (key.empty() || key == putOff_ || !pc_restart_available())
             return false; // the page goes back
@@ -376,19 +376,19 @@ bool Page::input(int what) {
         return true;
     }
     switch (what) {
-    case PC_FIGHT_MENU_UP:
+    case PC_SCREEN_UP:
         move(-1);
         return true;
-    case PC_FIGHT_MENU_DOWN:
+    case PC_SCREEN_DOWN:
         move(1);
         return true;
-    case PC_FIGHT_MENU_LEFT:
+    case PC_SCREEN_LEFT:
         change(-1);
         return true;
-    case PC_FIGHT_MENU_RIGHT:
+    case PC_SCREEN_RIGHT:
         change(1);
         return true;
-    case PC_FIGHT_MENU_CONFIRM:
+    case PC_SCREEN_CONFIRM:
         select();
         return true;
     default:
