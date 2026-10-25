@@ -30,6 +30,7 @@ ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 OUT = os.path.join(ROOT, "resources", "xr")
 FONT = os.path.join(ROOT, "resources", "font-bold.ttf")  # Melee's slanted headings
 TEXT_FONT = os.path.join(ROOT, "resources", "menu.ttf")  # the menus' Noto Sans, as the calibration's text
+TEXT_BOLD = os.path.join(ROOT, "resources", "menu-bold.ttf")  # its bold, for the legend's button hints
 
 DONE = False  # the Place Stage menu flow: the cards say "done", not "fight"
 
@@ -63,8 +64,8 @@ def font(size):
     return ImageFont.truetype(FONT, size * SS)
 
 
-def text_font(size):
-    return ImageFont.truetype(TEXT_FONT, size * SS)
+def text_font(size, bold=False):
+    return ImageFont.truetype(TEXT_BOLD if bold else TEXT_FONT, size * SS)
 
 
 def s(v):
@@ -106,9 +107,9 @@ def button(d, x, y, label, size=34):
     return x + w
 
 
-def rich_line(d, x, y, parts, size, fill=CREAM):
+def rich_line(d, x, y, parts, size, fill=CREAM, bold=False):
     """A line of text with button glyphs: parts are strings or ("btn", label)."""
-    f = text_font(size)
+    f = text_font(size, bold)
     for p in parts:
         if isinstance(p, tuple):
             x = button(d, x, y, p[1], size=size * 1.25) + s(8)
@@ -118,9 +119,9 @@ def rich_line(d, x, y, parts, size, fill=CREAM):
     return x
 
 
-def rich_width(parts, size):
+def rich_width(parts, size, bold=False):
     probe = Image.new("RGBA", (s(2000), s(200)))
-    return rich_line(ImageDraw.Draw(probe), 0, s(100), parts, size)
+    return rich_line(ImageDraw.Draw(probe), 0, s(100), parts, size, bold=bold)
 
 
 def grid_backdrop(w, h):
@@ -424,12 +425,12 @@ def legend(hands):
     move = ("btn", "PINCH") if hands else ("btn", "GRIP")
     parts = [("btn", "A"), "Done   " if DONE else "Start   ", ("btn", "B"), "Reset   ", ("btn", "Y"), "Tips   ", move, " Move"]
     size = 30
-    w = rich_width(parts, size) + s(80)
+    w = rich_width(parts, size, True) + s(80)
     h = s(84)
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle((0, 0, w - 1, h - 1), radius=h // 2, fill=(0, 0, 0, 215), outline=GOLD, width=s(5))
-    rich_line(d, s(40), h // 2, parts, size)
+    rich_line(d, s(40), h // 2, parts, size, bold=True)
     return img
 
 
