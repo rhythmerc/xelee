@@ -122,6 +122,13 @@ bool pc_spatial_bypassed(void);
  * each keeping its HRTF state from frame to frame). False, doing nothing,
  * when nothing is placed this frame. */
 bool pc_spatial_render_placed(int slot, const float pos[3], const float* mono);
+/* Audio thread, after pc_spatial_frame_begin, in a fight or not (XR): a
+ * sound placed in the room rather than the stage (the room light
+ * calibration's chimes), `mono` as for pc_spatial_render_placed, heard from
+ * `pos` (tracking space, metres) at its own level, through its own slot
+ * (0-2). False, doing nothing, without a headset's head pose or with
+ * spatial audio off: the caller mixes it plain. */
+bool pc_spatial_render_room(int slot, const float pos[3], const float* mono);
 /* Audio thread, during a fight after pc_spatial_frame_begin: how far `pos`
  * (game units) is from the listener, in game units (for Doppler). False
  * when nothing is placed this frame. */
@@ -186,6 +193,12 @@ static inline float* pc_spatial_ambient_bus(void) { return 0; }
 static inline bool pc_spatial_enabled(void) { return false; }
 static inline bool pc_spatial_bypassed(void) { return false; }
 static inline bool pc_spatial_render_placed(int slot, const float pos[3], const float* mono) {
+    (void)slot;
+    (void)pos;
+    (void)mono;
+    return false;
+}
+static inline bool pc_spatial_render_room(int slot, const float pos[3], const float* mono) {
     (void)slot;
     (void)pos;
     (void)mono;

@@ -94,6 +94,8 @@ An action can **leave the page** with `page().go(PC_SCREEN_GO_*)`:
   (`mnPage_Return`).
 - `GO_PLACE_STAGE` runs the placement scene; the menu scene comes back on the
   page (`mnPage_ReturnRow`, `MENU_KIND_SETTINGS_PAGE` in its enter data).
+- `GO_CALIBRATE` runs that scene's room light calibration alone
+  (Graphics' Calibrate room light); it comes back the same way.
 - `GO_BACK` returns to Options.
 
 The page reopens on the row that left. A new destination needs:

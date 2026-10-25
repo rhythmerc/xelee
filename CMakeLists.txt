@@ -351,6 +351,8 @@ set(PC_SOURCES
         src/pc/widescreen.c
         src/pc/xr_scene.c
         src/pc/xr_place.c
+        src/pc/xr_calibrate.c
+        src/pc/room_chime.c
         src/pc/xr_pointer.c
         src/pc/button_icons.c
         src/pc/button_icons_data.c

@@ -26,5 +26,8 @@ const char* mnOnline_Description(MenuKind, int selection);
 const char* mnOnline_TakeNotice(void);
 /* Options > Place Stage (XR): the placement scene, then back to Options. */
 void mnOnline_PlaceFromOptions(void);
+/* Options > Graphics > Calibrate room light (XR): the placement scene's
+ * room light calibration alone, then back to Options. */
+void mnOnline_CalibrateFromOptions(void);
 
 #endif

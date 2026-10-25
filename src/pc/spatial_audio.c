@@ -35,6 +35,7 @@ ItemKind itGetKind(HSD_GObj* gobj);
 
 #define SP_VOICES 64       /* AX_VOICES */
 #define SP_PLACED 8        /* sounds made here, at points of the stage (pc_spatial_render_placed) */
+#define SP_ROOM 3          /* sounds placed in the room, not the stage (pc_spatial_render_room) */
 #define SP_EMITTERS 64     /* fighters and items published per frame */
 #define SP_HANDLES 256     /* netplay starts remembered by handle */
 #define SP_STALE_NS 250000000ull /* positions older than this: back to plain stereo */
@@ -695,6 +696,7 @@ typedef struct SpVoice {
     int channel;  /* the emitter's left (0) or right (1) point, or between them (-1) */
     float boost;  /* over the game's own level (a placed stage sound's) */
     int mix;      /* a placed stage sound's mixer channel, or -1 */
+    bool room;    /* pos is in the room (metres, tracking space), not the stage */
     StageMixState mix_state;
     bool tagged;
     uint64_t last_frame; /* the AX frame it last rendered in; state resets after a gap */
@@ -703,8 +705,8 @@ typedef struct SpVoice {
     IPLDirectEffect dir;
 } SpVoice;
 
-/* AX's voices, then the placed sounds' slots. */
-static SpVoice s_v[SP_VOICES + SP_PLACED];
+/* AX's voices, then the placed sounds' slots, then the room's. */
+static SpVoice s_v[SP_VOICES + SP_PLACED + SP_ROOM];
 static IPLContext s_ctx;
 static IPLHRTF s_hrtf;
 static IPLAudioSettings s_settings;
@@ -777,6 +779,7 @@ static int s_bus_quiet;               /* frames since the bus last had a voice *
 
 static Snapshot s_audio_snap;   /* the audio thread's copy */
 static float s_listener[3][4];  /* game units -> listener space, meters */
+static float s_room[3][4];      /* the room (tracking space, metres) -> listener space */
 static float s_scale;           /* meters per game unit */
 static bool s_active;           /* spatializing this AX frame */
 static uint64_t s_frame;        /* AX frames since start */
@@ -920,7 +923,7 @@ void pc_spatial_init(int rate, int frame) {
         pc_log_line("spatial: Steam Audio HRTF failed (%d); off", (int)err);
         return;
     }
-    for (int i = 0; i < SP_VOICES + SP_PLACED; i++) {
+    for (int i = 0; i < SP_VOICES + SP_PLACED + SP_ROOM; i++) {
         IPLBinauralEffectSettings bs = {s_hrtf};
         IPLDirectEffectSettings ds = {1};
         if (iplBinauralEffectCreate(s_ctx, &s_settings, &bs, &s_v[i].bin) != IPL_STATUS_SUCCESS ||
@@ -1111,9 +1114,10 @@ void pc_spatial_render(int voice, const float* mono) {
 
     /* Listener space: x right, y up, -z ahead, meters. */
     const float* p = v->pos;
+    const float(*m)[4] = v->room ? s_room : s_listener;
     float h[3];
     for (int r = 0; r < 3; r++) {
-        h[r] = s_listener[r][0] * p[0] + s_listener[r][1] * p[1] + s_listener[r][2] * p[2] + s_listener[r][3];
+        h[r] = m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3];
     }
     const float d = sqrtf(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]);
     IPLVector3 dir = {0.f, 0.f, -1.f};
@@ -1124,7 +1128,7 @@ void pc_spatial_render(int voice, const float* mono) {
     }
     const float ref = SP_REF_UNITS * s_scale;
     float gain = 1.f;
-    if (d > ref && isfinite(d)) {
+    if (!v->room && d > ref && isfinite(d)) { /* a room sound keeps its level */
         gain = 1.f / (1.f + SP_ROLLOFF * (d / ref - 1.f));
         if (gain < SP_MIN_GAIN) {
             gain = SP_MIN_GAIN;
@@ -1194,8 +1198,30 @@ bool pc_spatial_render_placed(int slot, const float pos[3], const float* mono) {
     memcpy(v->pos, pos, sizeof(v->pos));
     v->boost = 1.f;
     v->mix = -1; /* the ambience mixes its own */
+    v->room = false;
     pc_spatial_render(SP_VOICES + slot, mono);
     return true;
+}
+
+bool pc_spatial_render_room(int slot, const float pos[3], const float* mono) {
+#ifdef AURORA_ENABLE_OPENXR
+    if (!s_ready || !on_now() || slot < 0 || slot >= SP_ROOM || !aurora_xr_audio_room(s_room)) {
+        return false;
+    }
+    const int voice = SP_VOICES + SP_PLACED + slot;
+    SpVoice* v = &s_v[voice];
+    memcpy(v->pos, pos, sizeof(v->pos));
+    v->boost = 1.f;
+    v->mix = -1;
+    v->room = true;
+    pc_spatial_render(voice, mono);
+    return true;
+#else
+    (void)slot;
+    (void)pos;
+    (void)mono;
+    return false;
+#endif
 }
 
 /* A direction fixed to the stage's axes (x right, y up, +z toward the
