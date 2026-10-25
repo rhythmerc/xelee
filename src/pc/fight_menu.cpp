@@ -15,6 +15,8 @@
 #endif
 #include <dolphin/pad.h>
 
+#include <sys/types.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -24,6 +26,11 @@
 #include <vector>
 
 extern "C" void lbAudioAx_80024030(int);
+/* Melee's rumble setting per port (the stock Rumble page's, saved on the
+ * card), read as each fight starts (gm_LoadRumbleEnabled). */
+extern "C" int GetRumbleSettingOfPort(ssize_t port);
+extern "C" void gmMainLib_SetRumbleEnabled(ssize_t port, bool enabled);
+extern "C" void HSD_PadRumbleRemoveAll(void);
 
 namespace {
 
@@ -36,6 +43,7 @@ constexpr float kBoxW = 260.f, kBoxH = 56.f, kStub = 20.f, kEdge = 12.f;
 constexpr float kTop = 8.f, kBottom = 652.f; // the boxes' columns
 constexpr float kArtScale = 0.8f;            // the pictures were drawn for 640 px across
 constexpr float kResetW = 220.f, kResetH = 40.f;
+constexpr float kRumbleY = 30.f; // the Rumble switch, under the device's name
 constexpr int kFixed = -1; // the pause button's box: shown, never mapped
 
 struct InputName {
@@ -103,6 +111,7 @@ struct Menu : Rml::EventListener {
     std::vector<int> column[2]; // slot indices, left then right, top to bottom
     int cursor = 0;             // a slot; kReset: the reset button
     static constexpr int kReset = -2;
+    static constexpr int kRumble = -3; // the Rumble switch, over the picture
     int lastColumn = 0;         // where up from Reset goes back to
     int listFor = -1;           // the slot whose list is open
     std::vector<PcFightAction> items; // the list's choices
@@ -266,6 +275,8 @@ struct Menu : Rml::EventListener {
                    (s.input == kFixed ? " · fixed" : "") + "</span><span class=\"act\" id=\"act-" + id +
                    "\"></span></div>";
         }
+        rml += "<button id=\"rumble\" style=\"left: " + fmt((kScreenW - kResetW) / 2) + "px; top: " +
+               fmt(kRumbleY) + "px;\"></button>";
         rml += "<button id=\"reset\" style=\"left: " + fmt((kScreenW - kResetW) / 2) + "px; top: " +
                fmt(kScreenH - kResetH - 6) + "px;\">Reset to defaults</button>";
         list.close();
@@ -312,6 +323,11 @@ struct Menu : Rml::EventListener {
         }
         if (auto* reset = document->GetElementById("reset"))
             reset->SetClass("cursor", cursor == kReset && listFor < 0);
+        if (auto* rumble = document->GetElementById("rumble")) {
+            rumble->SetClass("cursor", cursor == kRumble && listFor < 0);
+            rumble->SetClass("off", !rumble_on());
+            rumble->SetInnerRML(rumble_on() ? "Rumble: On" : "Rumble: Off");
+        }
         // The lit part: the slot under the cursor's.
         const int lit = listFor >= 0 ? listFor : cursor;
         if (auto* img = document->GetElementById("lit")) {
@@ -404,9 +420,25 @@ struct Menu : Rml::EventListener {
         return -1;
     }
 
-    // Up/down within a column, down from the bottom to Reset; left/right
-    // across to the same row of the other column, and from Reset to the
-    // bottom of the column that way. dir: 0 up, 1 down, 2 left, 3 right.
+    // Rumble, for every port (a name tag's own setting still wins).
+    static bool rumble_on() { return GetRumbleSettingOfPort(0) != 0; }
+    void toggle_rumble() {
+        const bool on = !rumble_on();
+        for (int port = 0; port < 4; port++)
+            gmMainLib_SetRumbleEnabled(port, on);
+        if (!on)
+            HSD_PadRumbleRemoveAll();
+        lbAudioAx_80024030(SFX_CONFIRM);
+        refresh();
+    }
+
+    // Column c's top mappable box, or -1.
+    int top_of(int c) const { return column[c].empty() ? -1 : mappable_at(c, 0); }
+
+    // Up/down within a column, down from the bottom to Reset and up from the
+    // top to Rumble; left/right across to the same row of the other column,
+    // and from Reset (Rumble) to the bottom (top) of the column that way.
+    // dir: 0 up, 1 down, 2 left, 3 right.
     void move(int dir) {
         if (listFor >= 0) {
             if (dir <= 1 && list.move(dir == 0 ? -1 : 1))
@@ -414,7 +446,16 @@ struct Menu : Rml::EventListener {
             return;
         }
         const int before = cursor;
-        if (cursor == kReset) {
+        if (cursor == kRumble) {
+            if (dir == 1 || dir >= 2) {
+                const int c = dir == 1 ? lastColumn : dir == 2 ? 0 : 1;
+                const int to = top_of(c);
+                if (to >= 0) {
+                    lastColumn = c;
+                    cursor = to;
+                }
+            }
+        } else if (cursor == kReset) {
             if (dir == 0) {
                 // Back up the column it came from, to its lowest box.
                 for (auto it = column[lastColumn].rbegin(); it != column[lastColumn].rend(); ++it) {
@@ -442,7 +483,10 @@ struct Menu : Rml::EventListener {
                 if (k >= static_cast<int>(col.size())) {
                     lastColumn = c;
                     cursor = kReset;
-                } else if (k >= 0) {
+                } else if (k < 0) {
+                    lastColumn = c;
+                    cursor = kRumble;
+                } else {
                     cursor = col[k];
                 }
             } else if ((dir == 2) == (c == 1) && !column[1 - c].empty()) {
@@ -463,6 +507,8 @@ struct Menu : Rml::EventListener {
             pick(list.cursor());
         else if (cursor == kReset)
             reset();
+        else if (cursor == kRumble)
+            toggle_rumble();
         else
             open_list(cursor);
     }
@@ -507,6 +553,9 @@ struct Menu : Rml::EventListener {
             return action_hint(items[std::clamp(list.cursor(), 0, static_cast<int>(items.size()) - 1)]);
         if (cursor == kReset)
             return "Put every input back to its default.";
+        if (cursor == kRumble)
+            return rumble_on() ? "Controllers rumble in fights. A turns it off for every port."
+                               : "Controllers don't rumble. A turns it on for every port.";
         const Slot& s = slots[cursor];
         if (s.input == kFixed)
             return "Start always pauses.";
@@ -572,6 +621,10 @@ struct Menu : Rml::EventListener {
                 listFor = -1;
                 cursor = kReset;
                 reset();
+            } else if (id_of(target, "rumble", index)) {
+                listFor = -1;
+                cursor = kRumble;
+                toggle_rumble();
             } else if (listFor >= 0 && !list.contains(target)) {
                 back(); // a click beside the list closes it
             }
@@ -587,6 +640,10 @@ struct Menu : Rml::EventListener {
                 refresh();
             } else if (listFor < 0 && id_of(target, "reset", index) && cursor != kReset) {
                 cursor = kReset;
+                lbAudioAx_80024030(SFX_MOVE);
+                refresh();
+            } else if (listFor < 0 && id_of(target, "rumble", index) && cursor != kRumble) {
+                cursor = kRumble;
                 lbAudioAx_80024030(SFX_MOVE);
                 refresh();
             }

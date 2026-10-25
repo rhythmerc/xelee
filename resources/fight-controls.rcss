@@ -28,6 +28,9 @@ div, span { display: block; }
 .slot.fixed .act { color: #a49a7c; font-weight: normal; }
 
 #reset { position: absolute; width: 220px; height: 40px; padding-top: 7px; text-align: center; border: 3px #f0c226a0; border-radius: 7px; background-color: #0c0b08e0; font-size: 18px; color: #f0e4b8; }
+#rumble { position: absolute; width: 220px; height: 40px; padding-top: 7px; text-align: center; border: 3px #f0c226a0; border-radius: 7px; background-color: #0c0b08e0; font-size: 18px; color: #f0e4b8; }
+#rumble.off { color: #8d8468; }
+#rumble.cursor { border-color: #fff4c4; color: #ffffff; background-color: #1d180af0; box-shadow: #ffb020e0 0px 0px 14px 3px; }
 #reset.cursor { border-color: #fff4c4; color: #ffffff; background-color: #1d180af0; box-shadow: #ffb020e0 0px 0px 14px 3px; }
 
 /* An input's list of actions (src/pc/rml_picklist.cpp); the first is (none). */
