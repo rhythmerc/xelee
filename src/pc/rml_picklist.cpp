@@ -41,7 +41,7 @@ void PickList::open(Rml::Element* parent, const std::string& heading, std::vecto
     element_->SetProperty("top", fmt(y) + "px");
     element_->SetProperty("width", fmt(width) + "px");
     element_->SetProperty("transform-origin", origin);
-    redraw();
+    build();
     update();
 }
 
@@ -54,9 +54,7 @@ void PickList::close() {
     choices_.clear();
 }
 
-void PickList::redraw() {
-    if (element_ == nullptr)
-        return;
+void PickList::build() {
     std::string rml;
     if (!heading_.empty())
         rml += "<div class=\"head\">" + Rml::StringUtilities::EncodeRml(heading_) + "</div>";
@@ -64,8 +62,6 @@ void PickList::redraw() {
         std::string cls = "item";
         if (i == 0)
             cls += " first";
-        if (static_cast<int>(i) == cursor_)
-            cls += " cursor";
         if (static_cast<int>(i) == current_)
             cls += " current";
         rml += "<div class=\"" + cls + "\" data-choice=\"" + std::to_string(i) + "\"><span>" +
@@ -75,6 +71,18 @@ void PickList::redraw() {
         rml += "</div>";
     }
     element_->SetInnerRML(rml);
+    mark_cursor();
+}
+
+/* Only the class moves: rebuilding the choices under the pointer would drop
+ * the hovered element, and a tap's press, which comes with its move, would
+ * then land on nothing and need a second tap. */
+void PickList::mark_cursor() {
+    for (int i = 0; i < element_->GetNumChildren(); i++) {
+        Rml::Element* item = element_->GetChild(i);
+        if (const Rml::Variant* v = item->GetAttribute("data-choice"))
+            item->SetClass("cursor", std::atoi(v->Get<Rml::String>().c_str()) == cursor_);
+    }
 }
 
 bool PickList::move(int direction) {
@@ -82,7 +90,7 @@ bool PickList::move(int direction) {
         return false;
     const int n = static_cast<int>(choices_.size());
     cursor_ = (cursor_ + (direction < 0 ? n - 1 : 1)) % n;
-    redraw();
+    mark_cursor();
     return true;
 }
 
@@ -108,7 +116,7 @@ bool PickList::hover(Rml::Element* target) {
     if (i < 0 || i == cursor_)
         return false;
     cursor_ = i;
-    redraw();
+    mark_cursor();
     return true;
 }
 

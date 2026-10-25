@@ -56,7 +56,8 @@ public:
     void update();
 
 private:
-    void redraw();
+    void build();
+    void mark_cursor();
     int choice_of(Rml::Element* target) const;
 
     Rml::Element* element_ = nullptr;
