@@ -389,8 +389,24 @@ struct Menu : Rml::EventListener {
         refresh();
     }
 
+    // Column c's mappable box at row k, or the nearest one to it (the one
+    // below first); rows past the column's end are its last. -1 if none.
+    int mappable_at(int c, int k) const {
+        const auto& col = column[c];
+        const int n = static_cast<int>(col.size());
+        k = std::clamp(k, 0, n - 1);
+        for (int d = 0; d < n; d++) {
+            for (int r : {k + d, k - d}) {
+                if (r >= 0 && r < n && slots[col[r]].input != kFixed)
+                    return col[r];
+            }
+        }
+        return -1;
+    }
+
     // Up/down within a column, down from the bottom to Reset; left/right
-    // across to the nearest box. dir: 0 up, 1 down, 2 left, 3 right.
+    // across to the same row of the other column, and from Reset to the
+    // bottom of the column that way. dir: 0 up, 1 down, 2 left, 3 right.
     void move(int dir) {
         if (listFor >= 0) {
             if (dir <= 1 && list.move(dir == 0 ? -1 : 1))
@@ -406,6 +422,13 @@ struct Menu : Rml::EventListener {
                         cursor = *it;
                         break;
                     }
+                }
+            } else if (dir >= 2) {
+                const int c = dir == 2 ? 0 : 1;
+                const int to = column[c].empty() ? -1 : mappable_at(c, static_cast<int>(column[c].size()) - 1);
+                if (to >= 0) {
+                    lastColumn = c;
+                    cursor = to;
                 }
             }
         } else {
@@ -423,13 +446,10 @@ struct Menu : Rml::EventListener {
                     cursor = col[k];
                 }
             } else if ((dir == 2) == (c == 1) && !column[1 - c].empty()) {
-                // The nearest mappable box in the other column.
-                float best = 1e9f;
-                for (int i : column[1 - c]) {
-                    const float d = std::fabs(slots[i].y - slots[cursor].y);
-                    if (slots[i].input != kFixed && d < best)
-                        best = d, cursor = i;
-                }
+                // The same row in the other column.
+                const int to = mappable_at(1 - c, k);
+                if (to >= 0)
+                    cursor = to;
             }
         }
         if (cursor != before) {
