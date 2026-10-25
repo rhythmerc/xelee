@@ -53,6 +53,10 @@ void pc_android_set_launcher_active(bool active);
 bool pc_android_is_xr_activity(void);
 bool pc_android_launch_xr(const char* disc);
 void pc_android_launch_panel(void);
+/* Options' Restart now (pc_restart): the game starts again with this disc
+ * once this process has ended (MeleeActivity.restartGame). False if it could
+ * not be asked to. */
+bool pc_android_restart(const char* disc);
 /* The passthrough cameras' permission (HEADSET_CAMERA), for Roomtone
  * lighting, from the launcher panel. pc_android_headset_camera_request asks
  * (the system's prompt, unless already granted); _result is then -1 while

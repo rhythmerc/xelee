@@ -314,6 +314,10 @@ void pc_android_launch_panel(void) {
     call_activity("launchPanel", "()V", nullptr);
 }
 
+bool pc_android_restart(const char* disc) {
+    return call_activity("restartGame", "(Ljava/lang/String;)V", disc != nullptr ? disc : "");
+}
+
 bool pc_android_download(const char* url, const char* path) {
     JNIEnv* env = (JNIEnv*)SDL_GetAndroidJNIEnv();
     jobject activity = env != nullptr ? (jobject)SDL_GetAndroidActivity() : nullptr;
@@ -439,6 +443,11 @@ bool pc_android_launch_xr(const char* disc) {
 }
 
 void pc_android_launch_panel(void) {}
+
+bool pc_android_restart(const char* disc) {
+    (void)disc;
+    return false;
+}
 
 bool pc_android_download(const char* url, const char* path) {
     (void)url;

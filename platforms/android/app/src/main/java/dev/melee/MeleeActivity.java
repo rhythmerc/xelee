@@ -349,6 +349,39 @@ public class MeleeActivity extends SDLActivity {
         });
     }
 
+    /* Options' Restart now (src/pc/main.c, pc_restart): this process can't
+     * start its own activity again (the immersive one is singleTask, and
+     * either is still alive), so RestartActivity, in a process of its own,
+     * waits for this one to end and starts the game again with the disc. On
+     * the Quest it opens in the Home environment as a small panel, as
+     * launchPanel's does; the native side exits as the window's close does. */
+    public void restartGame(final String disc) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                android.content.Context context = getApplicationContext();
+                final boolean xr = MeleeActivity.this instanceof MeleeXrActivity;
+                android.content.Intent restart = new android.content.Intent(context, RestartActivity.class);
+                restart.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                restart.putExtra("pid", android.os.Process.myPid());
+                restart.putExtra("disc", disc);
+                restart.putExtra("xr", xr);
+                if (xr) {
+                    android.app.PendingIntent pending = android.app.PendingIntent.getActivity(context, 1,
+                        restart, android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                            | android.app.PendingIntent.FLAG_IMMUTABLE);
+                    android.content.Intent home = new android.content.Intent(android.content.Intent.ACTION_MAIN);
+                    home.addCategory(android.content.Intent.CATEGORY_HOME);
+                    home.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    home.putExtra("extra_launch_in_home_pending_intent", pending);
+                    startActivity(home);
+                } else {
+                    startActivity(restart);
+                }
+            }
+        });
+    }
+
     /* The reverse, for an immersive activity that has nothing to show (started
      * without a disc): reopen the launcher panel in the Home environment,
      * the way Meta's hybrid-app guide does it. */

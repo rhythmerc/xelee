@@ -36,6 +36,9 @@ int melee_main(void);
 #include <time.h>
 #include <unistd.h>
 #endif
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 #if defined(__ANDROID__)
 /* Android writes crash backtraces to a protobuf tombstone under /data, which
@@ -454,6 +457,100 @@ static void pc_on_signal_exit(int sig) {
     signal(sig, SIG_DFL);
 }
 
+/* pc_restart (pc.h). The arguments, and whether they named the disc. */
+static int s_argc;
+static char** s_argv;
+static bool s_disc_given;
+static bool s_restart;
+
+bool pc_restart_available(void) {
+#if defined(__EMSCRIPTEN__)
+    return false;
+#else
+    return true;
+#endif
+}
+
+void pc_restart(void) {
+    pc_log_line("restart: asked for (Options)");
+    s_restart = true;
+#if defined(__ANDROID__)
+    /* Another process starts the game again once this one has gone. */
+    if (!pc_android_restart(pc_launcher_selected_disc())) {
+        pc_log_line("restart: could not ask the activity; just exiting");
+    }
+#endif
+    pc_exit_requested = true;
+}
+
+/* At exit, after pc_shutdown_once (registered before it): this process
+ * again, the disc the launcher picked added when the arguments had none.
+ * Android's is MeleeActivity.restartGame's. */
+static void pc_restart_exec(void) {
+    if (!s_restart) {
+        return;
+    }
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+    const char* disc = pc_launcher_selected_disc();
+    const bool add_disc = !s_disc_given && disc != NULL && disc[0] != '\0';
+#if defined(_WIN32)
+    wchar_t exe[MAX_PATH];
+    if (GetModuleFileNameW(NULL, exe, MAX_PATH) == 0) {
+        return;
+    }
+    const wchar_t* line = GetCommandLineW();
+    const size_t len = wcslen(line) + (add_disc ? strlen(disc) + 4 : 0) + 1;
+    wchar_t* cmd = calloc(len, sizeof(wchar_t));
+    if (cmd == NULL) {
+        return;
+    }
+    wcscpy(cmd, line);
+    if (add_disc) {
+        wcscat(cmd, L" \"");
+        const size_t at = wcslen(cmd);
+        MultiByteToWideChar(CP_UTF8, 0, disc, -1, cmd + at, (int)(len - at - 1));
+        wcscat(cmd, L"\"");
+    }
+    STARTUPINFOW si = { sizeof si };
+    PROCESS_INFORMATION pi;
+    if (CreateProcessW(exe, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+#else
+    char** args = calloc((size_t)s_argc + 2, sizeof *args);
+    if (args == NULL) {
+        return;
+    }
+    int n = 0;
+    for (int i = 0; i < s_argc; i++) {
+        args[n++] = s_argv[i];
+    }
+    if (add_disc) {
+        args[n++] = (char*)disc;
+    }
+    args[n] = NULL;
+#if defined(__APPLE__)
+    char exe[4096];
+    uint32_t size = sizeof exe;
+    if (_NSGetExecutablePath(exe, &size) != 0) {
+        return;
+    }
+#else
+    /* An AppImage's own file, not its mounted inside (gone once we exit). */
+    const char* exe = getenv("APPIMAGE") != NULL ? getenv("APPIMAGE") : "/proc/self/exe";
+#endif
+    fprintf(stderr, "restart: starting %s again\n", exe);
+    /* Not fflush(NULL): a thread still reading a FILE (MELEE_KEY_FIFO's)
+     * holds its lock, and flushing every stream waits on it for ever. */
+    fflush(stdout);
+    fflush(stderr);
+    execv(exe, args);
+    fprintf(stderr, "restart: could not start %s again: %s\n", exe, strerror(errno));
+#endif
+#endif
+}
+
 static const struct {
     const char* name;
     AuroraBackend backend;
@@ -594,6 +691,8 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
      * drivers, and fullscreen swapchains fragment low virtual memory. */
     OSInit();
 
+    s_argc = argc;
+    s_argv = argv;
     const char* disc = NULL;
     bool card = true;
     for (int i = 1; i < argc; i++) {
@@ -649,6 +748,7 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
             disc = d;
         }
     }
+    s_disc_given = disc != NULL;
 
     /* RmlUi resolves a document's relative assets (the launcher's art under launcher/)
      * against this. Aurora otherwise defaults it to the executable's own
@@ -796,6 +896,7 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
      * destructors then tear the device down while aurora still thinks it is
      * live, its device-lost callback reports FATAL and log_callback aborts.
      * Run the shutdown from atexit so every exit path goes through it. */
+    atexit(pc_restart_exec); /* runs after the shutdown */
     atexit(pc_shutdown_once);
     signal(SIGINT, pc_on_signal_exit);
     signal(SIGTERM, pc_on_signal_exit);

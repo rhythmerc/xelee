@@ -91,6 +91,12 @@ bool pc_is_input_hud_enabled(void);
 
 /* Set once the window is closed; the game loop is expected to exit. */
 extern bool pc_exit_requested;
+/* Options' Restart now (src/pc/settings_page.cpp): leave as the window's
+ * close does, then start again with the same arguments and the disc being
+ * played, past the launcher (main.c). Available where the game can start
+ * itself again (not the web). */
+bool pc_restart_available(void);
+void pc_restart(void);
 
 /* Vertex array byte sizes for aurora's GXSetArray (src/pc/vtxarray.c).
  * pc_vtx_array_scan walks a PObj's display list at load time; the size of
