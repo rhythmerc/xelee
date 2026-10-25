@@ -319,6 +319,9 @@ static void calibrate_pass(void) {
         s_dummy_result = 3;
     } else if (!s_place) {
         s_dummy_result = 2; /* the stage's spot is set: straight on */
+        aurora_xr_set_calibrating(3); /* the stage stays hidden as the scene ends */
+    } else {
+        aurora_xr_set_calibrating(0); /* on to placing it */
     }
 }
 

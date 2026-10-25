@@ -4,6 +4,7 @@
 the placing cards' style (make_cards.py), into resources/xr/:
 
   calibrate-intro.png                 the intro card (A Start, B Back)
+  calibrate-clip.jpg                  its clip, a grid of frames (footage/)
   calibrate-strip.png                 the looking strip, its count left out
   calibrate-done.png                  Room light set, its two lines left out
   calibrate-nolight-<0|1>.png         no light found, the cursor on each choice
@@ -17,9 +18,12 @@ the placing cards' style (make_cards.py), into resources/xr/:
                                       the cards, "piece x y w h name" in
                                       calibrate-text.png (1x pixels)
 
-Needs Pillow. Run from anywhere: python3 tools/xr_cards/make_calibration.py
+Needs Pillow and ffmpeg. Run from anywhere: python3 tools/xr_cards/make_calibration.py
 """
+import math
 import os
+import subprocess
+import tempfile
 
 from PIL import Image, ImageDraw
 
@@ -73,19 +77,45 @@ def lines(d, x, y, rows, size=30, step=46, fill=WHITE):
     return y
 
 
+def wrap(text, size, width):
+    """The words of `text` in lines as wide as `width` (supersampled) allows."""
+    f = mc.font(size)
+    out, line = [], ""
+    for word in text.split():
+        trial = word if not line else line + " " + word
+        if line and f.getlength(trial) > width:
+            out.append([line])
+            line = word
+        else:
+            line = trial
+    if line:
+        out.append([line])
+    return out
+
+
+def centred(d, w, y, parts, size, fill=WHITE):
+    """A line of text and buttons centred across a card `w` wide."""
+    mc.rich_line(d, (w - mc.rich_width(parts, size)) // 2, y, parts, size, fill)
+
+
+# The intro's clip (the user's headset recording, clip_atlas): where it sits
+# on the card, beside the text.
+CLIP_RECT = (s(40), s(104), s(340), s(340))
+
+
 def intro():
-    img, d = panel(CARD_W, s(560), "ROOM LIGHT")
-    y = lines(d, s(48), s(140), [["Roomtone lights each fight with your room's light."]], 30)
-    y = lines(d, s(48), y + s(16), [
-        ["Look at every bright light in the room:"],
-        ["windows, ceiling lights, lamps. Hold each one"],
-        ["in the middle of your view until it rings."],
-    ], 30)
-    lines(d, s(48), y + s(28), [[("btn", "A"), "Start      ", ("btn", "B"), "Back"]], 32)
-    lines(d, s(48), s(560) - s(78), [
-        ["About 20 seconds, once each time you play. Redo it"],
-        ["in Options > Graphics > Calibrate room light."],
-    ], 24, 36, SILVER)
+    w, h = CARD_W, s(590)
+    img, d = panel(w, h, "ROOM LIGHT")
+    cx, cy, cw, ch = CLIP_RECT
+    d.rounded_rectangle((cx - s(3), cy - s(3), cx + cw + s(2), cy + ch + s(2)), radius=s(8), outline=(70, 70, 80),
+                        width=s(3))
+    x = cx + cw + s(36)
+    width = w - x - s(36)
+    y = lines(d, x, s(132), wrap("Roomtone lights each fight with your room's light.", 30, width), 30)
+    lines(d, x, y + s(18), wrap("Look at every bright light in the room: windows, ceiling lights, lamps. Hold each "
+                                "one in the middle of your view until it rings.", 30, width), 30)
+    centred(d, w, cy + ch + s(58), [("btn", "A"), "Start          ", ("btn", "B"), "Back"], 32)
+    centred(d, w, h - s(36), ["Recalibrate in Options > Graphics > Calibrate room light."], 24, SILVER)
     return img
 
 
@@ -106,8 +136,10 @@ def done():
     return img, (s(40), s(150), w - s(80), s(80)), (s(40), s(270), w - s(80), s(80))
 
 
-def choice(title, rows, options, cursor):
-    w, h = CARD_W, s(470)
+def choice(title, text, options, cursor):
+    w = CARD_W
+    rows = wrap(text, 30, w - s(96))
+    h = s(150) + len(rows) * s(46) + s(24) + len(options) * s(92) + s(20)
     img, d = panel(w, h, title)
     y = lines(d, s(48), s(150), rows, 30)
     y += s(24)
@@ -186,6 +218,34 @@ def text_pieces():
     return atlas, [(name, px, py, im.width, im.height) for name, px, py, im in placed]
 
 
+# The intro's clip: footage/calibration-look.mp4, 2.5 s of the user's
+# headset recording (2026-10-25, 4.3-6.8 s of calibration-example.mp4: the
+# look up from the door to the ceiling light, its ring, the count going to
+# 1), played forward and looped at CLIP_FPS, CLIP_SIZE square a frame. As a
+# JPEG grid like the placing cards' clips: no decoding as it plays, and a
+# 1.8 x 1.5k texture only while the intro shows.
+CLIP_FPS = 15
+CLIP_SIZE = 256
+
+
+def clip_atlas():
+    src = os.path.join(mc.HERE, "footage", "calibration-look.mp4")
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["ffmpeg", "-v", "error", "-i", src, "-an", "-vf",
+                        f"fps={CLIP_FPS},scale={CLIP_SIZE}:{CLIP_SIZE}:flags=lanczos", os.path.join(tmp, "f%03d.png")],
+                       check=True)
+        frames = [Image.open(os.path.join(tmp, f)).convert("RGB") for f in sorted(os.listdir(tmp))]
+    cols = math.ceil(math.sqrt(len(frames)))
+    rows = math.ceil(len(frames) / cols)
+    atlas = Image.new("RGB", (cols * CLIP_SIZE, rows * CLIP_SIZE))
+    for i, fr in enumerate(frames):
+        atlas.paste(fr, ((i % cols) * CLIP_SIZE, (i // cols) * CLIP_SIZE))
+    path = os.path.join(mc.OUT, "calibrate-clip.jpg")
+    atlas.save(path, quality=85, optimize=True)
+    print(f"{path}: {len(frames)} frames, {cols}x{rows}, {os.path.getsize(path) // 1024} KB")
+    return len(frames), cols
+
+
 def one(v):
     return v // mc.SS
 
@@ -202,19 +262,23 @@ if __name__ == "__main__":
     layout.append(("found",) + found)
     layout.append(("next",) + nxt)
     for cursor in (0, 1):
-        mc.save(choice("NO BRIGHT LIGHT FOUND", [["Look straight at a window or a lamp"], ["until it rings."]],
+        mc.save(choice("NO BRIGHT LIGHT FOUND", "Look straight at a window or a lamp until it rings.",
                        ["Keep looking", "Done without a light"], cursor), f"calibrate-nolight-{cursor}.png")
-        mc.save(choice("YOUR ROOM IS DARK", [["Fights will be as dim as your room."],
-                                             ["Turn on a lamp and look at it, or keep it dark."]],
+        mc.save(choice("YOUR ROOM IS DARK", "Fights will be as dim as your room. Turn on a lamp and look at it, or "
+                                            "keep it dark.",
                        ["Look again", "Keep it dark"], cursor), f"calibrate-dark-{cursor}.png")
     mc.save(legend([("btn", "A"), "Done   ", ("btn", "B"), "Back"]), "calibrate-legend.png")
     mc.save(legend(["Pick up your controller"]), "calibrate-legend-hands.png")
     mc.save(markers(), "calibrate-markers.png")
+    frames, cols = clip_atlas()
     atlas, rects = text_pieces()
     mc.save(atlas, "calibrate-text.png")
     with open(os.path.join(mc.OUT, "calibrate-layout.txt"), "w") as f:
         for name, x, y, w, h in layout:
             f.write(f"slot {name} {one(x)} {one(y)} {one(w)} {one(h)}\n")
+        # frames cols frame_w frame_h fps, then where it goes on the intro
+        x, y, w, h = CLIP_RECT
+        f.write(f"clip {frames} {cols} {CLIP_SIZE} {CLIP_SIZE} {CLIP_FPS} {one(x)} {one(y)} {one(w)} {one(h)}\n")
         for name, x, y, w, h in rects:
             f.write(f"piece {one(x)} {one(y)} {one(w)} {one(h)} {name}\n")
     print(open(os.path.join(mc.OUT, "calibrate-layout.txt")).read())
