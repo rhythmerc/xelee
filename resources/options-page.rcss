@@ -33,7 +33,7 @@ div, span { display: block; }
 .chip { position: absolute; height: 32px; padding-top: 2px; text-align: center; font-size: 21px; border-radius: 5px; color: #6f6852; }
 .chip.on, .chip.action { color: #1a1406; font-weight: bold; background-color: #f0c226; box-shadow: #ff961480 0px 0px 6px 1px; }
 .row.cursor .chip.on, .row.cursor .chip.action { background-color: #fff0a8; box-shadow: #ffb020c0 0px 0px 8px 2px; }
-.row.unavailable .chip.on { color: #a49a7c; background-color: #3a3320; box-shadow: none; font-weight: normal; }
+.row.unavailable .chip.on, .row.unavailable .chip.action { color: #a49a7c; background-color: #3a3320; box-shadow: none; font-weight: normal; }
 
 /* A choice: its value between arrows, as Melee's rules rows. */
 .value { position: absolute; text-align: center; font-size: 23px; font-weight: bold; color: #f0e4b8; }
