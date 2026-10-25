@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 OUT = os.path.join(ROOT, "resources", "xr")
 FONT = os.path.join(ROOT, "resources", "font-bold.ttf")  # Melee's slanted headings
-TEXT_FONT = os.path.join(ROOT, "resources", "menu-bold.ttf")  # the menus' Noto Sans, as the Options pages
+TEXT_FONT = os.path.join(ROOT, "resources", "menu.ttf")  # the menus' Noto Sans, as the calibration's text
 
 DONE = False  # the Place Stage menu flow: the cards say "done", not "fight"
 
