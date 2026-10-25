@@ -908,6 +908,14 @@ bool mn_80229938(MenuKind menu_kind, s32 selection)
         return false;
     }
 #ifdef TARGET_PC
+    /* Screen Display (deflicker, the GameCube's video modes) and the
+     * Japanese language switch mean nothing here, and with Place Stage and
+     * Fight Controls the panel has more rows than fit. */
+    if (menu_kind == MENU_KIND_SETTINGS &&
+        (selection == SEL_SETTINGS_DISPLAY || selection == SEL_SETTINGS_LANG))
+    {
+        return false;
+    }
     if (menu_kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_PLACE) {
         return pc_xr_place_available();
     }

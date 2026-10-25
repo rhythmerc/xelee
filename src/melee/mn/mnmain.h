@@ -18,8 +18,10 @@ typedef struct _MainMenuData {
     /* 0x0004 */ HSD_JObj* tree[42]; // 42 * 4 = 0xA8 bytes
     /* 0x00AC */ HSD_Text* description;
 #ifdef TARGET_PC
-    /* SIS text over slots whose matanim label is hidden (mnonline.h) */
-    HSD_Text* pc_label[6];
+    /* SIS text over slots whose matanim label is hidden (mnonline.h), one
+     * per row: Options has 7 with Place Stage shown (a headset presenting),
+     * as many as mn_pcLabelFollow holds. */
+    HSD_Text* pc_label[8];
 #endif
 } MainMenuData;
 
