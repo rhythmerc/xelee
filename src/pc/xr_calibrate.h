@@ -43,7 +43,9 @@ int pc_xr_calibrate_result(void);
 void pc_xr_calibrate_begin(const char* next);
 /* Each pass while it runs, with the buttons pressed and let go during it
  * and the stick's or the D-pad's new push (-1 up, 1 down, 0 none): 0
- * running, 1 done (calibrated this launch), 2 backed out. */
+ * running, 1 done (calibrated this launch; the caller ends Aurora's step,
+ * aurora_xr_set_calibrating 0 for placing next, 3 for the scene ending),
+ * 2 backed out (the step ended, the scene to end). */
 int pc_xr_calibrate_pass(uint32_t released, int move);
 /* The scene ended under it: off, not done. */
 void pc_xr_calibrate_abort(void);

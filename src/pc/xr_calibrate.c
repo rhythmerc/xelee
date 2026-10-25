@@ -37,6 +37,19 @@ typedef struct Pic {
  * pieces put on them, and where those go (calibrate-layout.txt). */
 static Pic s_intro, s_strip, s_done, s_choice[2][2], s_text;
 static Rect s_slot_count, s_slot_changed, s_slot_found, s_slot_next;
+/* The intro's clip (calibrate-clip.jpg, its "clip" line): frames, a row's,
+ * a frame's size, its rate, and where on the card. Decoded at each intro
+ * and handed over, then taken back after it (its texture is ~11 MB). */
+static struct {
+    int frames, cols, fw, fh;
+    float fps;
+    Rect at;
+} s_clip;
+/* The legends: the hands' is shown while no controller is in hand; with a
+ * pad (a gamepad, the GameCube adapter, keys) in use, the controllers' goes
+ * in its place too. */
+static Pic s_legend[2];
+static int s_legend_slot2 = -1; /* which legend Aurora has as the hands' */
 #define PIECES_MAX 64
 static struct {
     char name[40];
@@ -84,6 +97,10 @@ static void load_layout(void) {
             if (slot != NULL) {
                 *slot = r;
             }
+        } else if (sscanf(line, "clip %d %d %d %d %f %d %d %d %d", &s_clip.frames, &s_clip.cols, &s_clip.fw,
+                          &s_clip.fh, &s_clip.fps, &r.x, &r.y, &r.w, &r.h) == 9)
+        {
+            s_clip.at = r;
         } else if (sscanf(line, "piece %d %d %d %d %n", &r.x, &r.y, &r.w, &r.h, &used) == 4 && used > 0 &&
                    s_piece_count < PIECES_MAX)
         {
@@ -106,13 +123,15 @@ static void load(void) {
            load_pic(&s_choice[0][1], "calibrate-nolight-1.png") && load_pic(&s_choice[1][0], "calibrate-dark-0.png") &&
            load_pic(&s_choice[1][1], "calibrate-dark-1.png") && load_pic(&s_text, "calibrate-text.png");
     load_layout();
-    static const char* const once[3] = {"calibrate-legend.png", "calibrate-legend-hands.png", "calibrate-markers.png"};
-    for (int i = 0; i < 3; i++) {
-        Pic p;
-        if (load_pic(&p, once[i])) {
-            aurora_xr_set_calibration_image(1 + i, p.w, p.h, p.rgba);
-            pc_xr_free_rgba(p.rgba);
-        }
+    load_pic(&s_legend[0], "calibrate-legend.png");
+    load_pic(&s_legend[1], "calibrate-legend-hands.png");
+    if (s_legend[0].rgba != NULL) {
+        aurora_xr_set_calibration_image(1, s_legend[0].w, s_legend[0].h, s_legend[0].rgba);
+    }
+    Pic markers;
+    if (load_pic(&markers, "calibrate-markers.png")) {
+        aurora_xr_set_calibration_image(3, markers.w, markers.h, markers.rgba);
+        pc_xr_free_rgba(markers.rgba);
     }
     pc_room_chime_load();
     if (!s_ok) {
@@ -251,7 +270,41 @@ int pc_xr_calibrate_result(void) {
     return s_result;
 }
 
+/* The hands' legend, or the controllers' with a pad in use. */
+static void legend(void) {
+    const int device = pc_pad_active_device();
+    const int want = device == PC_PAD_DEVICE_GAMEPAD || device == PC_PAD_DEVICE_GCADAPTER ||
+                             device == PC_PAD_DEVICE_KEYS || s_legend[1].rgba == NULL
+                         ? 0
+                         : 1;
+    if (want != s_legend_slot2 && s_legend[want].rgba != NULL) {
+        s_legend_slot2 = want;
+        aurora_xr_set_calibration_image(2, s_legend[want].w, s_legend[want].h, s_legend[want].rgba);
+    }
+}
+
+/* The intro's clip, handed to Aurora (on) or taken back. */
+static void clip(bool on) {
+    static bool given;
+    if (!on) {
+        if (given) {
+            given = false;
+            aurora_xr_set_calibration_clip(0, 0, NULL, 0, 0, 0, 0, 0.f, 0, 0, 0, 0);
+        }
+        return;
+    }
+    Pic atlas;
+    if (s_clip.frames <= 0 || !load_pic(&atlas, "calibrate-clip.jpg")) {
+        return;
+    }
+    aurora_xr_set_calibration_clip(atlas.w, atlas.h, atlas.rgba, s_clip.frames, s_clip.cols, s_clip.fw, s_clip.fh,
+                                   s_clip.fps, s_clip.at.x, s_clip.at.y, s_clip.at.w, s_clip.at.h);
+    pc_xr_free_rgba(atlas.rgba);
+    given = true;
+}
+
 static void looking(void) {
+    clip(false);
     s_phase = PHASE_LOOKING;
     s_shown_rung = -1; /* drawn at the next pass */
     aurora_xr_set_calibrating(2);
@@ -265,22 +318,27 @@ void pc_xr_calibrate_begin(const char* next) {
     s_shown_line = false;
     s_changed_until = 0;
     show(&s_intro, NULL);
+    clip(true);
+    legend();
     aurora_xr_set_calibrating(1);
     pc_log_line("xr: room light calibration (then %s)", s_next);
 }
 
 void pc_xr_calibrate_abort(void) {
+    clip(false);
     if (s_phase != PHASE_OFF) {
         s_phase = PHASE_OFF;
-        aurora_xr_set_calibrating(0);
+        aurora_xr_set_calibrating(3); /* the scene ends: its stage stays hidden */
     }
 }
 
+/* Done: Aurora's step stays up (the done card) for the placement scene to
+ * end it (xr_place.c), on to placing or out of the scene. */
 static int finish(int found) {
+    clip(false);
     s_phase = PHASE_OFF;
     s_calibrated = true;
     s_result = found;
-    aurora_xr_set_calibrating(0);
     pc_log_line("xr: room light calibrated: %d lights", found);
     return 1;
 }
@@ -298,6 +356,7 @@ int pc_xr_calibrate_pass(uint32_t released, int move) {
         pc_room_chime_light(number, pos);
     }
     const uint64_t now = SDL_GetTicks();
+    legend();
     switch (s_phase) {
     case PHASE_INTRO:
         if (released & PAD_BUTTON_A) {

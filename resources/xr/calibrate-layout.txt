@@ -2,6 +2,7 @@ slot count 790 52 160 100
 slot changed 46 110 0 0
 slot found 40 150 920 80
 slot next 40 270 920 80
+clip 38 7 256 256 15 40 104 340 340
 piece 0 0 69 57 big-0
 piece 69 0 39 46 small-0
 piece 108 0 69 56 big-1
