@@ -1,0 +1,4 @@
+<rml><head><title>Options</title><link type="text/rcss" href="options-page.rcss" /></head>
+<body>
+<div id="screen"><div id="board"></div></div>
+</body></rml>

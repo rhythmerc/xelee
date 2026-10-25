@@ -128,8 +128,11 @@ typedef enum MenuKind {
      * the online lobby scene. */
     MENU_KIND_SLIPPI_PAGE = 37,
     /* PC: Options > Audio (mnfight.c's host; src/pc/audio_menu.h), in the
-     * stock Sound row's place. */
+     * stock Screen Display row's place. */
     MENU_KIND_SETTINGS_AUDIO = 38,
+    /* PC: Options > Graphics, in the stock Sound row's place (the first row
+     * shown: Rumble's is hidden). */
+    MENU_KIND_SETTINGS_GRAPHICS = 39,
 #endif
 } MenuKind;
 

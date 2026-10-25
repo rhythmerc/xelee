@@ -21,6 +21,9 @@
 #include <aurora/event.h>
 #include <aurora/gfx.h>
 #include <aurora/rmlui.hpp>
+#ifdef AURORA_ENABLE_OPENXR
+#include <aurora/xr.h>
+#endif
 /* TargetConditionals.h defines TARGET_OS_IPHONE on macOS too, as 0, so this
  * has to test its value: defined() alone pulled the iOS-only dialog into the
  * macOS build and left the link short a symbol. */
@@ -49,6 +52,9 @@
 
 namespace {
 launcher::Preferences prefs;
+/* What the game was started with (pc_launcher_configure), for the settings
+ * that apply at launch (settings.h). */
+launcher::Preferences prefs_at_launch;
 std::filesystem::path config_path;
 
 /* ---- Slippi sign-in (the launcher's only online concern) --------------
@@ -1931,6 +1937,7 @@ extern "C" void pc_launcher_configure(AuroraConfig* config) {
         }
     }
 #endif
+    prefs_at_launch = prefs;
     config->startFullscreen = prefs.fullscreen;
     config->msaa = prefs.msaa;
     config->xrEyeScale = prefs.xr_resolution / 100.0f;
@@ -2814,6 +2821,116 @@ extern "C" void pc_settings_set_audio(const PcAudioSettings* s) {
 extern "C" void pc_settings_audio_defaults(PcAudioSettings* out) {
     const launcher::Preferences d;
     *out = {d.volume, d.music_volume, d.sfx_volume, d.mute, d.reverb, d.spatial_audio, d.stage_sounds};
+}
+static PcGraphicsSettings graphics_of(const launcher::Preferences& p) {
+    PcGraphicsSettings g{};
+    g.fullscreen = p.fullscreen;
+    g.vsync = p.vsync;
+    g.render_scale = static_cast<int>(p.render_scale);
+    g.widescreen = p.widescreen;
+    g.hud_mode = p.hud_mode;
+    g.msaa = p.msaa;
+    g.filter_mode = p.filter_mode;
+    g.fps = p.fps;
+    g.backend = p.backend;
+    g.custom_textures = p.custom_textures;
+    g.xr_resolution = p.xr_resolution;
+    g.xr_spacewarp = p.xr_spacewarp;
+    g.xr_foveation = p.xr_foveation;
+    g.xr_shadow = p.xr_shadow;
+    g.xr_lighting = p.xr_lighting;
+    return g;
+}
+extern "C" void pc_settings_graphics(PcGraphicsSettings* out) {
+    *out = graphics_of(prefs);
+}
+extern "C" void pc_settings_graphics_at_launch(PcGraphicsSettings* out) {
+    *out = graphics_of(prefs_at_launch);
+}
+extern "C" void pc_settings_graphics_defaults(PcGraphicsSettings* out) {
+    *out = graphics_of(launcher::Preferences{});
+}
+/* As the F1 menu applies each (PortMenu::action); the rest take effect at
+ * the next launch, or are read live (the HUD layout, the FPS counter). */
+extern "C" void pc_settings_set_graphics(const PcGraphicsSettings* s) {
+    if (s->fullscreen != prefs.fullscreen && port_menu.window != nullptr &&
+        SDL_SetWindowFullscreen(port_menu.window, s->fullscreen))
+        prefs.fullscreen = s->fullscreen;
+    if (s->vsync != prefs.vsync && !std::getenv("MELEE_VSYNC")) {
+        prefs.vsync = s->vsync;
+        aurora_enable_vsync(prefs.vsync);
+    }
+    const bool resize = s->render_scale != static_cast<int>(prefs.render_scale) || s->widescreen != prefs.widescreen;
+    prefs.render_scale = static_cast<float>(std::clamp(s->render_scale, 0, 10));
+    prefs.widescreen = std::clamp(s->widescreen, 0, 2);
+    if (resize) {
+        pc_widescreen_set_mode(prefs.widescreen);
+        VISetFrameBufferScale(prefs.render_scale);
+    }
+    prefs.hud_mode = s->hud_mode;
+    prefs.msaa = s->msaa;
+    if (s->filter_mode != prefs.filter_mode) {
+        prefs.filter_mode = s->filter_mode & 3;
+        aurora_set_resampler(static_cast<AuroraSampler>(prefs.filter_mode));
+    }
+    prefs.fps = s->fps;
+    prefs.backend = s->backend;
+    if (s->custom_textures != prefs.custom_textures) {
+        prefs.custom_textures = s->custom_textures;
+        pc_textures_reload();
+    }
+#ifdef AURORA_ENABLE_OPENXR
+    // The headset's, as it runs; SpaceWarp and foveation at the next launch
+    // (their images, pass and pipelines are made for them at launch).
+    if (s->xr_resolution != prefs.xr_resolution)
+        aurora_xr_set_eye_scale(s->xr_resolution / 100.0f);
+    if (s->xr_shadow != prefs.xr_shadow)
+        aurora_xr_set_stage_shadow(s->xr_shadow);
+    if (s->xr_lighting != prefs.xr_lighting)
+        aurora_xr_set_room_light(s->xr_lighting);
+#endif
+    prefs.xr_resolution = s->xr_resolution;
+    prefs.xr_spacewarp = s->xr_spacewarp;
+    prefs.xr_foveation = std::clamp(s->xr_foveation, 0, 3);
+    prefs.xr_shadow = s->xr_shadow;
+    prefs.xr_lighting = s->xr_lighting;
+    std::string error;
+    if (!launcher::save_preferences(config_path, prefs, error))
+        SDL_Log("settings: not saved: %s", error.c_str());
+}
+extern "C" bool pc_settings_quest(void) {
+    /* MELEE_LAUNCHER_PLATFORM=quest shows the Quest's rows on a desktop, as
+     * it lays the launcher out. */
+    const char* platform = std::getenv("MELEE_LAUNCHER_PLATFORM");
+    return std::strcmp(platform != nullptr && *platform ? platform : platform_class, "quest") == 0;
+}
+extern "C" const char* pc_settings_filter_name(int mode) {
+    return filter_name(mode);
+}
+extern "C" const char* pc_settings_backend_name(int backend) {
+    return backend_name(backend);
+}
+extern "C" int pc_settings_backend_next(int backend) {
+    return backend_next(backend);
+}
+extern "C" bool pc_settings_camera_granted(void) {
+#if defined(__ANDROID__)
+    return pc_android_headset_camera_granted();
+#else
+    return true;
+#endif
+}
+extern "C" void pc_settings_camera_request(void) {
+#if defined(__ANDROID__)
+    pc_android_headset_camera_request();
+#endif
+}
+extern "C" int pc_settings_camera_result(void) {
+#if defined(__ANDROID__)
+    return pc_android_headset_camera_result();
+#else
+    return 1;
+#endif
 }
 extern "C" bool pc_settings_spatial_built(void) {
 #ifdef MELEE_SPATIAL_AUDIO

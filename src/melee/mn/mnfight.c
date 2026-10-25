@@ -6,6 +6,7 @@
 #include "types.h"
 #include "mnslippi.h"
 #include "pc/audio_menu.h"
+#include "pc/graphics_menu.h"
 #include "pc/fight_menu.h"
 #include <melee/it/forward.h>
 #include <melee/lb/lb_00B0.h>
@@ -59,13 +60,17 @@ typedef struct PcOptionsPage {
     void (*presence)(float presence);
     bool (*input)(int what);
     const char* (*hint)(void);
+    bool (*leaving)(void); ///< the screen asks to go back (or NULL)
 } PcOptionsPage;
 
 static const PcOptionsPage mnFight_pages[] = {
     { MENU_KIND_SETTINGS_FIGHT, SEL_SETTINGS_FIGHT, "Controls", "Choose what each button does in a fight.",
-      pc_fight_menu_show, pc_fight_menu_presence, pc_fight_menu_input, pc_fight_menu_hint },
-    { MENU_KIND_SETTINGS_AUDIO, SEL_SETTINGS_SOUND, "Audio", "Set the volumes and how the game sounds.",
-      pc_audio_menu_show, pc_audio_menu_presence, pc_audio_menu_input, pc_audio_menu_hint },
+      pc_fight_menu_show, pc_fight_menu_presence, pc_fight_menu_input, pc_fight_menu_hint, NULL },
+    { MENU_KIND_SETTINGS_AUDIO, SEL_SETTINGS_DISPLAY, "Audio", "Set the volumes and how the game sounds.",
+      pc_audio_menu_show, pc_audio_menu_presence, pc_audio_menu_input, pc_audio_menu_hint, NULL },
+    { MENU_KIND_SETTINGS_GRAPHICS, SEL_SETTINGS_SOUND, "Graphics", "Set the resolution and picture quality.",
+      pc_graphics_menu_show, pc_graphics_menu_presence, pc_graphics_menu_input, pc_graphics_menu_hint,
+      pc_graphics_menu_leaving },
 };
 
 static const PcOptionsPage* mnFight_Page(MenuKind kind)
@@ -91,24 +96,73 @@ typedef struct FightMenu {
 static HSD_GObj* mnFight_gobj;
 static const PcOptionsPage* mnFight_open; ///< the page taking input
 
-/* The hint box's text: literal, sized and placed as the PC descriptions in
- * mnmain.c's (mnOnline_Description). */
-static void mnFight_SetHint(FightMenu* menu, const char* text)
-{
-    HSD_Text* t;
+/* The hint box at the stock size holds about 40 letters on its one line;
+ * smaller, two lines of about 48. */
+enum { HINT_FIT = 40, HINT_FIT_TWO = 48 };
+#define HINT_SIZE 0.022f
+#define HINT_SIZE_TWO 0.0175f
+#define HINT_CELL 32.0f /* a glyph cell, in the text's own units */
+#define HINT_LINE 36.0f /* two lines' pitch, a little apart */
 
-    if (menu->hint != NULL) {
-        HSD_SisLib_803A5CC4(menu->hint);
-    }
-    t = HSD_SisLib_803A6754(0, mn_804D6BB4);
-    menu->hint = t;
+HSD_Text* mnFight_HintText(const char* text)
+{
+    HSD_Text* t = HSD_SisLib_803A6754(0, mn_804D6BB4);
+    const size_t n = strlen(text);
+    char first[128];
+    const char* second = NULL;
+    size_t longest = n;
+    f32 size = HINT_SIZE;
+
     t->pos_x = -9.0f;
     t->pos_y = 9.3f;
     t->pos_z = 17.0f;
     t->default_kerning = 1;
-    t->font_size.x = 0.022f;
-    t->font_size.y = 0.022f;
-    HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "%s", text);
+    if (n > HINT_FIT) {
+        /* Two lines, broken at the space nearest the middle. */
+        size_t best = 0, i;
+        for (i = 1; i < n && i < sizeof first; i++) {
+            if (text[i] == ' ' && (best == 0 || (i > n / 2 ? i - n / 2 : n / 2 - i) <
+                                                    (best > n / 2 ? best - n / 2 : n / 2 - best)))
+            {
+                best = i;
+            }
+        }
+        if (best > 0) {
+            memcpy(first, text, best);
+            first[best] = '\0';
+            second = text + best + 1;
+            longest = best > n - best - 1 ? best : n - best - 1;
+            size = HINT_SIZE_TWO;
+            /* Centred where the one line sits. */
+            t->pos_y -= ((HINT_LINE + HINT_CELL) * size - HINT_CELL * HINT_SIZE) / 2.0f;
+        }
+    }
+    t->font_size.x = size;
+    t->font_size.y = size;
+    {
+        /* A line still too long is condensed to fit. */
+        const size_t fit = second != NULL ? HINT_FIT_TWO : HINT_FIT;
+        if (longest > fit) {
+            t->font_size.x = size * (f32) fit / (f32) longest;
+        }
+    }
+    if (second != NULL) {
+        HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "%s", first);
+        HSD_SisLib_803A6B98(t, 0.0f, HINT_LINE, "%s", second);
+    } else {
+        HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "%s", text);
+    }
+    return t;
+}
+
+/* The hint box's text: literal, sized and placed as the PC descriptions in
+ * mnmain.c's (mnOnline_Description). */
+static void mnFight_SetHint(FightMenu* menu, const char* text)
+{
+    if (menu->hint != NULL) {
+        HSD_SisLib_803A5CC4(menu->hint);
+    }
+    menu->hint = mnFight_HintText(text);
 }
 
 static void mnFight_FreeHint(FightMenu* menu)
@@ -178,7 +232,8 @@ static void mnFight_Think(HSD_GObj* gobj)
     }
     events = Menu_GetAllInputs();
     /* The screen takes the menus' input; B with nothing to back out of
-     * leaves the page. */
+     * leaves the page, as does the screen's own asking (Graphics' restart
+     * question's Later). */
     if (events & MenuInput_Up) {
         page->input(PC_FIGHT_MENU_UP);
     } else if (events & MenuInput_Down) {
@@ -190,7 +245,9 @@ static void mnFight_Think(HSD_GObj* gobj)
     } else if (events & MenuInput_Confirm) {
         page->input(PC_FIGHT_MENU_CONFIRM);
     }
-    if ((events & MenuInput_Back) && !page->input(PC_FIGHT_MENU_BACK)) {
+    if (((events & MenuInput_Back) && !page->input(PC_FIGHT_MENU_BACK)) ||
+        (page->leaving != NULL && page->leaving()))
+    {
         sfxBack();
         mn_804A04F0.entering_menu = 0;
         mn_80229894(MENU_KIND_SETTINGS, page->row, 3);

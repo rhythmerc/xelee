@@ -52,15 +52,8 @@ static void mnSlippi_SetHint(const char* text)
     if (s.hint != NULL) {
         HSD_SisLib_803A5CC4(s.hint);
     }
-    t = HSD_SisLib_803A6754(0, mn_804D6BB4);
+    t = mnFight_HintText(text);
     s.hint = t;
-    t->pos_x = -9.0f;
-    t->pos_y = 9.3f;
-    t->pos_z = 17.0f;
-    t->default_kerning = 1;
-    t->font_size.x = 0.022f;
-    t->font_size.y = 0.022f;
-    HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "%s", text);
 }
 
 /* The menu's backdrop, camera and panel, as mnMain_Scene_OnEnter builds them,

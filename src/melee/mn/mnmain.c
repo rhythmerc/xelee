@@ -110,7 +110,7 @@ static u16 mn_803EAE7C[] = {
     0x2, 0x3, 0x4, 0x9, 0xB, 0xC, 0xD, 0x0,
 };
 #ifdef TARGET_PC
-#define MENU_KIND_TABLE_LEN (MENU_KIND_SETTINGS_AUDIO + 1)
+#define MENU_KIND_TABLE_LEN (MENU_KIND_SETTINGS_GRAPHICS + 1)
 #else
 #define MENU_KIND_TABLE_LEN 0x22
 #endif
@@ -314,6 +314,11 @@ static AnimLoopSettings mn_803EAE8C[MENU_KIND_TABLE_LEN][3] = {
         { 4250, 4299, 4270 },
         { 4300, 4399, 4320 },
     },
+    { /* MENU_KIND_SETTINGS_GRAPHICS: Erase Data's, as Controls' */
+        { 4200, 4249, 4220 },
+        { 4250, 4299, 4270 },
+        { 4300, 4399, 4320 },
+    },
 #endif
 };
 
@@ -376,14 +381,21 @@ static AnimLoopSettings mn_803EB4C8[] = {
     { 1150, 1199, 1170 },
 };
 
+#ifdef TARGET_PC
+/* Rumble's row is hidden (Controls has the switch); Sound's row is Graphics
+ * with Screen Display's preview, Screen Display's Audio with Sound's. */
+static AnimLoopSettings mn_803EB4F8[] = {
+    { 1300, 1349, 1320 }, { 1400, 1449, 1420 }, { 1350, 1399, 1370 },
+    { 1450, 1499, 1470 }, { 1500, 1549, 1520 }, { 1550, 1599, 1570 },
+    { 1400, 1449, 1420 }, /* Place Stage (XR): Screen Display's preview */
+    { 1300, 1349, 1320 }, /* Controls: Rumble's preview (a controller) */
+};
+#else
 static AnimLoopSettings mn_803EB4F8[] = {
     { 1300, 1349, 1320 }, { 1350, 1399, 1370 }, { 1400, 1449, 1420 },
     { 1450, 1499, 1470 }, { 1500, 1549, 1520 }, { 1550, 1599, 1570 },
-#ifdef TARGET_PC
-    { 1400, 1449, 1420 }, /* Place Stage (XR): Screen Display's preview */
-    { 1300, 1349, 1320 }, /* Fight Controls: Rumble's preview (a controller) */
-#endif
 };
+#endif
 
 static AnimLoopSettings mn_803EB540[] = {
     { 1600, 1649, 1620 }, { 1650, 1699, 1670 }, { 1700, 1749, 1720 },
@@ -728,6 +740,13 @@ MenuKindData mn_803EB6B0[MENU_KIND_TABLE_LEN] = {
         0x01,
         NULL,
     },
+    { /* MENU_KIND_SETTINGS_GRAPHICS: its own GObjs (mnfight.c) */
+        NULL,
+        0,
+        NULL,
+        0x01,
+        NULL,
+    },
 #endif
 };
 
@@ -920,11 +939,12 @@ bool mn_80229938(MenuKind menu_kind, s32 selection)
         return false;
     }
 #ifdef TARGET_PC
-    /* Screen Display (deflicker, the GameCube's video modes) and the
-     * Japanese language switch mean nothing here, and with Place Stage and
-     * Fight Controls the panel has more rows than fit. */
+    /* Rumble's switch is in Controls, and the Japanese language switch
+     * means nothing here; with Place Stage and Controls the panel has more
+     * rows than fit. (Sound's and Screen Display's rows are Graphics and
+     * Audio.) */
     if (menu_kind == MENU_KIND_SETTINGS &&
-        (selection == SEL_SETTINGS_DISPLAY || selection == SEL_SETTINGS_LANG))
+        (selection == SEL_SETTINGS_RUMBLE || selection == SEL_SETTINGS_LANG))
     {
         return false;
     }
@@ -981,16 +1001,9 @@ static void mn_80229A7C(MainMenuData* data, MenuKind menu_kind, int selection)
         const char* literal = mnOnline_Description(menu_kind, selection);
         if (literal != NULL) {
             /* ponytail: literal text; SdMenu has no SIS strings for PC
-             * entries. Sized and placed to sit where the stock ones do. */
-            text = HSD_SisLib_803A6754(0, mn_804D6BB4);
-            data->description = text;
-            text->pos_x = -9.0f;
-            text->pos_y = 9.3f;
-            text->pos_z = 17.0f;
-            text->default_kerning = 1;
-            text->font_size.x = 0.022f;
-            text->font_size.y = 0.022f;
-            HSD_SisLib_803A6B98(text, 0.0f, 0.0f, "%s", literal);
+             * entries. Sized and placed to sit where the stock ones do, on
+             * two lines when long (mnFight_HintText). */
+            data->description = mnFight_HintText(literal);
             return;
         }
     }
@@ -1108,7 +1121,9 @@ static void mn_UpdatePcLabels(MainMenuData* data, bool alive)
     if (alive && data->description != NULL) {
         const char* notice = mnOnline_TakeNotice();
         if (notice != NULL) {
-            HSD_SisLib_803A70A0(data->description, 0, "%s", notice);
+            /* Made again rather than its line rewritten: either may be two. */
+            HSD_SisLib_803A5CC4(data->description);
+            data->description = mnFight_HintText(notice);
         }
     }
     /* i is the row (the slot the text sits on), sel the selection in it. */
@@ -2271,6 +2286,7 @@ int mn_8022C010(int menu_kind, int selection)
 #ifdef TARGET_PC
     case MENU_KIND_SETTINGS_FIGHT:
     case MENU_KIND_SETTINGS_AUDIO:
+    case MENU_KIND_SETTINGS_GRAPHICS:
 #endif
         return 3;
     case MENU_KIND_DATA:
@@ -2864,9 +2880,9 @@ void mn_8022D104(HSD_GObj* gp)
         case SEL_SETTINGS_SOUND:
             sfxForward();
 #ifdef TARGET_PC
-            /* Our Audio page in its place: the stock one's mono and balance
-             * mean nothing beside the volumes (gm_801603B0). */
-            mnFight_Open(MENU_KIND_SETTINGS_AUDIO);
+            /* Our Graphics page, first as the list goes (Screen Display's
+             * row has Audio). */
+            mnFight_Open(MENU_KIND_SETTINGS_GRAPHICS);
 #else
             mnSound_8024A09C(1);
 #endif
@@ -2874,7 +2890,14 @@ void mn_8022D104(HSD_GObj* gp)
             break;
         case SEL_SETTINGS_DISPLAY:
             sfxForward();
+#ifdef TARGET_PC
+            /* Our Audio page: the stock Sound page's mono and balance mean
+             * nothing beside the volumes (gm_801603B0), as Screen Display's
+             * deflicker and video modes. */
+            mnFight_Open(MENU_KIND_SETTINGS_AUDIO);
+#else
             mnDeflicker_8024A6C4(1);
+#endif
             HSD_GObjFree(gp);
             break;
         case SEL_SETTINGS_LANG:
@@ -3246,7 +3269,11 @@ void mn_8022DB10(HSD_GObj* gp)
             break;
         case SEL_MAIN_SETTINGS:
             menu_kind = MENU_KIND_SETTINGS;
+#ifdef TARGET_PC
+            hovered_selection = SEL_SETTINGS_SOUND; /* Graphics: Rumble's row is hidden */
+#else
             hovered_selection = 0;
+#endif
             break;
         case SEL_MAIN_DATA:
             menu_kind = MENU_KIND_DATA;

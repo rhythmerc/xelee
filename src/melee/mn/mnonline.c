@@ -71,6 +71,9 @@ const char* mnOnline_Label(MenuKind kind, int selection)
         return "Online Mode";
     }
     if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_SOUND) {
+        return "Graphics";
+    }
+    if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_DISPLAY) {
         return "Audio";
     }
     if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_PLACE) {
@@ -101,6 +104,9 @@ const char* mnOnline_Description(MenuKind kind, int selection)
         return "Play against other players over the network.";
     }
     if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_SOUND) {
+        return "Set the resolution and picture quality.";
+    }
+    if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_DISPLAY) {
         return "Set the volumes and how the game sounds.";
     }
     if (kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_PLACE) {

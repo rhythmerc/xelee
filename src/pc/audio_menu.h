@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* The Audio screen (Options > Audio, in the stock Sound row's place; the
- * settings are settings.h's, the launcher's own).
+/* The Audio screen (Options > Audio, in the stock Screen Display row's
+ * place; the settings are settings.h's, the launcher's own).
  *
  * Two groups of rows in Melee's line work: Volume (master, music, effects as
  * bars of twenty steps, and mute) and Sound (reverb, spatial audio, the
