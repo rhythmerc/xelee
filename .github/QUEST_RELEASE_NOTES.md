@@ -1,6 +1,6 @@
 Xelee for Meta Quest 3 / 3S. You need your own Super Smash Bros. Melee NTSC-U 1.02 disc image.
 
-## What's new
+## Changelog
 
 **Smoother play**
 - Fixed periodic hitches: every few seconds a frame could take too long and be held on screen.
@@ -33,8 +33,16 @@ Xelee for Meta Quest 3 / 3S. You need your own Super Smash Bros. Melee NTSC-U 1.
 - Pointing with a controller's laser no longer switches the active device away from your gamepad.
 - Pick lists take a choice on the first tap.
 
-## Installing and updating
+## Installing
 
-**First install:** enable developer mode, then sideload `Xelee-Quest-arm64.apk` with SideQuest or `adb install Xelee-Quest-arm64.apk`.
+**On the headset, no PC needed:**
+1. In the headset's browser, open this release page and download `Xelee-Quest-arm64.apk`.
+2. Open the **Files** app and go to **Downloads**. Tap the three dots next to `Xelee-Quest-arm64.apk`, then **Open with**, then **Package installer**.
+3. The first time, the headset asks whether Files may install apps: allow it, then choose **Install**.
+4. Xelee is in your library under **Unknown Sources**.
 
-**Updating:** the launcher checks for new releases at each start (Settings → Launcher). Choose **Update Now**, then **Install**, and confirm in the system's dialog. The first time, the headset asks you to allow installs from Xelee.
+**With a PC:** enable developer mode, then sideload `Xelee-Quest-arm64.apk` with SideQuest or `adb install Xelee-Quest-arm64.apk`.
+
+## Updating
+
+The launcher checks for new releases at each start (Settings → Launcher). Choose **Update Now**, then **Install**, and confirm in the system's dialog. The first time, the headset asks you to allow installs from Xelee.
