@@ -276,6 +276,9 @@ public class MeleeActivity extends SDLActivity {
 
     private static final String INSTALL_STATUS = "dev.melee.game.INSTALL_STATUS";
     private android.content.BroadcastReceiver mInstallStatus;
+    /* The APK waiting on the "allow installs from this app" page; onResume
+     * carries on with it once the player is back. */
+    private String mPendingInstall;
 
     /* Hand a downloaded APK to the system installer through a PackageInstaller
      * session (no FileProvider, so no androidx). The first time, Android asks
@@ -285,6 +288,7 @@ public class MeleeActivity extends SDLActivity {
         runOnUiThread(() -> {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
                     && !getPackageManager().canRequestPackageInstalls()) {
+                mPendingInstall = path;
                 try {
                     startActivity(new android.content.Intent(
                             android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -438,6 +442,15 @@ public class MeleeActivity extends SDLActivity {
         }
         if (mTouchOverlay != null) {
             mTouchOverlay.updateControllerState();
+        }
+        if (mPendingInstall != null) {
+            /* Back from the permission page: install if it was allowed (a
+             * refusal leaves Install in the launcher to try again). */
+            String path = mPendingInstall;
+            mPendingInstall = null;
+            if (getPackageManager().canRequestPackageInstalls()) {
+                installApk(path);
+            }
         }
     }
 
