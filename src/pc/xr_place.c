@@ -210,7 +210,7 @@ bool pc_xr_place_take_cancelled(void) {
 /* The roomtone setting, for lighting the placing as Vanilla. */
 static bool roomtone_on(void) {
     PcGraphicsSettings g;
-    pc_settings_graphics(&g);
+    pc_settings_graphics_at_launch(&g); /* the lighting applies at launch */
     return g.xr_lighting == 1;
 }
 

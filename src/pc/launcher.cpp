@@ -2910,14 +2910,14 @@ extern "C" void pc_settings_set_graphics(const PcGraphicsSettings* s) {
         pc_textures_reload();
     }
 #ifdef AURORA_ENABLE_OPENXR
-    // The headset's, as it runs; SpaceWarp and foveation at the next launch
-    // (their images, pass and pipelines are made for them at launch).
+    // The headset's, as it runs; SpaceWarp, foveation and the lighting at
+    // the next launch (their images, pass and pipelines are made for them at
+    // launch: Roomtone's pipelines are its own, and switching mid-game left
+    // a fight to compile them as it drew).
     if (s->xr_resolution != prefs.xr_resolution)
         aurora_xr_set_eye_scale(s->xr_resolution / 100.0f);
     if (s->xr_shadow != prefs.xr_shadow)
         aurora_xr_set_stage_shadow(s->xr_shadow);
-    if (s->xr_lighting != prefs.xr_lighting)
-        aurora_xr_set_room_light(s->xr_lighting);
 #endif
     prefs.xr_resolution = s->xr_resolution;
     prefs.xr_spacewarp = s->xr_spacewarp;

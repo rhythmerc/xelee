@@ -7,8 +7,8 @@
  * counter, anti-aliasing, post-processing, textures and the backend. The
  * lighting's Calibrate room light runs the room light calibration again
  * (src/pc/xr_calibrate.h) and comes back. What
- * only applies at launch (SpaceWarp, foveation, anti-aliasing, the backend)
- * says so until then, and leaving the page offers to restart. Rows on the
+ * only applies at launch (SpaceWarp, foveation, the lighting, anti-aliasing,
+ * the backend) says so until then, and leaving the page offers to restart. Rows on the
  * Options pages' engine (settings_page.hpp), in the native page of
  * src/melee/mn/mnpage.c.
  */
@@ -78,7 +78,8 @@ Row choice(const char* group, const char* name, const char* hint, int PcGraphics
 }
 
 // Lighting: Roomtone once the headset cameras may be used, the system asked
-// from here when they may not yet.
+// from here when they may not yet. At the next launch: Roomtone's pipelines
+// are its own, and switching mid-game left a fight to compile them.
 enum class Camera { Idle, Asking, Refused, Blocked };
 Camera s_camera = Camera::Idle;
 
@@ -123,11 +124,12 @@ Row lighting() {
             return nullptr;
         }
     };
+    r.pending = [] { return s_g.xr_lighting != s_launch.xr_lighting; };
     return r;
 }
 
-// Calibrate room light: the calibration again, Roomtone only; beside it
-// this launch's result. Restore defaults leaves it be.
+// Calibrate room light: the calibration again, Roomtone only (this launch's
+// lighting); beside it this launch's result. Restore defaults leaves it be.
 Row calibrate() {
     Row r;
     r.name = "Calibrate room light";
@@ -136,9 +138,9 @@ Row calibrate() {
     r.get = [] { return 0; };
     r.set = [](int) { page().go(PC_SCREEN_GO_CALIBRATE); };
     r.label = [](int) { return std::string("Start"); };
-    r.available = [] { return s_g.xr_lighting == 1 && pc_xr_place_available(); };
+    r.available = [] { return s_launch.xr_lighting == 1 && pc_xr_place_available(); };
     r.note = []() -> const char* {
-        if (s_g.xr_lighting != 1)
+        if (s_launch.xr_lighting != 1)
             return "";
         static char text[24];
         const int n = pc_xr_calibrate_result();
@@ -150,7 +152,9 @@ Row calibrate() {
         return text;
     };
     r.hint_now = []() -> const char* {
-        return s_g.xr_lighting != 1 ? "Roomtone only. Pick Roomtone above first." : nullptr;
+        if (s_launch.xr_lighting == 1)
+            return nullptr;
+        return s_g.xr_lighting == 1 ? "Roomtone starts after a restart." : "Roomtone only. Pick Roomtone above first.";
     };
     return r;
 }
