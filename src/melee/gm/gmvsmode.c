@@ -238,10 +238,26 @@ static void fillDebugVs(GameModeState* state, UNUSED bool dummy)
          * frame-time gate, with no input needed to keep it busy. cpu2: two
          * of them, the common singles fight (cpu leaves player 1 an idle
          * human). */
-        static const CharacterKind kinds[4] = {
+        CharacterKind kinds[4] = {
             CKind_Link, CKind_Mario, CKind_Fox, CKind_Donkey,
         };
         const int n = strcmp(getenv("MELEE_DEBUG_VS"), "cpu2") == 0 ? 2 : 4;
+        /* MELEE_DEBUG_VS_CHARS=<k,k,...>: other fighters (CharacterKind
+         * numbers), e.g. for a pipeline sweep of the whole cast. */
+        if (getenv("MELEE_DEBUG_VS_CHARS") != NULL) {
+            const char* p = getenv("MELEE_DEBUG_VS_CHARS");
+            for (i = 0; i < 4 && *p != '\0'; i++) {
+                char* end;
+                const long k = strtol(p, &end, 0);
+                if (end == p) {
+                    break;
+                }
+                if (k >= 0 && k < CKind_Playable_Count) {
+                    kinds[i] = (CharacterKind) k;
+                }
+                p = *end == ',' ? end + 1 : end;
+            }
+        }
         for (i = 0; i < n; i++) {
             start->players[i].ckind = kinds[i];
             start->players[i].slot_type = Gm_PKind_Cpu;
