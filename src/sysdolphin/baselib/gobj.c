@@ -34,6 +34,7 @@ static void pc_mark_link(int link)
 #ifdef TARGET_PC
 #include "pc/frame_probe.h"
 #include "pc/spatial_audio.h"
+#include "pc/xr_scene.h"
 #endif
 
 HSD_GObjProc** HSD_GObj_ProcList;
@@ -181,6 +182,7 @@ static inline void render_gobj(HSD_GObj* cur, int i)
     HSD_GObj* saved = HSD_GObj_804D7814;
     HSD_GObj_804D7814 = cur;
 #ifdef TARGET_PC
+    const bool glow = pc_xr_glow_begin(cur);
     if (pc_frame_probe_on) {
         const unsigned long long start = pc_frame_probe_now();
         cur->render_cb(cur, i);
@@ -188,6 +190,7 @@ static inline void render_gobj(HSD_GObj* cur, int i)
     } else {
         cur->render_cb(cur, i);
     }
+    pc_xr_glow_end(glow);
 #else
     cur->render_cb(cur, i);
 #endif

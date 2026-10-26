@@ -14,6 +14,8 @@
 #include <melee/gm/gmscene.h>
 #include <melee/gr/ground.h>
 #include <melee/gr/stage.h>
+#include <melee/it/forward.h>
+#include <melee/it/it_26B1.h>
 #include <melee/mp/forward.h>
 #include <melee/mp/mplib.h>
 #include <melee/mp/types.h>
@@ -1928,6 +1930,27 @@ bool pc_xr_particle_begin(int bank, int id, int tex_group, float size, const flo
     }
     aurora_xr_camera(AURORA_XR_HIDDEN, NULL);
     return true;
+}
+
+bool pc_xr_glow_begin(HSD_GObj* gobj) {
+    if (gobj->classifier != HSD_GOBJ_CLASS_ITEM || s_category != AURORA_XR_WORLD) {
+        return false;
+    }
+    const ItemKind kind = itGetKind(gobj);
+    if (kind != It_Kind_Arwing_Laser && kind != It_Kind_GreatFox_Laser) {
+        return false;
+    }
+    GXInsertDebugMarker("L7");
+    return true;
+}
+
+void pc_xr_glow_end(bool began) {
+    if (began) {
+        /* Back to the link drawing (gobj.c's marker). */
+        char buf[12];
+        snprintf(buf, sizeof(buf), "L%u", aurora_draw_tag < 0xF000u ? aurora_draw_tag : 99u);
+        GXInsertDebugMarker(buf);
+    }
 }
 
 void pc_xr_heavy_effect(void) {

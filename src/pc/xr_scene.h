@@ -34,6 +34,7 @@ bool pc_xr_world_3d(void);
 /* After the camera's HSD_CObjEndCurrent. */
 void pc_xr_mono_camera(void);
 struct HSD_JObj;
+struct HSD_GObj;
 /* Around one stage part's draw (gr/grdisplay.c); `root` is the part's joint
  * tree. Returns true when the whole part is left out of the 3D view; hand
  * that to pc_xr_stage_part_end. Only acts under the fight camera. */
@@ -71,6 +72,11 @@ void pc_xr_jobj_end(int changed);
  * particles out of the 3D view under mixed reality. `pos` is its position. */
 bool pc_xr_particle_begin(int bank, int id, int tex_group, float size, const float pos[3]);
 void pc_xr_particle_end(bool hidden);
+/* Around a GObj's render callback (gobj.c): items that glow (Corneria's
+ * Arwing and Great Fox lasers) are marked as effects (GX link 7) for the
+ * room light, which leaves effects as the game draws them. */
+bool pc_xr_glow_begin(struct HSD_GObj* gobj);
+void pc_xr_glow_end(bool began);
 /* Around an effect's draw: in the 3D view, it goes into SpaceWarp as fixed
  * in the world (aurora_xr_world_still). Hand the result to the end. */
 bool pc_xr_world_still_begin(void);
@@ -115,6 +121,7 @@ static inline void pc_xr_hud_camera(void) {}
 static inline void pc_xr_flat_view(bool on) { (void)on; }
 static inline void pc_xr_mono_camera(void) {}
 struct HSD_JObj;
+struct HSD_GObj;
 static inline bool pc_xr_stage_part_begin(int grkind, int map_id, int layer, struct HSD_JObj* root) {
     (void)grkind;
     (void)map_id;
@@ -146,6 +153,11 @@ static inline bool pc_xr_particle_begin(int bank, int id, int tex_group, float s
     return false;
 }
 static inline void pc_xr_particle_end(bool hidden) { (void)hidden; }
+static inline bool pc_xr_glow_begin(struct HSD_GObj* gobj) {
+    (void)gobj;
+    return false;
+}
+static inline void pc_xr_glow_end(bool began) { (void)began; }
 static inline void pc_xr_heavy_effect(void) {}
 static inline bool pc_xr_world_still_begin(void) { return false; }
 static inline void pc_xr_world_still_end(bool began) { (void)began; }
