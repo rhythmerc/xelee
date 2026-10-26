@@ -173,7 +173,7 @@ struct Menu : Rml::EventListener {
         cursor = 0;
         if (registering) {
             regEmail = email;
-            ask(Field::Name);
+            go(Page::Review, "r-name");
         } else {
             go(Page::Login);
         }
@@ -403,28 +403,21 @@ struct Menu : Rml::EventListener {
         const std::string text = text_ != nullptr ? text_ : "";
         const Field f = keyboardFor;
         keyboardFor = Field::None;
-        const bool chain = registering && page != Page::Review; // Register's first pass
         if (!confirmed) {
-            // Back: the field before it in Register's first pass, else the form.
-            if (chain) {
-                switch (f) {
-                case Field::Name:
-                    leave = true;
-                    return;
-                case Field::RegEmail:
-                    ask(Field::Name);
-                    return;
-                case Field::RegPassword:
-                    ask(Field::RegEmail);
-                    return;
-                case Field::RegConfirm:
-                    ask(Field::RegPassword);
-                    return;
-                default:
-                    break;
-                }
+            // Back: the form. A password not yet typed again isn't kept.
+            if (f == Field::RegConfirm) {
+                wipe(regPassword);
+                regPassword.clear();
+                go(Page::Review, "r-password");
+                return;
             }
-            go(registering ? Page::Review : Page::Login);
+            // The cursor stays on the row the keyboard was for.
+            const char* row = f == Field::Email      ? "email"
+                              : f == Field::Password ? "password"
+                              : f == Field::Name     ? "r-name"
+                              : f == Field::RegEmail ? "r-email"
+                                                     : "r-password";
+            go(registering ? Page::Review : Page::Login, row);
             return;
         }
         switch (f) {
@@ -444,10 +437,6 @@ struct Menu : Rml::EventListener {
                 return;
             }
             name = text;
-            if (chain) {
-                ask(Field::RegEmail);
-                return;
-            }
             break;
         case Field::RegEmail:
             if (text.find('@') == std::string::npos) {
@@ -456,10 +445,6 @@ struct Menu : Rml::EventListener {
             }
             regEmail = text;
             email = text;
-            if (chain) {
-                ask(Field::RegPassword);
-                return;
-            }
             break;
         case Field::RegPassword:
             if (text.size() < 6) {
@@ -482,7 +467,11 @@ struct Menu : Rml::EventListener {
         }
         badRows.clear();
         note.clear();
-        go(Page::Review, "create");
+        // The next row still empty, as Login's form does, then Create.
+        go(Page::Review, name.empty()       ? "r-name"
+                         : regEmail.empty() ? "r-email"
+                         : regPassword.empty() ? "r-password"
+                                               : "create");
     }
 
     // ---- pages -----------------------------------------------------------
@@ -573,7 +562,7 @@ struct Menu : Rml::EventListener {
                 add("make", 2, 1, !b);
             break;
         }
-        case Page::Review:
+        case Page::Review: {
             r += track();
             r += "<div class=\"form review\">";
             r += field("r-name", "DISPLAY NAME", name, "Press A to type a name", badRows.find('n') != std::string::npos,
@@ -582,8 +571,9 @@ struct Menu : Rml::EventListener {
                        badRows.find('e') != std::string::npos, false);
             r += field("r-password", "PASSWORD", regPassword.empty() ? std::string() : regPassword,
                        "Press A to choose a password", badRows.find('p') != std::string::npos, true);
-            r += "<div class=\"buttons\"><button id=\"create\" class=\"btn" +
-                 std::string(!b && !name.empty() && !regEmail.empty() && !regPassword.empty() ? "" : " off") + "\">" +
+            const bool ready = !name.empty() && !regEmail.empty() && !regPassword.empty();
+            r += "<div class=\"buttons\"><button id=\"create\" class=\"btn" + std::string(ready && !b ? "" : " off") +
+                 "\">" +
                  (b ? "<span class=\"pulse\"></span>Creating..." : "Create account") +
                  "</button><button id=\"instead\" class=\"btn" + (b ? " off" : "") + "\">Sign in instead</button></div>";
             r += note.empty() ? "<div class=\"fine\">Next: check your email, accept Slippi's rules, choose your "
@@ -591,8 +581,9 @@ struct Menu : Rml::EventListener {
                               : noteHtml();
             r += "</div>";
             add("r-name", 0, 0, !b), add("r-email", 1, 0, !b), add("r-password", 2, 0, !b),
-                add("create", 3, 0, !b && !regPassword.empty()), add("instead", 3, 1, !b);
+                add("create", 3, 0, ready && !b), add("instead", 3, 1, !b);
             break;
+        }
         case Page::Verify:
             r += track();
             r += "<img class=\"art\" src=\"slippi-setup/envelope.png\" />";
@@ -878,9 +869,11 @@ struct Menu : Rml::EventListener {
                                                                : "Sign in with your Slippi account.";
             break;
         case Page::Review:
-            hintText = busy() ? "Creating your account..." : id == "r-email" ? "Make sure your email is right."
-                       : id == "instead"                                     ? "Already have one? Sign in."
-                                                                             : "Check your details, then create it.";
+            hintText = busy()                                          ? "Creating your account..."
+                       : id == "r-email"                               ? "Make sure your email is right."
+                       : id == "instead"                               ? "Already have one? Sign in."
+                       : name.empty() || regEmail.empty() || regPassword.empty() ? "Fill in your details, then create it."
+                                                                                 : "Check your details, then create it.";
             break;
         case Page::Verify:
             hintText = "Check again after opening the link.";
