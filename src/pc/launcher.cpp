@@ -1438,6 +1438,11 @@ public:
         text("app-version", pc::get_app_version());
         text("check-status", "Current version: " + pc::get_app_version());
         text("disc-note", disc_note);
+        // Send logs only where a log drop is compiled in (XELEE_LOGS_URL) or
+        // set (MELEE_LOGS_URL): without one, Send could only save them.
+        if (!pc::log_report::can_upload())
+            if (auto* e = element("logs-row"))
+                e->SetProperty("display", "none");
 #ifndef MELEE_SPATIAL_AUDIO
         if (auto* e = element("spatial-row"))  // built without Steam Audio
             e->SetProperty("display", "none");
