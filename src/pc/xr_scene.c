@@ -1128,7 +1128,6 @@ void pc_xr_world_camera(const float view[3][4]) {
     /* Pause flags 1 and 2: a player paused the match (gm_DoPauseChecksAndRoutine). */
     const bool stopped = gm_GetDbPauseFlag(1) || gm_GetDbPauseFlag(2);
     aurora_xr_set_paused(stopped || gm_vs_soft_paused());
-    aurora_xr_set_match_stopped(stopped);
     s_category = AURORA_XR_WORLD;
     aurora_xr_camera(AURORA_XR_WORLD, view);
     follow_update();
