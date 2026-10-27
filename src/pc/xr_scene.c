@@ -85,10 +85,6 @@ static const PartRule s_builtin_rules[] = {
     {0x04, 4, 10, -1, false},
     {0x04, 4, 26, -1, false},
     {0x04, 4, 35, -1, false},
-    /* Kongo Jungle: the waterfall's rolling crest (joint 27), whose
-     * undulating mesh looks faceted under Roomtone's FACET; the falling
-     * water (joint 25) and the rocks stay. */
-    {0x04, 4, 27, -1, false},
     /* Corneria: the terrain under the Great Fox, and the coastline that
      * scrolls past about a minute in. */
     {0x0E, 4, -1, -1, false},
