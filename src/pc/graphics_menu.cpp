@@ -85,7 +85,7 @@ Camera s_camera = Camera::Idle;
 
 Row lighting() {
     Row r = choice("ROOM", "Lighting",
-                   "How fights are lit. Vanilla is Melee's own. Roomtone lights them with your room's light.",
+                   "How fights are lit. Vanilla is Melee's own. Roomtone uses your room's light; busy fights may drop frames.",
                    &PcGraphicsSettings::xr_lighting, {0, 1}, {"Vanilla", "Roomtone (Beta)"});
     r.set = [](int i) {
         if (i == 1 && !pc_settings_camera_granted()) {

@@ -11,6 +11,7 @@ Xelee for Meta Quest 3 / 3S. You need your own Super Smash Bros. Melee NTSC-U 1.
 - A new Lighting setting: Vanilla keeps Melee's own lighting; Roomtone lights the fighters and the stage with your room's light, measured through the headset's cameras. The cameras are only asked for when you pick Roomtone, after the launcher explains why.
 - A short calibration before your first fight of each session: look at the bright lights in your room and Xelee counts them as it finds them. Run it again any time from Options > Graphics > Calibrate room light.
 - Stages without their own lighting get shading from your room, fighters and metal stages pick up subtle highlights, and the light follows the stage when you move it.
+- Roomtone takes more of the headset's power than Vanilla. The busiest fights (four players, scrolling stages like Icicle Mountain, and some Adventure stages such as Onett) may drop frames; switch Lighting to Vanilla if they bother you.
 
 **Settings in the game**
 - Options now has Graphics, Audio, Gameplay and Controls pages with the launcher's settings, so you can change them without leaving the game. Settings that need a restart offer one.
