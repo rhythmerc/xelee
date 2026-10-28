@@ -52,11 +52,11 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
 .chipx.cursor { border-color: #fff4c4; box-shadow: #ffb020c0 0px 0px 12px 2px; }
 .chips .count { position: absolute; right: 0; top: 8px; font-size: 19px; color: #c9b77c; }
 #grid { position: absolute; left: 40px; top: 70px; width: 1060px; }
-.tile { display: inline-block; width: 160px; height: 96px; margin: 0 12px 12px 0; padding: 0 8px; text-align: center;
-        font-size: 19px; font-weight: bold; line-height: 92px; color: #6f6852; border: 2px #f0c22640; border-radius: 7px;
+.tile { display: inline-block; width: 160px; height: 90px; margin: 0 12px 12px 0; padding: 0 8px; text-align: center;
+        font-size: 19px; font-weight: bold; line-height: 86px; color: #6f6852; border: 2px #f0c22640; border-radius: 7px;
         background-color: #0c0b08c0; }
 .tile.on { color: #fff8e0; border-color: #f0c226; background-color: #2a2008e0; }
-.tile.cursor { border: 3px #fff4c4; color: #ffffff; box-shadow: #ffb020e0 0px 0px 14px 3px; line-height: 90px; }
+.tile.cursor { border: 3px #fff4c4; color: #ffffff; box-shadow: #ffb020e0 0px 0px 14px 3px; line-height: 84px; }
 
 /* ---- B1: lobbies ---------------------------------------------------------------- */
 
@@ -81,7 +81,9 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
 .lrow.full { opacity: 0.5; }
 .empty { margin-top: 140px; text-align: center; font-size: 25px; color: #c9b77c; }
 .empty.bad { color: #ff8a5c; }
-.foot { position: absolute; left: 0; width: 1120px; top: 620px; text-align: center; font-size: 18px; color: #8d8468; }
+#sbar { position: absolute; left: 1100px; top: 60px; width: 6px; height: 468px; border-radius: 3px; background-color: #f0c22630; }
+#sbar .thumb { position: absolute; left: 0; width: 6px; border-radius: 3px; background-color: #f0c226; }
+.foot { position: absolute; left: 0; width: 1120px; top: 562px; text-align: center; font-size: 18px; color: #8d8468; }
 
 /* ---- J1: the code -------------------------------------------------------------- */
 
@@ -121,3 +123,28 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
 .buttons.fail .btn { width: 220px; height: 58px; padding-top: 11px; font-size: 24px; letter-spacing: 2px; }
 .buttons.fail .btn.primary { color: #1a1406; background-color: #f0c226; border-color: #f0c226; }
 .buttons.fail .btn.primary.cursor { border-color: #fff4c4; background-color: #ffd84a; }
+
+/* ---- the legend: what the buttons do, centred over Melee's description box ---- */
+
+#legend { position: absolute; left: 0; top: 608px; width: 1120px; height: 46px; text-align: center; }
+#legend .keys { display: inline-block; height: 46px; padding: 0 14px; border: 1px #f0c22650; border-radius: 23px;
+                background-color: #0c0b08d8; }
+.lg { display: inline-block; height: 44px; margin: 0 14px; font-size: 21px; font-weight: bold; line-height: 44px;
+      color: #f0e4b8; }
+/* GameCube buttons: A big and green, B red, X and Y grey beans, START a grey pill,
+ * and the control stick for left and right. */
+.gl { display: inline-block; vertical-align: middle; margin: 0 9px 3px 0; text-align: center; font-weight: 800; }
+.gl.a { width: 32px; height: 32px; border-radius: 16px; font-size: 19px; line-height: 32px; color: #0d2e16;
+        background-color: #22b35e; }
+.gl.b { width: 27px; height: 27px; border-radius: 14px; font-size: 16px; line-height: 27px; color: #ffffff;
+        background-color: #e0392b; }
+.gl.x { width: 23px; height: 32px; border-radius: 12px; font-size: 15px; line-height: 32px; color: #2b2925;
+        background-color: #d6d3cb; }
+.gl.y { width: 34px; height: 23px; border-radius: 12px; font-size: 15px; line-height: 23px; color: #2b2925;
+        background-color: #d6d3cb; }
+.gl.start { height: 23px; padding: 0 9px; border-radius: 12px; font-size: 11px; letter-spacing: 1px; line-height: 23px;
+            color: #26241f; background-color: #aeaba3; }
+.gl.stick { position: relative; width: 30px; height: 30px; border: 3px #aeaba3; border-radius: 15px;
+            background-color: #3a3833; }
+.gl.stick .nub { position: absolute; left: 6px; top: 6px; width: 12px; height: 12px; border-radius: 6px;
+                 background-color: #d6d3cb; }

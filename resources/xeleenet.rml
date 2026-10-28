@@ -1,4 +1,4 @@
 <rml><head><title>XeleeNet</title><link type="text/rcss" href="slippi-setup.rcss" /><link type="text/rcss" href="xeleenet.rcss" /></head>
 <body>
-<div id="screen"><div id="board"></div></div>
+<div id="screen"><div id="board"></div><div id="legend"></div></div>
 </body></rml>

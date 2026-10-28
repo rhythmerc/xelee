@@ -24,6 +24,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -43,6 +44,7 @@ constexpr float kScreenW = 1120.f, kScreenH = 660.f;
 const char* const kLeft = "\xe2\x80\xb9"; // the value arrows
 const char* const kRight = "\xe2\x80\xba";
 const char* const kDot = " \xc2\xb7 ";
+const int kListRows = 5; // B1's rows in view
 
 std::string fmt(float v) {
     char b[32];
@@ -366,6 +368,8 @@ struct Screen : Rml::EventListener {
     uint64_t fetchedAt = 0, fetchAsked = 0;
 
     std::string hintText;
+    std::string lastLegend;
+    int scrollTop = 0; // B1's first row in view
 
     bool load() {
         if (document != nullptr)
@@ -458,7 +462,7 @@ struct Screen : Rml::EventListener {
         if (h.stock)
             choice(r, "stocks", 0, 5, "Stocks", std::to_string(h.stocks),
                    [custom](int d) { s_host.stocks = step(kStocks, s_host.stocks, d), custom(); },
-                   "Stocks per player. START: open lobby");
+                   "Stocks per player.");
         else
             choice(r, "stocks", 0, 5, "Win by", "Time", [custom](int) { s_host.stock = true, custom(); },
                    "Time: most KOs when the clock runs out.");
@@ -542,7 +546,7 @@ struct Screen : Rml::EventListener {
                 s_host.stages = i == 0 ? kCompetitive : kAllStages;
                 s_host.preset = kCustom;
             };
-            it.hint = "A: on / off   X: next preset   B: done";
+            it.hint = "Random picks draw from the stages that are on.";
             items.push_back(std::move(it));
         }
         r += "<div class=\"count\">" + std::to_string(stage_count(m)) + " of " + std::to_string(kStageCount) +
@@ -559,7 +563,7 @@ struct Screen : Rml::EventListener {
                     s_host.stages = want;
                 s_host.preset = kCustom;
             };
-            it.hint = "A: on / off   X: next preset   B: done";
+            it.hint = "Random picks draw from the stages that are on.";
             items.push_back(std::move(it));
         }
         r += "</div>";
@@ -602,6 +606,12 @@ struct Screen : Rml::EventListener {
                 sample("W9PX4C", "Ledge practice FD only", "WAVE", "P9TX", "CA", 1, 2, false, true, 4, 8, false, false,
                        true),
                 sample("S4NQE7", "Sunday crew", "STAR", "Q4NE", "GB", 1, 4, true, true, 3, 7, true, false, false),
+                sample("M2KD7F", "Marth dittos", "LUNA", "8KQD", "US", 1, 2, false, true, 4, 8, false, false, false),
+                sample("B8HC3N", "Brinstar beginners", "MOSS", "T2LA", "DE", 2, 4, false, true, 4, 8, false, false,
+                       false),
+                sample("R6VW9J", "Quest crew", "ORBIT", "2WXZ", "US", 3, 4, true, true, 4, 8, true, false, true),
+                sample("C5PL2Q", "Late night FFA", "NOVA", "C3RE", "JP", 2, 4, false, false, 4, 4, false, true,
+                       false),
             };
             others = 2, fetch = 1, fetchedAt = SDL_GetTicks() - 4000;
             return;
@@ -619,9 +629,9 @@ struct Screen : Rml::EventListener {
     void poll_browse() {
         if (page != Page::Lobbies || fetch != 0 || !s_preview.empty())
             return;
-        PcXnListing out[16];
+        PcXnListing out[PC_XN_LIST_MAX];
         int n = 0, o = 0;
-        const int st = pc_xn_browse_poll(out, 16, &n, &o);
+        const int st = pc_xn_browse_poll(out, PC_XN_LIST_MAX, &n, &o);
         if (st == 1) {
             rows.assign(out, out + n);
             others = o;
@@ -639,8 +649,18 @@ struct Screen : Rml::EventListener {
         if (fetch == 0)
             r += "Looking for lobbies...";
         else
-            r += "Updated " + std::to_string((SDL_GetTicks() - fetchedAt) / 1000) + " s ago" + kDot + "X refresh";
+            r += (rows.empty() ? std::string()
+                               : std::to_string(rows.size()) + (rows.size() == 1 ? " lobby" : " lobbies") + kDot) +
+                 "Updated " + std::to_string((SDL_GetTicks() - fetchedAt) / 1000) + " s ago";
         r += "</div></div><div id=\"list\">";
+        // A window of kListRows that follows the cursor.
+        const int n = static_cast<int>(rows.size());
+        const int cur = cursorId.rfind("lb", 0) == 0 ? std::atoi(cursorId.c_str() + 2) : 0;
+        if (cur < scrollTop)
+            scrollTop = cur;
+        if (cur >= scrollTop + kListRows)
+            scrollTop = cur - kListRows + 1;
+        scrollTop = std::clamp(scrollTop, 0, std::max(0, n - kListRows));
         if (fetch < 0) {
             const char* reason = nullptr;
             const char* err = pc_xn_error(&reason);
@@ -658,13 +678,6 @@ struct Screen : Rml::EventListener {
                                     kDot + (x.stock ? std::to_string(x.stocks) + " stocks" : std::string("Time")) + kDot +
                                     minutes_label(x.time_min) + kDot +
                                     (x.first_to ? "First to " + std::to_string(x.first_to_n) : std::string("Endless"));
-            r += "<div id=\"" + id + "\" class=\"lrow" + (full ? " full" : "") + "\"><div class=\"lw\"><div class=\"ln\">" +
-                 enc(x.name) + "</div><div class=\"ls\">" + enc(sub) + "</div></div><div class=\"lm\">" + mode +
-                 "</div><div class=\"lb\">" +
-                 (x.playing ? "<span class=\"badge game\">IN GAME</span>"
-                            : x.xr ? "<span class=\"badge\">XR</span>" : "") +
-                 "</div><div class=\"lt\">" + std::to_string(x.taken) + "/" + std::to_string(x.seats) +
-                 "</div><div class=\"lc\">" + enc(x.country) + "</div></div>";
             Item it{id, 0, static_cast<int>(i), !full};
             it.act = [this, i] {
                 joining = rows[i];
@@ -672,10 +685,26 @@ struct Screen : Rml::EventListener {
                 code = rows[i].code;
                 join();
             };
-            it.hint = "A: join   Y: join with code   B: back";
+            it.hint = "Join a public lobby, or enter a friend's code.";
             items.push_back(std::move(it));
+            if (static_cast<int>(i) < scrollTop || static_cast<int>(i) >= scrollTop + kListRows)
+                continue;
+            r += "<div id=\"" + id + "\" class=\"lrow" + (full ? " full" : "") + "\"><div class=\"lw\"><div class=\"ln\">" +
+                 enc(x.name) + "</div><div class=\"ls\">" + enc(sub) + "</div></div><div class=\"lm\">" + mode +
+                 "</div><div class=\"lb\">" +
+                 (x.playing ? "<span class=\"badge game\">IN GAME</span>"
+                            : x.xr ? "<span class=\"badge\">XR</span>" : "") +
+                 "</div><div class=\"lt\">" + std::to_string(x.taken) + "/" + std::to_string(x.seats) +
+                 "</div><div class=\"lc\">" + enc(x.country) + "</div></div>";
         }
         r += "</div>";
+        if (n > kListRows) {
+            // The scrollbar: the thumb is the window's share of the list.
+            const float track = kListRows * 96.f - 12.f;
+            const float h = std::max(36.f, track * kListRows / n);
+            r += "<div id=\"sbar\"><div class=\"thumb\" style=\"top: " +
+                 fmt((track - h) * scrollTop / (n - kListRows)) + "px; height: " + fmt(h) + "px;\"></div></div>";
+        }
         if (others > 0)
             r += "<div class=\"foot\">" + std::to_string(others) +
                  (others == 1 ? " more lobby is" : " more lobbies are") +
@@ -712,7 +741,7 @@ struct Screen : Rml::EventListener {
         r += "<div id=\"k-ok\" class=\"key join\">JOIN</div></div>";
         Item it{"k-ok", 5, n / 9, true};
         it.act = [this] { join(); };
-        it.hint = "START: join this lobby.";
+        it.hint = "Join the lobby with this code.";
         items.push_back(std::move(it));
         set_board(r);
     }
@@ -887,11 +916,71 @@ struct Screen : Rml::EventListener {
         browse();
     }
 
+    // ---- the legend: what the buttons do, over Melee's description box ---------
+
+    static std::string key(const std::string& button, const char* label) {
+        const std::string face = button == "stick"   ? "<div class=\"nub\"></div>"
+                                 : button == "start" ? "START"
+                                                     : std::string(1, static_cast<char>(std::toupper(button[0])));
+        return "<div class=\"lg\"><div class=\"gl " + button + "\">" + face + "</div>" + label + "</div>";
+    }
+
+    std::string legend() const {
+        const Item* at = items.empty() ? nullptr : &items[cursor];
+        const std::string id = at != nullptr ? at->id : "";
+        std::string r;
+        switch (page) {
+        case Page::Host:
+            r += at != nullptr && at->change ? key("stick", "Change")
+                                             : key("a", id == "open" ? "Open lobby" : "Select");
+            if (id != "open")
+                r += key("start", "Open lobby");
+            r += key("b", "Back");
+            break;
+        case Page::More:
+            r += at != nullptr && at->change ? key("stick", "Change") : key("a", "Done");
+            r += key("b", "Back");
+            break;
+        case Page::Stages:
+            r += key("a", "On / off") + key("x", "Competitive / all") + key("b", "Done");
+            break;
+        case Page::Lobbies:
+            if (!rows.empty())
+                r += key("a", "Join");
+            r += key("y", "Enter code") + key("x", "Refresh") + key("start", showFull ? "Hide full" : "Show full") +
+                 key("b", "Back");
+            break;
+        case Page::Code:
+            r += key("a", id == "k-ok" ? "Join" : "Type");
+            if (code.size() == 6 && id != "k-ok")
+                r += key("start", "Join");
+            r += key("b", code.empty() ? "Back" : "Delete");
+            break;
+        case Page::Joining:
+            r += key("b", "Cancel");
+            break;
+        case Page::Failed:
+            r += key("a", "Select") + key("b", "Back");
+            break;
+        }
+        return "<div class=\"keys\">" + r + "</div>";
+    }
+
+    void update_legend() {
+        const std::string r = legend();
+        if (r == lastLegend)
+            return;
+        lastLegend = r;
+        if (auto* e = document->GetElementById("legend"))
+            e->SetInnerRML(r);
+    }
+
     // ---- the board ------------------------------------------------------------
 
     void set_board(const std::string& r) {
         if (r == last) {
             mark();
+            update_legend();
             return;
         }
         last = r;
@@ -901,6 +990,7 @@ struct Screen : Rml::EventListener {
         for (int i = 0; i < 7; i++)
             board->SetClass(kinds[i], static_cast<int>(page) == i);
         mark();
+        update_legend();
     }
 
     void build() {
@@ -995,7 +1085,11 @@ struct Screen : Rml::EventListener {
             cursor = best;
             cursorId = items[cursor].id;
             sfx(SFX_MOVE);
-            mark();
+            if (page == Page::Lobbies)
+                refresh(); // the window may scroll
+            else
+                mark();
+            update_legend();
         }
     }
 
@@ -1103,15 +1197,14 @@ struct Screen : Rml::EventListener {
             PcXnPunchView v;
             view(&v);
             const int n = std::max(0, v.nplayers - 1);
-            hintText = n > 0 ? "Connecting to " + std::to_string(n) + (n == 1 ? " player" : " players") +
-                                   "...  B: cancel"
-                             : "Finding the lobby...  B: cancel";
+            hintText = n > 0 ? "Connecting to " + std::to_string(n) + (n == 1 ? " player..." : " players...")
+                             : "Finding the lobby...";
         } else if (page == Page::Failed) {
             hintText = "This attempt is saved to your logs.";
-        } else if (page == Page::Lobbies) {
-            hintText = "A: join   Y: join with code   B: back";
+        } else if (page == Page::Lobbies && items.empty()) {
+            hintText = "Host a lobby from Online Mode, or enter a friend's code.";
         } else if (page == Page::Code) {
-            hintText = code.size() == 6 ? "START: join this lobby." : "Type the 6-letter code the host shared.";
+            hintText = code.size() == 6 ? "Join the lobby with this code." : "Type the 6-letter code the host shared.";
         } else if (!hostNote.empty() && page == Page::Host) {
             hintText = hostNote;
         } else {
@@ -1305,7 +1398,7 @@ struct Banner {
         if (host && s_host.hide_code)
             code = "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2 \xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2";
         const int seats = host ? s_host.seats : known && info.seats ? info.seats : 4;
-        const std::string r = "<div class=\"brand\">XELEENET</div><div class=\"pill\"><div class=\"names\"><div "
+        const std::string r = "<div class=\"brand\"><span>XeleeNet</span></div><div class=\"pill\"><div class=\"names\"><div "
                               "class=\"bn\">" + enc(name) + "</div><div class=\"br\">" + enc(rules) +
                               "</div></div><div class=\"seats\">" + std::to_string(std::max(1, v.nplayers)) + "/" +
                               std::to_string(seats) + "</div>" +
@@ -1460,8 +1553,10 @@ extern "C" void pc_xn_menu_update(void) {
     if (s_banner.shown || s_preview == "banner") {
         if (s_preview == "banner" && !s_banner.shown) {
             const char* boot = std::getenv("MELEE_BOOT_SCENE");
-            if (boot != nullptr && std::strcmp(boot, "css") == 0 && SDL_GetTicks() > 6000)
+            if (boot != nullptr && std::strcmp(boot, "css") == 0 && SDL_GetTicks() > 6000) {
+                preset(kDoubles); // three players of four
                 s_banner.show(true);
+            }
         }
         s_banner.update();
     }

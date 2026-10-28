@@ -451,9 +451,10 @@ void mnCharSel_8025BD30(void)
     u32 match_type;
 
 #ifdef TARGET_PC
-    if (gmOnline_SlippiFlow()) {
-        /* The rules banner stays empty: the match's rules are fixed. The text
-         * is built in string 0x4A, so leave that one empty. */
+    if (gmOnline_SlippiFlow() || gmOnline_XnFlow()) {
+        /* The rules banner stays empty: the match's rules are fixed (Slippi)
+         * or on XeleeNet's banner. The text is built in string 0x4A, so leave
+         * that one empty. */
         css_pal_string(0x4A)[0] = 0;
         return;
     }
@@ -5740,6 +5741,12 @@ static void mnCharSel_HideOnlineRemote(void)
             }
             list = *end == ',' ? end + 1 : end;
         }
+    }
+    if (gmOnline_XnFlow()) {
+        /* XeleeNet's banner (C1) stands over the top strip: the MELEE logo
+         * (joint 1), and the rules bar with BACK (joint 35's tree). */
+        cssHideJoint(1);
+        cssHideJoint(35);
     }
     if (!cssOnline(&local) || mnCharSel_804D6CF5 == 1 ||
         getenv("MELEE_CSS_SHOW_ALL"))

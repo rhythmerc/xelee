@@ -59,7 +59,7 @@ static struct {
 static SDL_Thread* s_browse_thread;
 static int s_browse_state; /* 0 fetching, 1 done, -1 failed */
 static bool s_browse_full;
-static PcXnListing s_rows[16];
+static PcXnListing s_rows[PC_XN_LIST_MAX];
 static int s_nrows, s_others;
 static char s_last[160];  /* the start of the last reply, for the log */
 static char s_pubkey[48];
@@ -634,7 +634,7 @@ static int browse_main(void* unused) {
         const PcSlippiJson* list = pc_slippi_json_get(r, "lobbies");
         SDL_LockMutex(s_lock);
         s_nrows = 0;
-        for (int i = 0; list != NULL && i < list->child_count && s_nrows < 16; i++) {
+        for (int i = 0; list != NULL && i < list->child_count && s_nrows < PC_XN_LIST_MAX; i++) {
             parse_listing(pc_slippi_json_at(list, i), &s_rows[s_nrows++]);
         }
         s_others = pc_slippi_json_int(pc_slippi_json_get(r, "other_versions"), 0);

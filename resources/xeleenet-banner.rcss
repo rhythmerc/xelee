@@ -9,6 +9,8 @@ div, span { display: block; }
 .brand { position: absolute; left: 0; top: 4px; width: 250px; height: 64px; padding-left: 26px; font-size: 34px;
          font-weight: 800; letter-spacing: 2px; line-height: 62px; color: #ffffff;
          background-color: #c8321e; border-radius: 32px 0 0 32px; }
+/* No italic face ships, so the brand leans by a skew. */
+.brand span { display: inline-block; transform: skewX(-12deg); }
 .pill { position: absolute; left: 236px; right: 0; top: 4px; height: 64px; border: 3px #f0c226; border-radius: 0 32px 32px 0;
         background-color: #120d08f0; }
 .names { position: absolute; left: 30px; top: 6px; width: 60%; }

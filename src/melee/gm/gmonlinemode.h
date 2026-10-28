@@ -70,6 +70,8 @@ bool gmOnline_SlippiCssStart(int character, int color);
 /* Called every CSS frame: XeleeNet's lobby goes on in the CSS. True when the
  * CSS should leave now, to reload with a new player set. */
 bool gmOnline_XnCssFrame(void);
+/* True in XeleeNet's CSS (the CSS is its lobby). */
+bool gmOnline_XnFlow(void);
 /* True while the CSS must ignore the controller (a search is running). */
 bool gmOnline_SlippiCssLocked(void);
 

@@ -48,6 +48,8 @@ typedef struct PcXnListing {
     int first_to_n;
     bool playing, xr;
 } PcXnListing;
+/* The most lobbies one listing holds (the service sends 50 at most). */
+#define PC_XN_LIST_MAX 50
 
 typedef enum PcXnStatus {
     PC_XN_OFF,     /* nothing started, or closed */

@@ -1652,6 +1652,18 @@ static void xnLobbyFrame(void)
     }
 }
 
+bool gmOnline_XnFlow(void)
+{
+    /* tools/xn_preview.py's banner shot boots VS. Mode's CSS: it stands in. */
+    static int preview = -1;
+    if (preview < 0) {
+        const char* p = getenv("MELEE_XN_PREVIEW");
+        preview = p != NULL && strcmp(p, "banner") == 0;
+    }
+    return preview ||
+           (gm_GetCurrentGameMode() == GM_ONLINE && online_kind == ONLINE_KIND_XN);
+}
+
 bool gmOnline_XnCssFrame(void)
 {
     if (online_kind != ONLINE_KIND_XN) {
