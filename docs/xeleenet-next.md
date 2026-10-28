@@ -93,6 +93,16 @@ leave / close, the set score, the placement barrier, chat (dropped for
 now). From XN5, the version gate on screen, XR placement. XN6 (relay) has not
 started.
 
+## The CSS and stage select, after the first real run (2026-10-28)
+
+The cross-network run (main PC + Quest at home, a PC on a phone hotspot) played
+two matches with no desync. It showed four flow problems: any START started,
+one B emptied the lobby, the stage list was ignored, and the stage select said
+NOW LOADING. The wireframe (`xeleenet-ready-wireframe.html` on the share) is
+approved; the build plan is `docs/xeleenet-ready-plan.md` (P1-P5). Fixed since:
+re-hosting after a session (ddf8fe4f), team dealing (3ce227c4). XeleeNet's text
+is in `resources/lang/en.yaml` (943161cc).
+
 ## Next steps: a friends' test (Windows + Quest, 3-4 players)
 
 1. ~~**Re-verify locally**~~ (3 players passed 2026-10-28: the second join,
