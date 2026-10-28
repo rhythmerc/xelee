@@ -44,10 +44,11 @@
  *
  * Invariants
  * ----------
- *   - s_remote_have (net.c) is the newest contiguous real remote frame:
- *     every frame <= it holds real input in s_remote_ring, every simulated
- *     frame above it holds the prediction it ran on. A gap is never stored;
- *     the ack tells the peer what to resend.
+ *   - s_port_have[p] (net.c) is the newest contiguous real frame of remote
+ *     port p: every frame <= it holds real input in s_remote_ring[p], every
+ *     simulated frame above it holds the prediction it ran on. A gap is never
+ *     stored; the ack tells the peer what to resend. s_remote_have is the
+ *     lowest of them over the remote ports.
  *   - a snapshot is valid only for its exact frame in the scene it was
  *     taken in: Snapshot.frame is -1 when it holds nothing usable and
  *     snapshot_unusable() must pass before a restore.

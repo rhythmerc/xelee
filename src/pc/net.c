@@ -61,14 +61,46 @@
 struct NetSession net = {
     .sock = SOCK_INVALID, .tick_frame = -1, .rb_barrier = -1, .start_frame = -1};
 
-static WirePad s_local_ring[RING];   /* indexed by frame & (RING-1) */
-static WirePad s_remote_ring[RING];  /* real input, or the prediction in use */
-static int32_t s_remote_have = -1;   /* newest contiguous real remote frame */
-static int32_t s_end_frame = -1;     /* game_over_note: first tick with a result */
-static bool s_game_over;             /* the match end can no longer be rolled back */
-static int32_t s_remote_newest = -1; /* newest frame the peer reported holding */
+static WirePad s_local_ring[RING]; /* indexed by frame & (RING-1) */
+/* Remote input, one ring per controller port: real input, or the prediction
+ * in use. s_remote_mask has a bit for every port a remote player drives (one
+ * in a 1v1); each of those ports keeps its own contiguous mark. s_remote_have
+ * and s_remote_newest are the lowest of them: every remote input up to
+ * s_remote_have is real, which is what the rollback loop waits and checks on.
+ * remote_marks_update() recomputes them after any port moves. */
+#define PORTS 4
+static uint8_t s_remote_mask;
+static WirePad s_remote_ring[PORTS][RING];
+static int32_t s_port_have[PORTS] = {-1, -1, -1, -1};   /* newest contiguous real frame */
+static int32_t s_port_newest[PORTS] = {-1, -1, -1, -1}; /* newest frame its sender reported */
+static int32_t s_remote_have = -1;                      /* lowest s_port_have of the remote ports */
+static int32_t s_remote_newest = -1;                    /* lowest s_port_newest of them */
+static int32_t s_end_frame = -1; /* game_over_note: first tick with a result */
+static bool s_game_over;         /* the match end can no longer be rolled back */
 static int32_t s_last_acked = -1;    /* newest local frame the peer holds */
 static int32_t s_rb_frame = -1;      /* oldest mispredicted frame not rolled back yet */
+
+static void remote_marks_update(void) {
+    int32_t have = INT32_MAX, newest = INT32_MAX;
+    for (int p = 0; p < PORTS; p++) {
+        if (s_remote_mask & (1u << p)) {
+            have = s_port_have[p] < have ? s_port_have[p] : have;
+            newest = s_port_newest[p] < newest ? s_port_newest[p] : newest;
+        }
+    }
+    s_remote_have = s_remote_mask ? have : -1;
+    s_remote_newest = s_remote_mask ? newest : -1;
+}
+
+/* The remote players' ports, at connect: a 1v1 has the one port that is not
+ * the local player's. */
+static void remote_ports_set(uint8_t mask) {
+    s_remote_mask = mask;
+    for (int p = 0; p < PORTS; p++) {
+        s_port_have[p] = s_port_newest[p] = -1;
+    }
+    remote_marks_update();
+}
 
 /* Slippi transport (MELEE_NET_STACK=slippi, docs/slippi-migration-plan.md
  * section 6). When s_slippi_on is set, the socket send/receive/wait paths go
@@ -722,15 +754,16 @@ static void rx_input(const Packet* pk, int n, bool reordered) {
  * the same packets in the same order, against a net.frame never behind the
  * one it checked, so a drain leaves s_remote_have at or above s_rx_have. */
 static void on_inputs(const Packet* pk, bool reordered) {
+    const int port = net.remote;
     int count = pk->count > REDUNDANCY ? REDUNDANCY : pk->count;
     int64_t last = (int64_t)pk->first + count - 1;
-    if (count > 0 && pk->first <= s_remote_have + 1 && last > s_remote_have &&
+    if (count > 0 && pk->first <= s_port_have[port] + 1 && last > s_port_have[port] &&
         last < (int64_t)net.frame + RING / 2)
     {
         int32_t upto = simulated_upto();
-        for (int32_t f = s_remote_have + 1; f <= last; f++) {
+        for (int32_t f = s_port_have[port] + 1; f <= last; f++) {
             WirePad pad = pk->pads[f - pk->first];
-            WirePad* slot = &s_remote_ring[f & (RING - 1)];
+            WirePad* slot = &s_remote_ring[port][f & (RING - 1)];
             /* A frame already simulated holds the prediction it ran on. */
             if (f <= upto && memcmp(slot, &pad, sizeof pad) != 0 &&
                 (s_rb_frame < 0 || f < s_rb_frame))
@@ -739,7 +772,8 @@ static void on_inputs(const Packet* pk, bool reordered) {
             }
             *slot = pad;
         }
-        s_remote_have = last;
+        s_port_have[port] = (int32_t)last;
+        remote_marks_update();
         s_progress_ns = SDL_GetTicksNS();
     }
     if (pk->ck_frame >= 0) {
@@ -769,8 +803,9 @@ static void on_inputs(const Packet* pk, bool reordered) {
     if (!reordered) {
         adv_note(pk->adv, net.frame - 1 - s_remote_have);
     }
-    if (pk->newest > s_remote_newest) {
-        s_remote_newest = pk->newest;
+    if (pk->newest > s_port_newest[port]) {
+        s_port_newest[port] = pk->newest;
+        remote_marks_update();
     }
 }
 
@@ -790,20 +825,22 @@ static void slp_frame_cb(void* user, int remote_slot, int32_t frame,
      * big-endian. (Read as host order, a Dolphin peer's Y reads as D-pad up
      * and Kirby taunts instead of jumping.) */
     wp.button = (uint16_t)__builtin_bswap16(wp.button);
-    WirePad* slot = &s_remote_ring[frame & (RING - 1)];
+    const int port = net.remote;
+    WirePad* slot = &s_remote_ring[port][frame & (RING - 1)];
     int32_t upto = simulated_upto();
     if (frame <= upto && memcmp(slot, &wp, sizeof wp) != 0 &&
         (s_rb_frame < 0 || frame < s_rb_frame)) {
         s_rb_frame = frame;
     }
     *slot = wp;
-    s_remote_have = frame;
+    s_port_have[port] = frame;
     s_progress_ns = SDL_GetTicksNS();
     /* The remote reported this frame as delivered, so it is the newest we can
      * use; the Slippi "newest" is the highest delivered frame. */
-    if (frame > s_remote_newest) {
-        s_remote_newest = frame;
+    if (frame > s_port_newest[port]) {
+        s_port_newest[port] = frame;
     }
+    remote_marks_update();
     /* The peer stamps every pad packet with its newest finalized Slippi
      * checksum. Record it under its own frame so check_desync can compare it
      * with our s_wire_ck_ring entry for that frame (the legacy path does the
@@ -1526,10 +1563,18 @@ static void dump_rings_around(int32_t f) {
             continue;
         }
         const WirePad* m = &s_local_ring[i & (RING - 1)];
-        const WirePad* t = &s_remote_ring[i & (RING - 1)];
-        pc_log_line("net: ring f%d p%d %04x/%d,%d p%d %04x/%d,%d ck %08x x%u%s", i, net.local + 1,
-            m->button, m->stickX, m->stickY, net.remote + 1, t->button, t->stickX, t->stickY,
-            s_ck_ring[i & (RING - 1)], s_sim_n[i & (RING - 1)],
+        char theirs[PORTS * 24] = "";
+        size_t n = 0;
+        for (int p = 0; p < PORTS && n < sizeof theirs; p++) {
+            if (s_remote_mask & (1u << p)) {
+                const WirePad* t = &s_remote_ring[p][i & (RING - 1)];
+                int w = snprintf(theirs + n, sizeof theirs - n, " p%d %04x/%d,%d%s", p + 1,
+                    t->button, t->stickX, t->stickY, i > s_port_have[p] ? "?" : "");
+                n += w > 0 ? (size_t)w : 0;
+            }
+        }
+        pc_log_line("net: ring f%d p%d %04x/%d,%d%s ck %08x x%u%s", i, net.local + 1, m->button,
+            m->stickX, m->stickY, theirs, s_ck_ring[i & (RING - 1)], s_sim_n[i & (RING - 1)],
             i > s_remote_have ? " predicted" : "");
     }
     /* Sized for the worst case (16 frames of up to 10 digits, SESSION_MAX_FRAMES
@@ -1747,8 +1792,9 @@ void net_resume_rel(const void* payload, int len) {
     if (r.have > s_last_acked && r.have <= s_wrote) {
         s_last_acked = r.have;
     }
-    if (r.newest > s_remote_newest) {
-        s_remote_newest = r.newest;
+    if (r.newest > s_port_newest[net.remote]) {
+        s_port_newest[net.remote] = r.newest;
+        remote_marks_update();
     }
     pc_log_line("net: peer resumes from frame %d, holds our %d, newest %d (we are at %d, hold "
                 "its %d, newest %d)",
@@ -2113,7 +2159,8 @@ static void session_reset(void) {
     net.frame = 0;
     net.tick_frame = -1;
     net.resim = false;
-    s_remote_have = s_remote_newest = s_last_acked = s_rb_frame = s_ck_checked = -1;
+    remote_ports_set(s_remote_mask);
+    s_last_acked = s_rb_frame = s_ck_checked = -1;
     s_end_frame = -1;
     s_game_over = false;
     for (int i = 0; i < RING; i++) {
@@ -2436,6 +2483,7 @@ static bool connect_impl(
     HSD_PadLibData.qtype = 2;
     net.local = player ? 1 : 0;
     net.remote = 1 - net.local;
+    remote_ports_set((uint8_t)(1u << net.remote));
     /* A hand-typed address may be a peer the user has not started yet, so it
      * keeps the long wait. One handed over from matchmaking (pc_net_connect_
      * socket, the only caller that passes a socket) belongs to a peer that
@@ -2564,6 +2612,7 @@ bool pc_net_connect_slippi(
     HSD_PadLibData.qtype = 2;
     net.local = player ? 1 : 0;
     net.remote = 1 - net.local;
+    remote_ports_set((uint8_t)(1u << net.remote));
     /* Default: P1 sends the setup. A matchmaking session overrides this from
      * the ticket's decider flag (pc_net_slippi_set_setup_host). */
     s_slippi_setup_host = net.local == 0;
@@ -2722,6 +2771,7 @@ bool pc_net_slippi_adopt(int local_player, uint32_t rng_offset) {
     HSD_PadLibData.qtype = 2;
     net.local = local_player ? 1 : 0;
     net.remote = 1 - net.local;
+    remote_ports_set((uint8_t)(1u << net.remote));
     net.connect_timeout_ms = MATCH_CONNECT_TIMEOUT_MS;
     const char* delay = getenv("MELEE_NET_DELAY");
     /* Each Slippi client picks its own input delay (2 by default) and labels
@@ -3117,10 +3167,16 @@ static bool game_over(void) {
     return s_game_over && in_fight();
 }
 
+/* Every remote port without real input for frame f repeats its newest real
+ * one (neutral before it has any). */
 static void predict(int32_t f) {
     static const WirePad neutral;
-    s_remote_ring[f & (RING - 1)] =
-        s_remote_have >= 0 ? s_remote_ring[s_remote_have & (RING - 1)] : neutral;
+    for (int p = 0; p < PORTS; p++) {
+        if ((s_remote_mask & (1u << p)) && s_port_have[p] < f) {
+            s_remote_ring[p][f & (RING - 1)] =
+                s_port_have[p] >= 0 ? s_remote_ring[p][s_port_have[p] & (RING - 1)] : neutral;
+        }
+    }
 }
 
 /* Snapshot before a predicted frame. Behind the barrier nothing is taken
@@ -3242,8 +3298,10 @@ static void head_check(void) {
         return;
     }
     const PadLibData* p = &HSD_PadLibData;
-    for (int i = 0; i < 2; i++) {
-        int port = i == 0 ? net.local : net.remote;
+    for (int port = 0; port < PORTS; port++) {
+        if (port != net.local && !(s_remote_mask & (1u << port))) {
+            continue;
+        }
         /* HSD_PadADConvert ORs synthetic direction bits above 0xffff into
          * button (controller.c), so only the real pad bits can be compared. */
         uint32_t saw = HSD_PadMasterStatus[port].button & 0xffffu;
@@ -3310,23 +3368,29 @@ static void fight_reseed(int32_t f) {
 static void write_head(PADStatus* head, int32_t f) {
     static const WirePad neutral;
     const WirePad* mine = f >= net.delay ? &s_local_ring[f & (RING - 1)] : &neutral;
-    from_wire(&head[net.local], mine);
-    const WirePad* theirs = &s_remote_ring[f & (RING - 1)];
-    WirePad wrong;
-    if (s_audit_poison) {
-        wrong = *theirs;
-        wrong.stickX = (int8_t)-wrong.stickX;
-        wrong.button ^= 0x0100; /* A */
-        theirs = &wrong;
-    }
-    from_wire(&head[net.remote], theirs);
-    if (!s_seen_remote && theirs->button != 0) {
-        s_seen_remote = true;
-        pc_log_line("net: first remote button press (%04x) at frame %d", theirs->button, f);
-    }
-    for (int i = 2; i < 4; i++) {
-        memset(&head[i], 0, sizeof head[i]);
-        head[i].err = PAD_ERR_NO_CONTROLLER;
+    for (int p = 0; p < PORTS; p++) {
+        if (p == net.local) {
+            from_wire(&head[p], mine);
+            continue;
+        }
+        if (!(s_remote_mask & (1u << p))) {
+            memset(&head[p], 0, sizeof head[p]);
+            head[p].err = PAD_ERR_NO_CONTROLLER;
+            continue;
+        }
+        const WirePad* theirs = &s_remote_ring[p][f & (RING - 1)];
+        WirePad wrong;
+        if (s_audit_poison) {
+            wrong = *theirs;
+            wrong.stickX = (int8_t)-wrong.stickX;
+            wrong.button ^= 0x0100; /* A */
+            theirs = &wrong;
+        }
+        from_wire(&head[p], theirs);
+        if (!s_seen_remote && theirs->button != 0) {
+            s_seen_remote = true;
+            pc_log_line("net: first remote button press (%04x) at frame %d", theirs->button, f);
+        }
     }
     head_note(head, f);
 }

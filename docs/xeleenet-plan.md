@@ -553,6 +553,32 @@ Every milestone is checked on desktop first: N instances, `wrangler dev`, and
 | **XN5** Quest + hardening | Touch lasers everywhere, XR placement, logs, version gate, Windows build | A 4-player lobby with at least one Quest and two NATs |
 | **XN6** Relay | TURN or our own relay for guest ↔ host failures, chosen from the XN2-XN5 logs | A guest on a carrier-NAT hotspot joins |
 
+**XN1 steps** (each keeps the 1v1 suite green before the next starts):
+
+1. **Per-port remote input.** One input ring and contiguous mark per remote
+   port. `s_remote_have` becomes the lowest of them; `predict`, `write_head`
+   and `head_check` loop over the ports. Still one remote.
+2. **`Peer[]` transport.** The per-link state moves into a `Peer` struct:
+   - address and pinning, MAC key and grace;
+   - seq window, `rx_have`, `last_acked`, RTT ring;
+   - the last packet, reliable lanes, resume, received checksums and the
+     advantage ring.
+   Still one peer.
+3. **N direct peers.** `MELEE_NET=addr,addr,…` with `MELEE_NET_PLAYER=0-3`;
+   every link sends its own packets. Wire v12: the header's player must match
+   that link's peer.
+4. **Host-led agreements:**
+   - RULES/READY to every guest, with one start frame;
+   - the scene exit and READY_BARRIER collected by the host;
+   - delay from the worst link, time sync on the worst peer;
+   - a desync check against every peer.
+5. **The harness.** `net_test.py --players 3|4` boots N instances, one delay
+   relay per link, and a 4-port `MELEE_DEBUG_VS`.
+6. **Forwarding.** `'M'` carries per-origin pad blocks, and a guest pair that
+   can't reach each other goes through the host.
+7. **Void on drop.** A peer gone mid-match ends the match on every remaining
+   peer at an agreed frame.
+
 **Testing four players for real** needs four devices on at least two networks.
 Plan the XN5 session ahead: Quest, PC, the Android tablet and a fourth device.
 
