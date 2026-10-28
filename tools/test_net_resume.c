@@ -302,6 +302,9 @@ bool rel_dispatch(int peer, uint8_t type, const void* payload, int len) {
     return true;
 }
 void rel_reset(void) {}
+void rel_link_drop(int peer) {
+    (void)peer;
+}
 
 /* net_handshake.c / net_sync.c */
 void rules_restore(void) {}

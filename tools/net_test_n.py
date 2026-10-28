@@ -4,7 +4,8 @@ machine in one direct session, a match, then the same per-instance asserts as
 tools/net_test.py.
 
     tools/net_test_n.py [--players 3|4] [--loss PCT] [--delay MS] [--jitter]
-                        [--minutes N] [--no-key] [--exe build/melee]
+                        [--minutes N] [--no-key] [--block A:B,...] [--kill X@SECONDS]
+                        [--exe build/melee]
                         [--disc ../melee.ciso] [--port 42150] [--work /tmp/net_test_n]
 
 Every instance gets MELEE_NET_PEERS listing all of them by controller port
@@ -13,6 +14,14 @@ title's Start goes straight into an N-human match (gmvsmode.c). Player 1
 hosts the handshake. Each instance drives its own keyboard workout, offset
 from the others, so every remote input keeps changing and the rollback loop
 has something to correct on every link.
+
+--block 1:2 cuts those controller ports (0 is P1) off from each other in the
+link simulator, as two guests behind strict NATs: they must find out, tell
+the host, and get each other's input and messages through it (net.c, routes).
+
+--kill c@20 SIGKILLs instance c 20 s into the match: no goodbye, just
+silence. The others must agree where its input ends, void the match on one
+frame and play on (net.c, drops); the killed instance is not judged.
 
 --no-key leaves MELEE_NET_KEY unset, so the links run on keys derived from
 the handshake: host<->guest from RULES/READY, guest<->guest from the host's
@@ -95,6 +104,8 @@ def run(args):
             env["MELEE_NET_SIM_DELAY_MS"] = str(args.delay)
         if args.jitter:
             env["MELEE_NET_SIM_JITTER_MS"] = "20"
+        if args.block:
+            env["MELEE_NET_SIM_BLOCK"] = args.block
         # lan=True: Instance sets no MELEE_NET of its own; the env above is the session.
         insts.append(nt.Instance(name, args.exe, args.disc, args.work, ports[k], 0, env, True))
     print(f"net_test_n: {args.players} players loss={args.loss}% delay={args.delay}ms "
@@ -113,12 +124,21 @@ def run(args):
             ok = nt.wait_match(insts, 120)
         if ok:
             drive = Drive(insts)
+        kill_at = None
+        if ok and args.kill:
+            who, _, secs = args.kill.partition("@")
+            kill_at = (names.index(who), time.time() + float(secs or 20))
         deadline = time.time() + frames / 12.0 + 60
         term = (r"net: DESYNC", r"peer silent for \d+ ms at frame \d+, leaving netplay",
                 r"net: disconnected", r"cannot roll back")
         last_frame, last_progress = -1, time.time()
         while time.time() < deadline and any(i.proc.poll() is None for i in insts):
             time.sleep(1)
+            if kill_at is not None and time.time() >= kill_at[1]:
+                victim = insts[kill_at[0]]
+                print(f"net_test_n: killing {victim.name} (P{kill_at[0] + 1})", flush=True)
+                victim.proc.kill()
+                kill_at = None
             texts = "".join(i.text() for i in insts)
             if any(nt.re.search(t, texts) for t in term):
                 break
@@ -133,14 +153,34 @@ def run(args):
             print(f"net_test_n: workout wrote {drive.done()} key lines", flush=True)
         for inst in insts:
             inst.kill(20)
+    judged = [i for k, i in enumerate(insts)
+              if not (args.kill and names[k] == args.kill.partition("@")[0])]
     # Every instance must have linked to every other one.
-    for inst in insts:
+    for inst in judged:
         seen = len(nt.re.findall(r"net: peer \d+ is P\d at ", inst.text()))
         if seen != args.players - 1:
             print(f"[{inst.name}] FAIL: session names {seen} peers, want {args.players - 1}")
             ok = False
-    for inst in insts:
-        fails, line, _ = nt.summarize(inst, need_match=True)
+    if args.kill:
+        # Every survivor agreed on the same last frame and the same void frame.
+        ends = {i.name: nt.re.findall(r"input ends at frame (\d+)", i.text()) for i in judged}
+        voids = {i.name: nt.re.findall(r"online: match void at frame (\d+)", i.text())
+                 for i in judged}
+        print(f"net_test_n: input ends {ends}, void {voids}", flush=True)
+        if any(len(v) != 1 for v in ends.values()) or len({v[0] for v in ends.values()}) != 1:
+            print("FAIL: the survivors did not agree once where the input ends")
+            ok = False
+        if any(len(v) < 1 for v in voids.values()) or len({v[0] for v in voids.values()}) != 1:
+            print("FAIL: the survivors did not void the match on one frame")
+            ok = False
+    if args.block:
+        for inst in judged:
+            if not nt.re.search(r"cannot hear P\d; relaying|link to P\d is dead", inst.text()):
+                continue
+            print(f"[{inst.name}] " + "; ".join(sorted(set(
+                nt.re.findall(r"(link to P\d is dead \([a-z ]+\)|P\d cannot hear P\d)", inst.text())))))
+    for inst in judged:
+        fails, line, _ = nt.summarize(inst, need_match=not args.kill)
         print(line)
         if fails:
             ok = False
@@ -156,6 +196,8 @@ def main():
     ap.add_argument("--jitter", action="store_true")
     ap.add_argument("--minutes", type=float, default=1)
     ap.add_argument("--no-key", action="store_true", help="links keyed by the handshake only")
+    ap.add_argument("--block", default="", help="port pairs that cannot reach each other, e.g. 1:2")
+    ap.add_argument("--kill", default="", help="instance@seconds into the match to SIGKILL, e.g. c@20")
     ap.add_argument("--exe", default=os.path.join(HERE, "..", "build", "melee"))
     ap.add_argument("--disc", default=os.path.join(HERE, "..", "..", "melee.ciso"))
     ap.add_argument("--port", type=int, default=42150, help="P1's UDP port; P2.. use +1..")

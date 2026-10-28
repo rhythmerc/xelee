@@ -203,6 +203,23 @@ typedef struct Ack {
     int32_t frame; /* newest contiguous frame the sender now holds */
 } __attribute__((packed)) Ack;
 
+/* 'F' (proto 12): another player's input, passed on by a peer that holds it
+ * (net.c, "forwarding"): the host relays it to a guest that cannot reach that
+ * player, and after a drop everyone passes on what they hold of the player
+ * who left. The bytes after `origin` are an 'M' packet's after its header --
+ * the origin's frames, pads and checksum report; seq and adv are unused. */
+typedef struct FwdHdr {
+    Hdr h;          /* 'F', from the peer passing it on */
+    uint8_t origin; /* the controller port whose input this is */
+} __attribute__((packed)) FwdHdr;
+
+/* 'G' (proto 12): the ack for 'F'. */
+typedef struct FwdAck {
+    Hdr h;          /* 'G' */
+    uint8_t origin; /* whose input */
+    int32_t frame;  /* newest contiguous frame of it the sender now holds */
+} __attribute__((packed)) FwdAck;
+
 /* Reliable lobby message (stop-and-wait, net_reliable.c). */
 #define REL_MAX 256
 #define REL_RULES 0x01  /* host -> guest {seed, start_frame, nonce} (net_handshake.c) */
@@ -212,6 +229,12 @@ typedef struct Ack {
 #define REL_DELAY 0x13  /* the host's input-delay pick, dispatched by on_rel */
 #define REL_CHAT 0x15   /* fixed quick-chat phrase, consumed before caller queue */
 #define REL_SCENE 0x14  /* the scene-exit hand-off, dispatched by on_rel */
+/* Links between three or four players (net.c, "routes and drops"). */
+#define REL_ROUTE 0x30 /* guest -> host {ports it cannot hear}: relay them to it */
+#define REL_RELAY 0x31 /* host -> guest {origin port, type, payload}: a relayed message */
+#define REL_GONE 0x32  /* guest -> host {port}: that player has gone silent or left */
+#define REL_DROP 0x33  /* host -> guests {port}: pass on everything you hold of it */
+#define REL_VOID 0x34  /* host -> guests {port, last, void}: its input ends, the match is void */
 typedef struct Rel {
     Hdr h; /* 'R' */
     uint8_t seq;
@@ -298,6 +321,7 @@ _Static_assert(sizeof(WirePad) == 8, "wire layout");
 _Static_assert(sizeof(Hdr) == 7, "wire layout");
 _Static_assert(sizeof(Packet) == 27 + REDUNDANCY * 8, "wire layout");
 _Static_assert(sizeof(Ack) == 13, "wire layout");
+_Static_assert(sizeof(FwdHdr) == 8 && sizeof(FwdAck) == 12, "wire layout");
 _Static_assert(sizeof(Rel) == 11 + REL_MAX, "wire layout");
 _Static_assert(sizeof(RelAck) == 8 && sizeof(Bye) == 8, "wire layout");
 _Static_assert(sizeof(Rules) == 16 + sizeof(GameRules) + 22, "wire layout");
@@ -313,7 +337,7 @@ _Static_assert(sizeof(SceneMsg) == 8, "wire layout");
 
 /* The largest message tx() stamps and the link simulator holds: a full input
  * packet outgrew a reliable one when REDUNDANCY went to 32. */
-#define HELD_BYTES (PACKET_WIRE_MAX > sizeof(Rel) ? PACKET_WIRE_MAX : sizeof(Rel))
+#define HELD_BYTES (PACKET_WIRE_MAX + 1 > sizeof(Rel) ? PACKET_WIRE_MAX + 1 : sizeof(Rel))
 
 /* Datagrams parked by the simulator; release_ns 0 marks a free slot. Sent in
  * release order, so plain delay stays FIFO and jitter reorders. */
@@ -367,6 +391,10 @@ struct NetSession {
     sock_t sock;
     int npeers;               /* links in this session, 1..MAX_PEERS */
     int peer_port[MAX_PEERS]; /* the controller port each peer drives */
+    /* The link to that peer is dead (a guest that cannot reach another guest,
+     * or a player who left): nothing is sent on it, and its input and reliable
+     * messages come through the host instead (net.c, "routes and drops"). */
+    bool link_dead[MAX_PEERS];
     int local, remote, delay; /* remote: peer 0's port (the only one in a 1v1) */
     uint32_t session; /* 0 on the guest until the host's first packet */
     /* How long to wait for the peer's first datagram, ms. CONNECT_TIMEOUT_MS
@@ -443,6 +471,11 @@ void net_resume_rel(int peer, const void* payload, int len);
 
 /* The link to the host (the peer on port 0), or -1 on the host itself. */
 int net_host_peer(void);
+/* REL_ROUTE..REL_VOID from `peer` (net_reliable.c dispatches them here). */
+void net_link_rel(int peer, uint8_t type, const void* payload, int len);
+/* The host passes a reliable message from `peer` on to the guests that cannot
+ * hear it (REL_RELAY); a no-op anywhere else. */
+void net_relay_out(int peer, uint8_t type, const void* payload, int len);
 
 /* One sendto with errno/WSA translation and the sock_err counter; used by
  * the senders here and the link simulator's flush (net_sim.c). Caller holds
@@ -525,6 +558,7 @@ void rel_reset(void);
 /* Queue a reliable message for one link only (the handshake's answers, a
  * resume's numbers, which differ per link). False when that lane is full. */
 bool rel_send_to(int peer, uint8_t type, const void* payload, int len);
+void rel_link_drop(int peer); /* caller holds tx_lock */
 
 /* ---- net_handshake.c -------------------------------------------------- */
 

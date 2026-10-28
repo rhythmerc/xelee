@@ -15,6 +15,11 @@ static uint64_t s_sim_burst_ns; /* when the next burst starts */
 static int s_sim_swap = -1;     /* held slot waiting to go out behind the next packet */
 static uint32_t s_sim_rng;      /* xorshift32, seeded from the port */
 static Held s_held[HELD_MAX];   /* outgoing, under tx_lock */
+/* MELEE_NET_SIM_BLOCK="1:2,2:3": controller-port pairs that cannot reach each
+ * other at all, as two guests behind strict NATs (0 is P1). Every instance
+ * drops what it would send across a listed pair, so set the same value on
+ * all of them. Bit (a * 4 + b) and (b * 4 + a) per pair. */
+static uint16_t s_sim_block;
 
 static unsigned sim_rand(unsigned n) {
     s_sim_rng ^= s_sim_rng << 13;
@@ -57,6 +62,9 @@ void tx(int peer, const void* body, size_t body_len) {
     uint8_t stamped[HELD_BYTES + NET_MAC_LEN];
     if (body_len > HELD_BYTES || peer < 0 || peer >= net.npeers) {
         return; /* no sender builds one: a truncated datagram would be worse */
+    }
+    if (s_sim_block & (1u << (net.local * 4 + net.peer_port[peer]))) {
+        return;
     }
     memcpy(stamped, body, body_len);
     net_mac_stamp(peer, stamped, body_len);
@@ -148,6 +156,18 @@ void sim_env(uint16_t bind_port) {
     net.sim_rx_delay_ns = v ? (uint64_t)atoi(v) * 1000000ull : 0;
     net.sim_hold = net.sim_delay_ns || net.sim_jitter_ms || net.sim_reorder || net.sim_dup;
     s_sim_rng = (uint32_t)bind_port * 2654435761u | 1u;
+    s_sim_block = 0;
+    v = getenv("MELEE_NET_SIM_BLOCK");
+    for (const char* q = v; q != NULL && *q != '\0';) {
+        int a = q[0] - '0', b = q[1] == ':' ? q[2] - '0' : -1;
+        if (a < 0 || a > 3 || b < 0 || b > 3) {
+            pc_log_line("net: MELEE_NET_SIM_BLOCK wants a:b,c:d with ports 0-3, not %s", v);
+            break;
+        }
+        s_sim_block |= (uint16_t)(1u << (a * 4 + b) | 1u << (b * 4 + a));
+        pc_log_line("net: sim block between P%d and P%d", a + 1, b + 1);
+        q = q[3] == ',' ? q + 4 : q + 3;
+    }
 }
 
 /* Session start: empty held queue, no burst or swap pending (timer parked). */

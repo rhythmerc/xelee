@@ -584,10 +584,43 @@ built 2026-10-28, see the commits on `feat/xelee-net`):
      the host's delay pick.
 5. **The harness.** `net_test.py --players 3|4` boots N instances, one delay
    relay per link, and a 4-port `MELEE_DEBUG_VS`.
-6. **Forwarding.** `'M'` carries per-origin pad blocks, and a guest pair that
-   can't reach each other goes through the host.
-7. **Void on drop.** A peer gone mid-match ends the match on every remaining
-   peer at an agreed frame.
+6. **Forwarding** (built). Wire v12 adds `'F'` (another player's input,
+   passed on: origin port plus that player's packet body, from the passer's
+   own ring of real input, with the origin's latest checksum report) and
+   `'G'` (its ack). Routes:
+   - A guest that hasn't heard another guest 8 s after the handshake, or has
+     heard nothing on a working link for 3 s while its other links are
+     fresh, marks the link dead and sends the host `REL_ROUTE` (the ports it
+     can't hear).
+   - The host forwards those players' input and relays their reliable
+     messages (`REL_RELAY`).
+   - Input still goes out on a dead route, so a link that comes back is heard
+     and revives.
+   - Test knob: `MELEE_NET_SIM_BLOCK=1:2`.
+7. **Void on drop** (built). A guest that says goodbye, or is silent on the
+   host's link for the stall timeout plus the resume window (6 s) while the
+   other guests are heard, has left. The sequence:
+   1. The host sends `REL_DROP`.
+   2. Every remaining peer passes on what it holds of that player's input.
+   3. Once the collected input has settled (500 ms) and every guest holds
+      it, the host sends `REL_VOID {port, last frame, void frame}`.
+   4. From the frame after the last, that port reads as a released pad.
+      Anyone who predicted past it rolls back.
+   5. The match ends as a no contest on the void frame (60 frames on).
+   - The void tick runs lockstep, with the frame before it lockstep too,
+     because ending the match isn't pure under a re-run.
+   - The host leaving still ends the session.
+   - In a 3+ player session, the session's silence clock is the host's link
+     (on a guest) or the freshest guest (on the host).
+
+   **Not done yet:**
+   - The match freezes for the ~6.5 s it takes to declare a silent player
+     gone. A goodbye is quicker.
+   - Routes decided inside the engine wait 8 s at the start. XN2's punch
+     phase decides them before the session, so this is the mid-session
+     fallback.
+   - A relayed message that finds the lane full is logged and lost.
+   - Route detection assumes a link that fails, fails both ways.
 
 **Testing four players for real** needs four devices on at least two networks.
 Plan the XN5 session ahead: Quest, PC, the Android tablet and a fourth device.

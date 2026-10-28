@@ -39,10 +39,18 @@ extern "C" {
  * them (pc/gekko_fp.h), the SDK's paired-single vector and matrix calls,
  * MSL's sqrtf from the hardware's frsqrte estimate; and grabs can be mashed
  * out of again. A peer on 10 parts from it on the first DI. */
-#define PC_NET_PROTO_VERSION 11
+/* Version 12 links three or four players: 'F'/'G' pass another player's
+ * input on (relayed by the host, or collected after a drop), and reliable
+ * types 0x30-0x34 carry routes, relayed messages and drops (net.c). A 1v1
+ * sends none of them, but a peer on 11 does not know them. */
+#define PC_NET_PROTO_VERSION 12
 void pc_net_init(void);
 void pc_net_set_input_delay(int frames);
 bool pc_net_active(void);
+/* The player whose leaving voids the match, on the tick of the frame the
+ * session agreed to end it on (in a fight); -1 on every other tick. The VS
+ * scene ends the match as a no contest then (gmvs.c). */
+int pc_net_void_port_now(void);
 /* Presentation-only quick chat is available in connected noncombat scenes. */
 bool pc_net_chat_available(void);
 /* True when the simulation must be reproducible elsewhere: netplay,

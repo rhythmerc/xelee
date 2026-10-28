@@ -1202,6 +1202,17 @@ void gm_DoPauseChecksAndRoutine(VsSceneController* arg0, int arg1)
     u8 var_r4;
 
 #ifdef TARGET_PC
+    {
+        /* A player left a match of three or four: every peer ends it as a no
+         * contest on the frame the session agreed (src/pc/net.c, drops). In
+         * the tick, so a re-run of that frame ends it again. */
+        const int gone = pc_net_void_port_now();
+        if (gone >= 0) {
+            pc_log_line("online: match void at frame %d, P%d left", pc_net_frame(), gone + 1);
+            fn_8016CF4C(gone, OUTCOME_NO_CONTEST);
+            return;
+        }
+    }
     if (pc_net_slippi_active() && arg0->start.disable_pausing) {
         /* Slippi's client pause, in matches with the real pause off. */
         slippiSoftPause(arg0);

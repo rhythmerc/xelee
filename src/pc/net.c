@@ -75,6 +75,10 @@ static int32_t s_port_have[PORTS] = {-1, -1, -1, -1};   /* newest contiguous rea
 static int32_t s_port_newest[PORTS] = {-1, -1, -1, -1}; /* newest frame its sender reported */
 static int32_t s_remote_have = -1;                      /* lowest s_port_have of the remote ports */
 static int32_t s_remote_newest = -1;                    /* lowest s_port_newest of them */
+/* A player who left (net.c "routes and drops"): its last real frame, -1
+ * otherwise. Nothing waits on that port past it, and it reads as released. */
+static int32_t s_port_end[PORTS] = {-1, -1, -1, -1};
+static uint8_t s_gone; /* ports of players who left (their input is being collected) */
 static int32_t s_end_frame = -1; /* game_over_note: first tick with a result */
 static bool s_game_over;         /* the match end can no longer be rolled back */
 
@@ -113,6 +117,11 @@ typedef struct Peer {
     /* Game thread. */
     int32_t last_acked; /* newest local frame it holds */
     uint32_t ping_us;   /* smoothed RTT of this link */
+    /* Its newest checksum report, which the host passes on with its input to
+     * a guest that cannot hear it (send_forwarded). */
+    int32_t ck_last_frame;
+    uint32_t ck_last;
+    bool left; /* it said goodbye in a session of three or more (receive thread) */
     /* Its checksums by frame. Each input packet reports one frame, the newest
      * it has confirmed, and that is often ahead of ours; a single slot
      * overwritten by every packet meant those frames were never compared from
@@ -143,13 +152,14 @@ int net_host_peer(void) {
 static void remote_marks_update(void) {
     int32_t have = INT32_MAX, newest = INT32_MAX;
     for (int p = 0; p < PORTS; p++) {
-        if (s_remote_mask & (1u << p)) {
+        if ((s_remote_mask & (1u << p)) && s_port_end[p] < 0) {
             have = s_port_have[p] < have ? s_port_have[p] : have;
             newest = s_port_newest[p] < newest ? s_port_newest[p] : newest;
         }
     }
-    s_remote_have = s_remote_mask ? have : -1;
-    s_remote_newest = s_remote_mask ? newest : -1;
+    /* Every remote player gone: nothing left to wait on. */
+    s_remote_have = s_remote_mask ? (have == INT32_MAX ? INT32_MAX / 2 : have) : -1;
+    s_remote_newest = s_remote_mask ? (newest == INT32_MAX ? INT32_MAX / 2 : newest) : -1;
 }
 
 /* The remote players' ports, at connect: a 1v1 has the one port that is not
@@ -516,6 +526,9 @@ static Uint32 SDLCALL tx_timer(void* ud, SDL_TimerID id, Uint32 interval) {
     bool need_resend = atomic_load_explicit(&s_want_resend, memory_order_relaxed);
     for (int i = 0; i < net.npeers; i++) {
         Peer* p = &s_peer[i];
+        if (s_gone & (1u << p->port)) {
+            continue;
+        }
         bool game_thread_quiet = (now - p->last_send_ns >= 16000000ull);
         if (p->last_valid && (now - p->last_send_ns >= 7000000ull) &&
             (game_thread_quiet || need_resend))
@@ -537,6 +550,458 @@ static Uint32 SDLCALL tx_timer(void* ud, SDL_TimerID id, Uint32 interval) {
     return interval;
 }
 
+/* ---- routes and drops ----------------------------------------------------
+ * Three or four players are a mesh: every player links to every other. Two
+ * things that a 1v1 never meets come out of that (docs/xeleenet-plan.md
+ * section 3.3 and 3.5).
+ *
+ * Routes. Two guests may not reach each other at all (a strict NAT on either
+ * side), while both reach the host -- which every guest must. A guest that
+ * has heard nothing on a link for ROUTE_WAIT_MS after the handshake, or
+ * nothing for ROUTE_SILENT_MS on one that was working, while its other links
+ * are fresh, marks that link dead (net.link_dead) and tells the host which
+ * ports it cannot hear (REL_ROUTE). The host then passes those players' input
+ * on to it ('F', acked with 'G'), straight out of its own ring of real input,
+ * with their latest checksum report so the desync check still covers the
+ * pair, and relays their reliable messages (REL_RELAY: the scene hand-off,
+ * chat, the caller's types). No reliable message goes out on a dead link, but
+ * input packets still do, so a link that comes back is heard: it revives, and
+ * the host stops relaying that pair.
+ *
+ * "While its other links are fresh" is what tells a dead link from a starved
+ * process. Four games booting on one machine stalled whole processes for
+ * seconds (tools/net_test_n.py, cold caches), and every link looked silent at
+ * once from inside the stalled one.
+ *
+ * Drops. A guest who leaves -- a BYE, or silence on the host's link -- would
+ * otherwise end the session for everyone. Instead the host tells every guest
+ * to pass on what it holds of that player's input (REL_DROP); between them the
+ * remaining peers hold everything the player ever sent anyone, and the host
+ * collects it and passes it on. Once the collected input has stopped growing
+ * for DROP_SETTLE_MS and every guest holds all of it, the host announces where
+ * it ends and when the match is void (REL_VOID). From the frame after the
+ * last one, that port reads as a released pad on every peer; anyone who
+ * predicted past it rolls back as for any misprediction, and the match ends
+ * as a no contest on the void frame (pc_net_void_port_now, gmvs.c). The host
+ * leaving still ends the session: it leads every agreement.
+ *
+ * None of this runs in a 1v1. */
+#define ROUTE_WAIT_MS 8000   /* a guest link never heard this long after the handshake */
+#define ROUTE_SILENT_MS 3000 /* a working one silent this long */
+#define FRESH_MS 1000        /* "its other links are fresh": heard this recently */
+#define ROUTE_BACK_MS 500    /* a dead route heard this recently is back */
+#define DROP_SETTLE_MS 500   /* the collected input stopped growing this long */
+#define VOID_LEAD 60         /* frames past the last input the match is void on */
+
+static uint8_t s_fwd[PORTS];                  /* peers (bit = peer index) port o's input goes on to */
+static int32_t s_fwd_acked[PORTS][MAX_PEERS]; /* what each of them holds of it (tx_lock) */
+static uint8_t s_route_mask;                  /* guest: ports it cannot hear */
+static bool s_route_told;                     /* the host has that mask */
+static uint64_t s_link_t0;                    /* when the handshake finished, 0 before */
+static uint8_t s_gone_told;     /* guest: ports it has reported gone to the host */
+static uint64_t s_drop_quiet;   /* host: when the collected input last grew */
+static int32_t s_drop_mark;     /* host: its mark for that port when it last grew */
+static int s_void_port = -1;    /* the player whose leaving voids the match */
+static int32_t s_void_frame = -1;
+
+typedef struct VoidMsg {
+    uint8_t port;
+    int32_t last; /* its last real frame; from the next one it is released */
+    int32_t at;   /* the frame the match ends on as a no contest, -1 outside a fight */
+} __attribute__((packed)) VoidMsg;
+
+static void exit_if_test_done(void);
+
+static Peer* peer_by_port(int port) {
+    for (int i = 0; i < net.npeers; i++) {
+        if (s_peer[i].port == port) {
+            return &s_peer[i];
+        }
+    }
+    return NULL;
+}
+
+static void links_reset(void) {
+    memset(s_fwd, 0, sizeof s_fwd);
+    for (int o = 0; o < PORTS; o++) {
+        s_port_end[o] = -1;
+        for (int i = 0; i < MAX_PEERS; i++) {
+            s_fwd_acked[o][i] = -1;
+        }
+    }
+    memset(net.link_dead, 0, sizeof net.link_dead);
+    s_route_mask = 0;
+    s_route_told = true;
+    s_link_t0 = 0;
+    s_gone = s_gone_told = 0;
+    s_drop_quiet = 0;
+    s_drop_mark = -1;
+    s_void_port = -1;
+    s_void_frame = -1;
+}
+
+/* Stop using the link to peer i: nothing more goes out on it (game thread). */
+static void link_kill(int i, const char* why) {
+    SDL_LockMutex(net.tx_lock);
+    if (!net.link_dead[i]) {
+        net.link_dead[i] = true;
+        rel_link_drop(i);
+        pc_log_line("net: link to P%d is dead (%s) at frame %d", s_peer[i].port + 1, why,
+            net.frame);
+    }
+    SDL_UnlockMutex(net.tx_lock);
+}
+
+/* Pass on what this side holds of each forwarded port's real input, from what
+ * each recipient has acked of it (send_inputs, tx_lock held). */
+static void send_forwarded(void) {
+    for (int o = 0; o < PORTS; o++) {
+        if (s_fwd[o] == 0) {
+            continue;
+        }
+        int32_t have = s_port_have[o];
+        const Peer* op = peer_by_port(o);
+        if (have < 0 || op == NULL) {
+            continue;
+        }
+        for (int i = 0; i < net.npeers; i++) {
+            if (!(s_fwd[o] & (1u << i)) || net.link_dead[i]) {
+                continue;
+            }
+            int64_t first = (int64_t)s_fwd_acked[o][i] + 1;
+            if (first <= (int64_t)have - RING) {
+                first = (int64_t)have - RING + 1;
+            }
+            first = first < 0 ? 0 : first;
+            int64_t count = (int64_t)have - first + 1;
+            if (count <= 0) {
+                continue;
+            }
+            count = count > REDUNDANCY ? REDUNDANCY : count;
+            Packet pk;
+            memset(&pk, 0, sizeof pk);
+            pk.first = (int32_t)first;
+            pk.newest = (int32_t)(first + count - 1);
+            /* The origin's own checksum report, while it is one this
+             * recipient can place (it must not name a frame past the pads). */
+            bool ck = op->ck_last_frame >= 0 && op->ck_last_frame <= pk.newest;
+            pk.ck_frame = ck ? op->ck_last_frame : -1;
+            pk.ck = ck ? op->ck_last : 0;
+            pk.count = (uint8_t)count;
+            for (int32_t f = 0; f < count; f++) {
+                pk.pads[f] = s_remote_ring[o][(first + f) & (RING - 1)];
+            }
+            wire_packet(&pk);
+            uint8_t out[HELD_BYTES];
+            FwdHdr fh = {hdr('F'), (uint8_t)o};
+            memcpy(out, &fh, sizeof fh);
+            size_t body = offsetof(Packet, pads) - sizeof(Hdr);
+            memcpy(out + sizeof fh, (const uint8_t*)&pk + sizeof(Hdr), body);
+            size_t n = sizeof fh + body + pads_encode(pk.pads, (int)count, out + sizeof fh + body);
+            tx(i, out, n);
+        }
+    }
+}
+
+static void send_fwd_ack(const Peer* to, int origin, int32_t frame) {
+    FwdAck a = {hdr('G'), (uint8_t)origin, (int32_t)htonl((uint32_t)frame)};
+    SDL_LockMutex(net.tx_lock);
+    tx(peer_index(to), &a, sizeof a);
+    SDL_UnlockMutex(net.tx_lock);
+}
+
+/* The host's REL_RELAY: a message from a guest some other guest cannot hear. */
+void net_relay_out(int peer, uint8_t type, const void* payload, int len) {
+    if (net.local != 0 || peer < 0 || peer >= net.npeers || len > REL_MAX - 2) {
+        return;
+    }
+    int o = s_peer[peer].port;
+    if (s_fwd[o] == 0) {
+        return;
+    }
+    uint8_t m[REL_MAX];
+    m[0] = (uint8_t)o;
+    m[1] = type;
+    if (len > 0) {
+        memcpy(m + 2, payload, (size_t)len);
+    }
+    for (int i = 0; i < net.npeers; i++) {
+        if ((s_fwd[o] & (1u << i)) && i != peer && !net.link_dead[i] &&
+            !rel_send_to(i, REL_RELAY, m, len + 2))
+        {
+            pc_log_line("net: relay of type %02x from P%d to P%d refused (lane full)", type, o + 1,
+                s_peer[i].port + 1);
+        }
+    }
+}
+
+/* Host: start collecting a player who left, from everyone. */
+static void drop_begin(int port, const char* why) {
+    Peer* x = peer_by_port(port);
+    if (net.local != 0 || x == NULL || (s_gone & (1u << port))) {
+        return;
+    }
+    s_gone |= (uint8_t)(1u << port);
+    link_kill(peer_index(x), why);
+    s_drop_quiet = SDL_GetTicksNS();
+    s_drop_mark = s_port_have[port];
+    uint8_t p = (uint8_t)port;
+    pc_net_send_reliable(REL_DROP, &p, 1);
+    SDL_LockMutex(net.tx_lock);
+    s_fwd[port] = 0;
+    for (int i = 0; i < net.npeers; i++) {
+        if (!net.link_dead[i]) {
+            s_fwd[port] |= (uint8_t)(1u << i);
+            s_fwd_acked[port][i] = -1;
+        }
+    }
+    SDL_UnlockMutex(net.tx_lock);
+    pc_log_line("net: P%d left (%s) at frame %d; collecting its input (we hold %d)", port + 1,
+        why, net.frame, s_port_have[port]);
+}
+
+/* Everyone, on the host's REL_VOID (and the host as it sends it): the
+ * player's input ends at `last`, and the match is a no contest at `at`. */
+static void drop_end(int port, int32_t last, int32_t at) {
+    if (s_port_end[port] >= 0) {
+        return;
+    }
+    if (s_port_have[port] < last) {
+        pc_log_line("net: P%d's input ends at %d but we hold only %d; leaving netplay", port + 1,
+            last, s_port_have[port]);
+        s_status = PC_NET_PEER_TIMEOUT;
+        s_peer_left = true;
+        return;
+    }
+    static const WirePad released;
+    int32_t upto = simulated_upto();
+    for (int32_t f = last + 1; f <= upto && f > upto - RING; f++) {
+        WirePad* slot = &s_remote_ring[port][f & (RING - 1)];
+        if (memcmp(slot, &released, sizeof released) != 0 && (s_rb_frame < 0 || f < s_rb_frame)) {
+            s_rb_frame = f;
+        }
+        *slot = released;
+    }
+    s_port_end[port] = last;
+    s_gone |= (uint8_t)(1u << port);
+    SDL_LockMutex(net.tx_lock);
+    s_fwd[port] = 0;
+    SDL_UnlockMutex(net.tx_lock);
+    remote_marks_update();
+    s_void_port = at >= 0 ? port : s_void_port;
+    s_void_frame = at >= 0 ? at : s_void_frame;
+    pc_log_line("net: P%d's input ends at frame %d%s (we are at %d)", port + 1, last,
+        at >= 0 ? "; the match is void" : "", net.frame);
+    if (at >= 0) {
+        pc_log_line("net: match void at frame %d", at);
+    }
+}
+
+void net_link_rel(int peer, uint8_t type, const void* payload, int len) {
+    const uint8_t* b = payload;
+    if (peer < 0 || peer >= net.npeers) {
+        return;
+    }
+    bool from_host = peer == net_host_peer();
+    switch (type) {
+    case REL_ROUTE: /* a guest's ports it cannot hear */
+        if (net.local != 0 || len != 1) {
+            return;
+        }
+        SDL_LockMutex(net.tx_lock);
+        for (int o = 0; o < PORTS; o++) {
+            if (o == net.local || (s_gone & (1u << o))) {
+                continue; /* a player who left goes to everyone anyway */
+            }
+            bool want = (b[0] & (1u << o)) != 0, have = (s_fwd[o] & (1u << peer)) != 0;
+            if (want && !have) {
+                s_fwd[o] |= (uint8_t)(1u << peer);
+                s_fwd_acked[o][peer] = -1;
+                pc_log_line("net: P%d cannot hear P%d; relaying", s_peer[peer].port + 1, o + 1);
+            } else if (!want && have) {
+                s_fwd[o] &= (uint8_t)~(1u << peer);
+                pc_log_line("net: P%d hears P%d again; no longer relaying", s_peer[peer].port + 1,
+                    o + 1);
+            }
+        }
+        SDL_UnlockMutex(net.tx_lock);
+        return;
+    case REL_RELAY: { /* the host passing on another guest's message */
+        Peer* o = len >= 2 && from_host ? peer_by_port(b[0]) : NULL;
+        if (o != NULL && o != &s_peer[peer]) {
+            rel_dispatch(peer_index(o), b[1], b + 2, len - 2);
+        }
+        return;
+    }
+    case REL_GONE: /* a guest saying a player left */
+        if (net.local == 0 && len == 1 && b[0] < PORTS) {
+            drop_begin(b[0], "a guest says so");
+        }
+        return;
+    case REL_DROP: { /* the host: pass on what we hold of that player */
+        Peer* x = from_host && len == 1 && b[0] < PORTS ? peer_by_port(b[0]) : NULL;
+        if (x == NULL || x == &s_peer[peer]) {
+            return;
+        }
+        s_gone |= (uint8_t)(1u << b[0]);
+        link_kill(peer_index(x), "the host says it left");
+        SDL_LockMutex(net.tx_lock);
+        s_fwd[b[0]] = (uint8_t)(1u << peer);
+        s_fwd_acked[b[0]][peer] = -1;
+        SDL_UnlockMutex(net.tx_lock);
+        pc_log_line("net: P%d left; passing on its input (we hold %d)", b[0] + 1,
+            s_port_have[b[0]]);
+        return;
+    }
+    case REL_VOID: {
+        VoidMsg v;
+        if (!from_host || len != (int)sizeof v) {
+            return;
+        }
+        memcpy(&v, payload, sizeof v);
+        if (v.port < PORTS && peer_by_port(v.port) != NULL) {
+            drop_end(v.port, (int32_t)ntohl((uint32_t)v.last), (int32_t)ntohl((uint32_t)v.at));
+        }
+        return;
+    }
+    }
+}
+
+/* Routes, drops and their timers: every fresh tick and every turn of an input
+ * wait (game thread). */
+static void links_poll(void) {
+    if (!net.active || net.npeers < 2 || s_slippi_on) {
+        return;
+    }
+    int host = net_host_peer();
+    /* Each link's receive clock, under the receive thread's lock. */
+    bool heard[MAX_PEERS], left[MAX_PEERS];
+    uint64_t last[MAX_PEERS];
+    SDL_LockMutex(s_rx_lock);
+    for (int i = 0; i < net.npeers; i++) {
+        heard[i] = s_peer[i].heard;
+        last[i] = s_peer[i].last_rx_ns;
+        left[i] = s_peer[i].left;
+    }
+    SDL_UnlockMutex(s_rx_lock);
+    /* After the stamps, never before: one the receive thread wrote between
+     * the two reads would be later than `now`, and `now - last` would wrap to
+     * centuries of silence (it did: "silent 18446744073.7 s"). */
+    uint64_t now = SDL_GetTicksNS();
+    if (s_link_t0 == 0 && net.hs == HS_DONE) {
+        s_link_t0 = now;
+    }
+    /* Before the handshake a game may still be booting, and a booting game
+     * says nothing on its own (the resend timer repeats an input packet, and
+     * there is none before the first frame): silence means nothing yet. The
+     * connect and stall waits cover that stretch, as in a 1v1. */
+    bool judge = s_link_t0 != 0;
+    /* Is there a fresh link other than i? (FRESH_MS) */
+    int fresh = 0;
+    for (int i = 0; i < net.npeers; i++) {
+        fresh += heard[i] && !(s_gone & (1u << s_peer[i].port)) &&
+                 now - last[i] < FRESH_MS * 1000000ull;
+    }
+    for (int i = 0; i < net.npeers; i++) {
+        int port = s_peer[i].port;
+        bool fresh_i = heard[i] && now - last[i] < FRESH_MS * 1000000ull;
+        bool others_fresh = fresh - (fresh_i ? 1 : 0) > 0;
+        if (s_gone & (1u << port)) {
+            continue;
+        }
+        if (net.link_dead[i]) {
+            /* A dead route that is heard again is back. */
+            if (net.local != 0 && heard[i] && now - last[i] < ROUTE_BACK_MS * 1000000ull) {
+                SDL_LockMutex(net.tx_lock);
+                net.link_dead[i] = false;
+                SDL_UnlockMutex(net.tx_lock);
+                s_route_mask &= (uint8_t)~(1u << port);
+                s_route_told = false;
+                pc_log_line("net: link to P%d is back at frame %d", port + 1, net.frame);
+            }
+            continue;
+        }
+        if (left[i]) {
+            exit_if_test_done(); /* tools/net_test*.py ends a run with a goodbye */
+            if (net.local == 0) {
+                drop_begin(port, "it said goodbye");
+            } else if (!(s_gone_told & (1u << port))) {
+                uint8_t p = (uint8_t)port;
+                if (rel_send_to(host, REL_GONE, &p, 1)) {
+                    s_gone_told |= (uint8_t)(1u << port);
+                }
+            }
+            continue;
+        }
+        if (net.local == 0) {
+            /* The host's link to a guest is the one every route needs: a
+             * guest silent on it as long as a 1v1 waits before giving up
+             * (the stall timeout, then the resume window), while the other
+             * guests are heard, has left. */
+            uint64_t limit = (uint64_t)(STALL_TIMEOUT_MS + s_rc_window_ms) * 1000000ull;
+            if (judge && heard[i] && now - last[i] > limit && others_fresh) {
+                char why[48];
+                snprintf(why, sizeof why, "silent %.1f s", (now - last[i]) / 1e9);
+                drop_begin(port, why);
+            }
+            continue;
+        }
+        if (i == host) {
+            continue; /* the host going silent ends the session (wait_remote) */
+        }
+        bool host_fresh = host >= 0 && heard[host] && now - last[host] < FRESH_MS * 1000000ull;
+        bool never = !heard[i] && s_link_t0 != 0 && now - s_link_t0 > ROUTE_WAIT_MS * 1000000ull;
+        bool quiet = heard[i] && now - last[i] > ROUTE_SILENT_MS * 1000000ull;
+        if (judge && (never || quiet) && host_fresh) {
+            char why[48];
+            snprintf(why, sizeof why, never ? "never heard" : "silent %.1f s",
+                (now - last[i]) / 1e9);
+            link_kill(i, why);
+            s_route_mask |= (uint8_t)(1u << port);
+            s_route_told = false;
+        }
+    }
+    if (!s_route_told && host >= 0) {
+        s_route_told = rel_send_to(host, REL_ROUTE, &s_route_mask, 1);
+    }
+    /* Host: a player's collected input has settled and every guest holds it. */
+    if (net.local == 0) {
+        for (int port = 0; port < PORTS; port++) {
+            if (!(s_gone & (1u << port)) || s_port_end[port] >= 0) {
+                continue;
+            }
+            if (s_port_have[port] != s_drop_mark) {
+                s_drop_mark = s_port_have[port];
+                s_drop_quiet = now;
+            }
+            bool all = now - s_drop_quiet > DROP_SETTLE_MS * 1000000ull;
+            SDL_LockMutex(net.tx_lock);
+            for (int i = 0; i < net.npeers && all; i++) {
+                if (!net.link_dead[i] && s_fwd_acked[port][i] < s_port_have[port]) {
+                    all = false;
+                }
+            }
+            SDL_UnlockMutex(net.tx_lock);
+            if (!all) {
+                continue;
+            }
+            int32_t lastf = s_port_have[port];
+            int32_t from = net.frame > lastf ? net.frame : lastf;
+            VoidMsg v = {(uint8_t)port, (int32_t)htonl((uint32_t)lastf),
+                (int32_t)htonl((uint32_t)(in_fight() ? from + VOID_LEAD : -1))};
+            if (pc_net_send_reliable(REL_VOID, &v, sizeof v)) {
+                drop_end(port, lastf, in_fight() ? from + VOID_LEAD : -1);
+            }
+        }
+    }
+}
+
+int pc_net_void_port_now(void) {
+    return net.active && s_void_frame >= 0 && net.tick_frame == s_void_frame && in_fight() ?
+               s_void_port :
+               -1;
+}
+
 static void send_inputs(void) {
     if (s_slippi_on) {
         s_slippi_send_inputs();
@@ -556,6 +1021,9 @@ static void send_inputs(void) {
     rel_service();
     for (int i = 0; i < net.npeers; i++) {
         Peer* p = &s_peer[i];
+        if (s_gone & (1u << p->port)) {
+            continue; /* a dead route still gets input, so it is heard if it comes back */
+        }
         Packet pk;
         memset(&pk, 0, sizeof pk);
         pk.h = hdr('M');
@@ -618,6 +1086,7 @@ static void send_inputs(void) {
         p->last_valid = true;
         p->last_send_ns = now;
     }
+    send_forwarded();
     SDL_UnlockMutex(net.tx_lock);
     s_red_target = red;
     if (newest != s_send_frame) {
@@ -755,7 +1224,7 @@ static int seq_check(Peer* p, uint16_t seq) {
  * the game thread applies the packet because its seq is what the peer times
  * its round trip by; its frame is rx_have, final once the packet is queued
  * (see the top of this section). */
-static void rx_input(Peer* p, const Packet* pk, int n, bool reordered) {
+static void rx_input(Peer* p, const Packet* pk, int n, bool reordered, const Peer* via) {
     int32_t frame = atomic_load(&s_frame_pub);
     int count = pk->count > REDUNDANCY ? REDUNDANCY : pk->count;
     /* A peer can be at most window + delays ahead of us; anything else is
@@ -793,7 +1262,11 @@ static void rx_input(Peer* p, const Packet* pk, int n, bool reordered) {
     if (rx_push(p, pk, n, reordered ? RX_REORDERED : -1)) {
         p->rx_have = (int32_t)have;
     }
-    send_ack(p, p->rx_have, pk->seq);
+    if (via != NULL) {
+        send_fwd_ack(via, p->port, p->rx_have); /* passed on: ack whoever passed it */
+    } else {
+        send_ack(p, p->rx_have, pk->seq);
+    }
 }
 
 /* The game thread's half of a packet rx_input queued. rx_input's rule over
@@ -801,6 +1274,9 @@ static void rx_input(Peer* p, const Packet* pk, int n, bool reordered) {
  * one it checked, so a drain leaves the port's mark at or above rx_have. */
 static void on_inputs(Peer* p, const Packet* pk, bool reordered) {
     const int port = p->port;
+    if (s_port_end[port] >= 0) {
+        return; /* the player left and everyone agreed where its input ends */
+    }
     int count = pk->count > REDUNDANCY ? REDUNDANCY : pk->count;
     int64_t last = (int64_t)pk->first + count - 1;
     if (count > 0 && pk->first <= s_port_have[port] + 1 && last > s_port_have[port] &&
@@ -825,6 +1301,10 @@ static void on_inputs(Peer* p, const Packet* pk, bool reordered) {
     if (pk->ck_frame >= 0) {
         p->rck[pk->ck_frame & (RING - 1)].frame = pk->ck_frame;
         p->rck[pk->ck_frame & (RING - 1)].ck = pk->ck;
+        if (pk->ck_frame > p->ck_last_frame) {
+            p->ck_last_frame = pk->ck_frame;
+            p->ck_last = pk->ck;
+        }
     }
     /* The peer's frame advantage against ours. Both are measured the same
      * way against data that actually arrived, so their DIFFERENCE is the
@@ -1185,12 +1665,50 @@ static void rx_dispatch(Peer* p, void* buf, int n) {
             break;
         case SEQ_REORDER:
             s_rx_reorders++; /* older but new: still process, its pads may fill a gap */
-            rx_input(p, &pk, n, true);
+            rx_input(p, &pk, n, true, NULL);
             break;
         default:
-            rx_input(p, &pk, n, false);
+            rx_input(p, &pk, n, false, NULL);
             break;
         }
+        break;
+    }
+    case 'F': {
+        /* Another player's input, passed on by this peer: decoded as its
+         * own 'M' and applied to that player's port, acked back here. */
+        const FwdHdr* fh = buf;
+        Peer* o = peer_by_port(fh->origin);
+        size_t body = offsetof(Packet, pads) - sizeof(Hdr);
+        if (o == NULL || o == p || n < (int)(sizeof *fh + body)) {
+            return;
+        }
+        Packet pk;
+        memcpy(&pk.h, &u->h, sizeof pk.h);
+        pk.h.magic = 'M';
+        pk.h.player = (uint8_t)o->port;
+        memcpy((uint8_t*)&pk + sizeof(Hdr), (const uint8_t*)buf + sizeof *fh, body);
+        int pads_at = (int)(sizeof *fh + body);
+        if (pk.count > REDUNDANCY ||
+            !pads_decode((const uint8_t*)buf + pads_at, n - pads_at, pk.count, pk.pads))
+        {
+            return;
+        }
+        wire_packet(&pk);
+        rx_input(o, &pk, (int)packet_len(&pk), true, p);
+        break;
+    }
+    case 'G': {
+        const FwdAck* g = buf;
+        int32_t f = (int32_t)ntohl((uint32_t)g->frame);
+        if (n != (int)sizeof *g || g->origin >= PORTS) {
+            return;
+        }
+        SDL_LockMutex(net.tx_lock);
+        int32_t* acked = &s_fwd_acked[g->origin][peer_index(p)];
+        if (f > *acked && f <= s_port_have[g->origin]) {
+            *acked = f;
+        }
+        SDL_UnlockMutex(net.tx_lock);
         break;
     }
     case 'A':
@@ -1223,6 +1741,16 @@ static void rx_dispatch(Peer* p, void* buf, int n) {
         if (n != (int)sizeof(Bye) || s_rx_left || !p->heard) {
             return;
         }
+        /* A guest leaving a session of three or more is a drop, not the end
+         * of it (links_poll); only the host leaving ends it for everyone. */
+        if (net.npeers > 1 && p->port != 0) {
+            if (!p->left) {
+                p->left = true;
+                pc_log_line("net: P%d said goodbye (reason %d) at frame %d", p->port + 1,
+                    u->bye.reason, atomic_load(&s_frame_pub));
+            }
+            break;
+        }
         s_rx_left = true;
         s_rx_why = u->bye.reason <= PC_NET_PEER_RESUME ? u->bye.reason : PC_NET_PEER_LEFT;
         pc_log_line("net: peer left (reason %d) at frame %d", s_rx_why, atomic_load(&s_frame_pub));
@@ -1254,6 +1782,14 @@ static bool packet_shape(const void* buf, int n) {
     }
     case 'K':
         return n == (int)sizeof(RelAck);
+    case 'F': {
+        int head = (int)(sizeof(FwdHdr) + offsetof(Packet, pads) - sizeof(Hdr));
+        const Packet* q = (const Packet*)((const uint8_t*)buf + sizeof(FwdHdr) - sizeof(Hdr));
+        return n >= head && q->count <= REDUNDANCY &&
+               pads_wire_len((const uint8_t*)buf + head, n - head, q->count) == n - head;
+    }
+    case 'G':
+        return n == (int)sizeof(FwdAck);
     case 'B':
         return n == (int)sizeof(Bye);
     default:
@@ -1566,15 +2102,25 @@ static int SDLCALL rx_main(void* ud) {
  * receive thread's clock, read under its lock (game thread). */
 static uint64_t rx_heard_ns(void) {
     SDL_LockMutex(s_rx_lock);
-    /* The quietest link's: one peer gone silent stalls the frame loop as
-     * surely as all of them, and before every peer has been heard there is no
-     * rx clock to go by. */
-    uint64_t t = UINT64_MAX;
-    for (int i = 0; i < net.npeers; i++) {
-        uint64_t heard = s_peer[i].heard ? s_peer[i].last_rx_ns : 0;
-        t = heard < t ? heard : t;
+    uint64_t t = 0;
+    if (net.npeers == 1) {
+        t = s_peer[0].heard ? s_peer[0].last_rx_ns : 0;
+    } else if (net.local != 0) {
+        /* A guest's session lives on its link to the host. Another guest
+         * going quiet is a route (links_poll), not the end of the session. */
+        int h = net_host_peer();
+        t = h >= 0 && s_peer[h].heard ? s_peer[h].last_rx_ns : 0;
+    } else {
+        /* The host's, on its freshest guest: one guest going quiet is a drop
+         * (links_poll), and only every guest going quiet ends the session.
+         * Taking the quietest instead opened the resume window under a
+         * dropped guest and timed the session out at the very moment the
+         * drop was declared. */
+        for (int i = 0; i < net.npeers; i++) {
+            uint64_t heard = s_peer[i].heard && !net.link_dead[i] ? s_peer[i].last_rx_ns : 0;
+            t = heard > t ? heard : t;
+        }
     }
-    t = t == UINT64_MAX ? 0 : t;
     SDL_UnlockMutex(s_rx_lock);
     return t;
 }
@@ -1987,6 +2533,7 @@ static bool wait_remote(int32_t need) {
     s_stalls++;
     for (;;) {
         recv_inputs();
+        links_poll();
         if (s_remote_have >= need) {
             break;
         }
@@ -2174,6 +2721,9 @@ bool pc_net_scene_hold(void) {
     const int slot = s_scene_seq % SCENE_SLOTS;
     int32_t remote = -2;
     for (int i = 0; i < net.npeers; i++) {
+        if (s_gone & (1u << s_peer[i].port)) {
+            continue;
+        }
         int32_t f = s_scene_exit_remote[i][slot];
         remote = f < 0 ? -1 : remote == -1 ? -1 : f > remote ? f : remote;
     }
@@ -2282,6 +2832,7 @@ static void session_reset(void) {
     net.frame = 0;
     net.tick_frame = -1;
     net.resim = false;
+    links_reset();
     remote_ports_set(s_remote_mask);
     s_rb_frame = -1;
     s_end_frame = -1;
@@ -2294,7 +2845,7 @@ static void session_reset(void) {
         p->port = keep.port;
         p->addr = keep.addr;
         p->addr_len = keep.addr_len;
-        p->rx_have = p->last_acked = p->ck_checked = -1;
+        p->rx_have = p->last_acked = p->ck_checked = p->ck_last_frame = -1;
         for (int f = 0; f < RING; f++) {
             p->rck[f].frame = -1;
         }
@@ -3400,7 +3951,7 @@ static bool game_over(void) {
 static void predict(int32_t f) {
     static const WirePad neutral;
     for (int p = 0; p < PORTS; p++) {
-        if ((s_remote_mask & (1u << p)) && s_port_have[p] < f) {
+        if ((s_remote_mask & (1u << p)) && s_port_have[p] < f && s_port_end[p] < 0) {
             s_remote_ring[p][f & (RING - 1)] =
                 s_port_have[p] >= 0 ? s_remote_ring[p][s_port_have[p] & (RING - 1)] : neutral;
         }
@@ -3606,7 +4157,9 @@ static void write_head(PADStatus* head, int32_t f) {
             head[p].err = PAD_ERR_NO_CONTROLLER;
             continue;
         }
-        const WirePad* theirs = &s_remote_ring[p][f & (RING - 1)];
+        static const WirePad released;
+        const WirePad* theirs =
+            s_port_end[p] >= 0 && f > s_port_end[p] ? &released : &s_remote_ring[p][f & (RING - 1)];
         WirePad wrong;
         if (s_audit_poison) {
             wrong = *theirs;
@@ -3955,6 +4508,7 @@ static void fresh_tick(PADStatus* head, bool raw) {
             }
         }
         recv_inputs();
+        links_poll();
         if (s_peer_left) {
             exit_if_test_done();
             pc_net_disconnect();
@@ -3988,7 +4542,15 @@ static void fresh_tick(PADStatus* head, bool raw) {
          * after a rollback of odd depth the two peers advance the scene on
          * opposite ticks -- one simulates a frame the other skips. */
         bool speed_1 = gmVsMelee_StartData.rules.game_speed == 1.0F;
-        bool lockstep = s_lockstep || !in_fight() || net.frame <= net.rb_barrier || !speed_1;
+        /* The tick that voids the match (a player left, net.c "routes and
+         * drops") must run once, on real input: ending the match is not pure
+         * under a re-run (a peer that re-ran it after a misprediction parted
+         * from one that ran it once, DESYNC on the next frame). Lockstep on
+         * the frame before settles every correction below it, and lockstep on
+         * the frame itself leaves nothing that can roll back across it. */
+        bool voiding = s_void_frame >= 0 && net.frame >= s_void_frame - 1 && net.frame <= s_void_frame;
+        bool lockstep =
+            s_lockstep || !in_fight() || net.frame <= net.rb_barrier || !speed_1 || voiding;
         /* The last lockstep frames before this fight can predict: size and
          * page in the rollback ring now, a slot a frame, while the wait below
          * is for the peer anyway (net_snapshot.c snaps_reserve). A barrier

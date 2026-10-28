@@ -68,6 +68,19 @@ void net_scene_rel(int peer, const void* payload, int len) {
     (void)payload;
     (void)len;
 }
+/* net.c's routes and drops: a 1v1 session never reaches them. */
+void net_link_rel(int peer, uint8_t type, const void* payload, int len) {
+    (void)peer;
+    (void)type;
+    (void)payload;
+    (void)len;
+}
+void net_relay_out(int peer, uint8_t type, const void* payload, int len) {
+    (void)peer;
+    (void)type;
+    (void)payload;
+    (void)len;
+}
 void net_delay_rel(int peer, const void* payload, int len) {
     (void)peer;
     s_delay_msgs++;

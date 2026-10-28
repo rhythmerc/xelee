@@ -115,7 +115,7 @@ void rel_service(void) {
     for (int peer = 0; peer < net.npeers; peer++) {
     for (int lane = 0; lane < REL_LANES; lane++) {
         RelTx* t = &s_rel_tx[peer][lane];
-        if (t->n == 0) {
+        if (t->n == 0 || net.link_dead[peer]) {
             continue;
         }
         if (now == 0) {
@@ -146,17 +146,22 @@ static bool lane_has_room(int peer, uint8_t type) {
     return t->n < REL_QUEUE && (!rel_low_priority(type) || low_queued(t) < REL_LOW_QUEUE);
 }
 
-/* Queue on one link, or on every link when `only` is -1 (all or none). */
+/* Queue on one link, or on every live link when `only` is -1 (all or none).
+ * A dead link (net.link_dead) is skipped: what it would carry reaches that
+ * peer through the host instead (REL_RELAY). */
 static bool rel_queue(int only, uint8_t type, const void* payload, int len) {
     int from = only < 0 ? 0 : only;
     int to = only < 0 ? net.npeers : only + 1;
     SDL_LockMutex(net.tx_lock);
     bool ok = from < to && to <= net.npeers;
     for (int peer = from; ok && peer < to; peer++) {
-        ok = lane_has_room(peer, type);
+        ok = net.link_dead[peer] ? only < 0 : lane_has_room(peer, type);
     }
     if (ok) {
         for (int peer = from; peer < to; peer++) {
+            if (net.link_dead[peer]) {
+                continue;
+            }
             RelTx* t = &s_rel_tx[peer][lane_of(type)];
             RelMsg* m = &t->q[(t->head + t->n++) % REL_QUEUE];
             m->type = type;
@@ -254,6 +259,16 @@ void on_rel(int peer, const Rel* r, int n) {
  * withholds the ack so the peer resends; Slippi has already delivered it, so
  * the message is simply dropped there). */
 bool rel_dispatch(int peer, uint8_t type, const void* payload, int len) {
+    if (type >= REL_ROUTE && type <= REL_VOID) {
+        net_link_rel(peer, type, payload, len);
+        return true;
+    }
+    /* Everything a player broadcasts that every peer acts on (the scene
+     * hand-off, chat, the caller's messages) also goes on, through the host,
+     * to a guest that cannot hear that player. */
+    if (type != REL_RESUME && type != REL_DELAY) {
+        net_relay_out(peer, type, payload, len);
+    }
     if (type == REL_RESUME) {
         net_resume_rel(peer, payload, len);
     } else if (type == REL_DELAY) {
@@ -291,6 +306,16 @@ void on_rel_ack(int peer, const RelAck* k) {
         rel_service(); /* next queued message goes out at once */
     }
     SDL_UnlockMutex(net.tx_lock);
+}
+
+/* A link that died: what it still had queued will never be acked, and a full
+ * lane would refuse every broadcast after it. Caller holds tx_lock. */
+void rel_link_drop(int peer) {
+    for (int lane = 0; lane < REL_LANES; lane++) {
+        RelTx* t = &s_rel_tx[peer][lane];
+        t->head = t->n = t->resends = 0;
+        t->sent_ns = 0;
+    }
 }
 
 /* Session start: every queue empty, sequence numbers from 0 (timer parked). */
