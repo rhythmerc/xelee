@@ -541,20 +541,40 @@ bool pc_held_frame_due(void) {
     return flat && SDL_GetTicksNS() - s_begun_ns >= frames * pc_sim_period_ns();
 }
 
-/* Present the open frame (the scene drawn again, net.c held_redraw) and open
- * the next: no pad alarms, retrace count or menus, which belong to a frame
- * that advances. */
-void pc_present_held_frame(void) {
+/* Present the open frame and open the next, stamped with the headset's
+ * newest tick, for the scene to be drawn again into (net.c held_redraw): no
+ * pad alarms, retrace count or menus, which belong to a frame that
+ * advances. */
+void pc_present_held_frame(bool new_tick) {
     /* No XFB copy went with these draws: keep the last flat image. */
     aurora_preserve_frame_buffer(true);
     aurora_end_frame();
     s_in_frame = false;
 #ifdef AURORA_ENABLE_OPENXR
+    /* The frame opened next is a held one, unless the wait is over. */
+    aurora_xr_set_held(!new_tick);
+#endif
+#ifdef AURORA_ENABLE_OPENXR
     /* The due check waited for the tick; this only stamps the next frame
-     * with it (pc_held_frame_due paces the held frames). */
-    const u64 tick = aurora_xr_pace_count();
+     * with it (pc_held_frame_due paces the held frames). `new_tick`: the
+     * wait is over and the frame that advances comes next; it waits for a
+     * tick past the last held frame's. Stamped alike, the two went out as a
+     * repeat with no SpaceWarp vectors, and the headset's runtime switched
+     * SpaceWarp off and on again (the "SpaceWarpDistortionMesh is
+     * destroyed" line), a flicker at every resume. */
+    u64 tick = aurora_xr_pace_count();
+    if (tick != 0 && new_tick && tick <= s_begun_tick) {
+        tick = s_begun_tick + 1;
+    }
     if (tick != 0) {
         aurora_xr_pace_until(tick);
+        if (new_tick && s_xr_due != 0) {
+            /* Netplay's schedule still names a tick from before the wait,
+             * and the boundary re-anchors a stale one to the tick now: the
+             * frame after this one would share its tick (the same flicker).
+             * It's due on the next. */
+            s_xr_due = tick + 1;
+        }
     }
 #endif
     if (aurora_begin_frame()) {

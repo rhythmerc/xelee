@@ -2540,8 +2540,10 @@ void gm_RenderHeld(void);   /* gmscene.c */
 void pc_os_hold_alarms(int on); /* os.c */
 
 /* A wait in a fight that outlasts a display frame keeps the view drawn: the
- * frozen scene is drawn again into the open frame, which then goes out, and
- * the next is opened a display frame on (vi.c pc_held_frame_due). In a
+ * open frame goes out and a fresh one, stamped with the headset's tick now,
+ * takes the frozen scene drawn again (vi.c pc_held_frame_due). Drawn into the
+ * frame that was open instead, each carried the tick before and the headset
+ * dropped it as late. In a
  * headset that is the eyes from where the head is now, and SpaceWarp gets
  * this frame's vectors, zero for a world that isn't moving; with one image
  * held for the whole wait, SpaceWarp smeared it and walking round the stage
@@ -2551,14 +2553,17 @@ void pc_os_hold_alarms(int on); /* os.c */
  * land in between. Returns whether a frame went out. */
 static bool held_redraw(void) {
     static Snapshot snap;
-    if (!in_fight() || !pc_held_frame_due() || !snapshot_take(&snap, net.frame)) {
+    if (!in_fight() || !pc_held_frame_due()) {
         return false;
+    }
+    pc_present_held_frame(false);
+    if (!snapshot_take(&snap, net.frame)) {
+        return true; /* an empty frame went out; the next is due a frame on */
     }
     pc_os_hold_alarms(1);
     gm_RenderHeld();
     snapshot_restore(&snap);
     pc_os_hold_alarms(0);
-    pc_present_held_frame();
     return true;
 }
 
@@ -2631,6 +2636,11 @@ static bool wait_remote(int32_t need) {
     }
     if (s_rc != RSM_NONE) {
         resume_end(SDL_GetTicksNS());
+    }
+    if (held > 0) {
+        /* The last held frame goes out; the tick's own frame starts fresh,
+         * on a tick of its own. */
+        pc_present_held_frame(true);
     }
     uint64_t dt = SDL_GetTicksNS() - t0;
     if (held > 0 && dt > 250000000ull) {
