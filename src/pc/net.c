@@ -30,6 +30,7 @@
 #include "pc/file_cache.h"
 #include "pc/slp.h"
 #include "pc/net_internal.h"
+#include "pc/pc.h"
 #include "pc/net_sfx.h"
 #include "pc/net_punch.h"
 #include "pc/slippi/slp_adapter.h"
@@ -2535,6 +2536,32 @@ static void resume_end(uint64_t now) {
 static int connect_timeout_ms(void) {
     return net.connect_timeout_ms > 0 ? net.connect_timeout_ms : CONNECT_TIMEOUT_MS;
 }
+void gm_RenderHeld(void);   /* gmscene.c */
+void pc_os_hold_alarms(int on); /* os.c */
+
+/* A wait in a fight that outlasts a display frame keeps the view drawn: the
+ * frozen scene is drawn again into the open frame, which then goes out, and
+ * the next is opened a display frame on (vi.c pc_held_frame_due). In a
+ * headset that is the eyes from where the head is now, and SpaceWarp gets
+ * this frame's vectors, zero for a world that isn't moving; with one image
+ * held for the whole wait, SpaceWarp smeared it and walking round the stage
+ * left it behind. Drawing is meant to leave the sim alone, but it has not
+ * always (the hurtbox case), and only the waiting peer draws these, so the
+ * state is saved around it and put back, and no alarm (a pad sample) may
+ * land in between. Returns whether a frame went out. */
+static bool held_redraw(void) {
+    static Snapshot snap;
+    if (!in_fight() || !pc_held_frame_due() || !snapshot_take(&snap, net.frame)) {
+        return false;
+    }
+    pc_os_hold_alarms(1);
+    gm_RenderHeld();
+    snapshot_restore(&snap);
+    pc_os_hold_alarms(0);
+    pc_present_held_frame();
+    return true;
+}
+
 static bool wait_remote(int32_t need) {
     if (s_slippi_on) {
         return s_slippi_wait_remote(need);
@@ -2544,6 +2571,7 @@ static bool wait_remote(int32_t need) {
     }
     uint64_t t0 = SDL_GetTicksNS();
     uint64_t last_send = t0;
+    unsigned held = 0;
     s_stalls++;
     for (;;) {
         recv_inputs();
@@ -2551,6 +2579,7 @@ static bool wait_remote(int32_t need) {
         if (s_remote_have >= need) {
             break;
         }
+        held += held_redraw() ? 1 : 0;
         if (s_peer_left) {
             return false;
         }
@@ -2604,6 +2633,9 @@ static bool wait_remote(int32_t need) {
         resume_end(SDL_GetTicksNS());
     }
     uint64_t dt = SDL_GetTicksNS() - t0;
+    if (held > 0 && dt > 250000000ull) {
+        pc_log_line("net: held view drawn %u times over a %.0f ms wait at frame %d", held, dt / 1e6, net.frame);
+    }
     if (dt > s_stall_ns_max) {
         s_stall_ns_max = dt;
     }

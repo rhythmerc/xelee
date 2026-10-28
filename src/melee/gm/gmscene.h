@@ -53,4 +53,10 @@
 
 /* 4D6724 */ extern void (*gm_804D6724)(void);
 
+#ifdef TARGET_PC
+/* The scene drawn again as it stands, without advancing it (a netplay
+ * wait's held view, net.c held_redraw). */
+void gm_RenderHeld(void);
+#endif
+
 #endif

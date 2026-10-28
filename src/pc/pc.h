@@ -19,6 +19,10 @@ void pc_platform_init(void);
 /* Frame boundary: presents the current frame, pumps events, starts the next
  * frame and runs due OSAlarms. Called from VIWaitForRetrace. */
 void pc_frame_boundary(void);
+/* A netplay wait's held view (src/pc/vi.c): whether the open frame has
+ * outlasted its display frame, and presenting it to open the next. */
+bool pc_held_frame_due(void);
+void pc_present_held_frame(void);
 /* Simulation frame period the boundary paces to (60.000 Hz), src/pc/vi.c. */
 uint64_t pc_sim_period_ns(void);
 /* Sleep (at most 1 ms) toward the next due OSAlarm instead of spinning for it,

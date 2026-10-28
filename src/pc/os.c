@@ -60,9 +60,19 @@ BOOL OSDisableInterrupts(void) {
  * delivered on the game thread whenever it re-enables interrupts (and once
  * per frame from pc_frame_boundary), which is where the original code
  * expected them to be able to run. */
+static __thread int s_alarms_held;
+
+/* Alarms that come due while held wait for the first delivery after the
+ * hold ends: a netplay wait draws the frozen scene again between a state
+ * save and its restore (net.c held_redraw), and a pad sample written in
+ * between would be rolled back with the rest. */
+void pc_os_hold_alarms(int on) {
+    s_alarms_held += on ? 1 : -1;
+}
+
 static void deliver_pending(void) {
     static __thread int in_delivery;
-    if (s_is_game_thread && !in_delivery) {
+    if (s_is_game_thread && !in_delivery && s_alarms_held == 0) {
         in_delivery = 1;
         pc_os_run_alarms();
         in_delivery = 0;

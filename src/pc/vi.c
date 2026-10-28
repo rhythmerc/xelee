@@ -46,6 +46,11 @@ extern void browser_yield(void);
 bool pc_exit_requested;
 
 static u32 s_retrace_count;
+/* When the open frame began: the steady clock, and the headset's tick (0
+ * without one). A netplay wait that holds the frame open past its display
+ * frame draws the scene again (pc_held_frame_due). */
+static u64 s_begun_ns, s_begun_tick;
+static bool s_begun_held; /* opened by pc_present_held_frame: one display frame each */
 static VIRetraceCallback s_pre_cb;
 static VIRetraceCallback s_post_cb;
 static void* s_next_fb;
@@ -428,6 +433,11 @@ void pc_frame_boundary(void) {
 #endif
     }
     s_in_frame = true;
+    s_begun_ns = SDL_GetTicksNS();
+    s_begun_held = false;
+#ifdef AURORA_ENABLE_OPENXR
+    s_begun_tick = aurora_xr_pace_count();
+#endif
 
     /* Presentation-only chat reads the physical local controller, never a
      * rewound/synchronized pad. It cannot change the game simulation. */
@@ -501,6 +511,59 @@ void pc_frame_boundary(void) {
                 pc_log_line("net timing: post-retrace callback %.1f ms at retrace %u frame %d",
                     elapsed / 1e6, s_retrace_count, pc_net_frame());
         }
+    }
+}
+
+/* A netplay wait has held the open frame past a display frame: in a
+ * headset, its tick and the next have gone by; flat (MELEE_HELD_REDRAW=1, for
+ * testing: a flat window keeps its last image well enough), two sim periods.
+ * A frame a held one opened is due a display frame on.
+ * In a headset the one frozen image was all it had, so SpaceWarp smeared it
+ * and walking round the stage left it behind; the held frames keep the view
+ * drawn from where the head is. */
+bool pc_held_frame_due(void) {
+    static int flat = -1;
+    if (flat < 0) {
+        const char* e = getenv("MELEE_HELD_REDRAW");
+        flat = e != NULL && e[0] == '1';
+    }
+    if (!s_in_frame) {
+        return false;
+    }
+    (void)s_begun_tick; /* a headset's, in XR builds */
+    const u64 frames = s_begun_held ? 1 : 2;
+#ifdef AURORA_ENABLE_OPENXR
+    const u64 tick = aurora_xr_pace_count();
+    if (tick != 0 && s_begun_tick != 0) {
+        return tick >= s_begun_tick + frames;
+    }
+#endif
+    return flat && SDL_GetTicksNS() - s_begun_ns >= frames * pc_sim_period_ns();
+}
+
+/* Present the open frame (the scene drawn again, net.c held_redraw) and open
+ * the next: no pad alarms, retrace count or menus, which belong to a frame
+ * that advances. */
+void pc_present_held_frame(void) {
+    /* No XFB copy went with these draws: keep the last flat image. */
+    aurora_preserve_frame_buffer(true);
+    aurora_end_frame();
+    s_in_frame = false;
+#ifdef AURORA_ENABLE_OPENXR
+    /* The due check waited for the tick; this only stamps the next frame
+     * with it (pc_held_frame_due paces the held frames). */
+    const u64 tick = aurora_xr_pace_count();
+    if (tick != 0) {
+        aurora_xr_pace_until(tick);
+    }
+#endif
+    if (aurora_begin_frame()) {
+        s_in_frame = true;
+        s_begun_held = true;
+        s_begun_ns = SDL_GetTicksNS();
+#ifdef AURORA_ENABLE_OPENXR
+        s_begun_tick = aurora_xr_pace_count();
+#endif
     }
 }
 

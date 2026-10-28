@@ -371,6 +371,19 @@ static bool gm_RunSimTick(void (*on_frame)(void), struct gm_80479D58_t* temp_r25
 }
 
 #ifdef TARGET_PC
+/* The render half of a scene frame (gm_801A4D34) alone, on the scene as it
+ * stands: a netplay wait draws the frozen scene again each display frame
+ * (net.c held_redraw). No pad reads, card tasks or XFB copy and its wait:
+ * those belong to a frame that advances. */
+void gm_RenderHeld(void)
+{
+    GXInvalidateVtxCache();
+    GXInvalidateTexAll();
+    HSD_StartRender(HSD_RP_SCREEN);
+    HSD_GObj_80390FC0();
+    HSD_Init_803755A8();
+}
+
 /* The scene-end request while the netcode agrees a frame for it; 0 = none.
  * One scene loop runs at a time, so one slot is the whole state. */
 static int s_scene_end_held;
