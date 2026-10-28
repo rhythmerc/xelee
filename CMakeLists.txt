@@ -319,6 +319,9 @@ set(PC_SOURCES
         src/pc/settings_page.cpp
         src/pc/slippi_menu.cpp
         src/pc/xeleenet_menu.cpp
+        # The game's text by key, from resources/lang/*.yaml; it builds
+        # rapidyaml (vendored single header, extern/rapidyaml).
+        src/pc/lang.cpp
         src/pc/rml_picklist.cpp
         src/pc/discfont.c
         src/pc/gcadapter.c
@@ -422,7 +425,7 @@ else ()
     add_executable(melee ${PC_SOURCES})
 endif ()
 
-target_include_directories(melee PRIVATE extern/monocypher)
+target_include_directories(melee PRIVATE extern/monocypher extern/rapidyaml)
 
 target_compile_options(melee PRIVATE
         ${MELEE_FP_FLAGS}

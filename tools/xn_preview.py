@@ -10,7 +10,8 @@ PAGE is host, more, stages, lobbies, code, joining, progress, failed or banner
 service), waits for it to fade in and captures the window. --share puts the
 pictures on the tailnet share as xn-preview-PAGE.png.
 
-For a stylesheet alone there's no need to restart: edit the .rcss with the
+For a stylesheet or the text alone there's no need to restart: edit the
+.rcss or resources/lang/en.yaml (the copy beside the executable) with the
 game on the page, and press F5 in it.
 """
 import argparse

@@ -4,9 +4,11 @@
  *
  * For working on their look: MELEE_XN_PREVIEW=<page> shows a page with
  * sample data and no network (tools/xn_preview.py boots and screenshots
- * it), and F5 reloads every RmlUi stylesheet in the running game. */
+ * it), and F5 reloads every RmlUi stylesheet in the running game, and the text
+ * (resources/lang/en.yaml, src/pc/lang.h). */
 #include "xeleenet_menu.h"
 
+#include "lang.h"
 #include "launcher.h"
 #include "menu_screen.h"
 #include "net.h"
@@ -64,15 +66,24 @@ std::string s_preview;
 // gm_1601.c lbl_803B7808); the grid shows them competitive first.
 struct Stage {
     int bit;
-    const char* name;
+    const char* name; // its key
 };
 const Stage kStages[] = {
-    {24, "Battlefield"}, {25, "Final Dest."}, {26, "Dream Land"}, {4, "Yoshi's Story"}, {5, "Fountain"},
-    {7, "Pok\xc3\xa9mon Std."}, {0, "Peach's Castle"}, {12, "Rainbow Cruise"}, {1, "Kongo Jungle"},
-    {13, "Jungle Japes"}, {2, "Great Bay"}, {14, "Temple"}, {3, "Brinstar"}, {15, "Br. Depths"},
-    {16, "Yoshi's Island"}, {17, "Green Greens"}, {6, "Corneria"}, {18, "Venom"}, {19, "Pok\xc3\xa9 Floats"},
-    {8, "Mute City"}, {20, "Big Blue"}, {9, "Onett"}, {21, "Fourside"}, {10, "Icicle Mtn."},
-    {11, "Mushroom K."}, {22, "Mushroom K. II"}, {23, "Flat Zone"}, {28, "Kongo 64"}, {27, "Yoshi's Is. 64"},
+    {24, "xeleenet.stages.names.battlefield"},      {25, "xeleenet.stages.names.final_destination"},
+    {26, "xeleenet.stages.names.dream_land"},       {4, "xeleenet.stages.names.yoshis_story"},
+    {5, "xeleenet.stages.names.fountain"},          {7, "xeleenet.stages.names.pokemon_stadium"},
+    {0, "xeleenet.stages.names.peachs_castle"},     {12, "xeleenet.stages.names.rainbow_cruise"},
+    {1, "xeleenet.stages.names.kongo_jungle"},      {13, "xeleenet.stages.names.jungle_japes"},
+    {2, "xeleenet.stages.names.great_bay"},         {14, "xeleenet.stages.names.temple"},
+    {3, "xeleenet.stages.names.brinstar"},          {15, "xeleenet.stages.names.brinstar_depths"},
+    {16, "xeleenet.stages.names.yoshis_island"},    {17, "xeleenet.stages.names.green_greens"},
+    {6, "xeleenet.stages.names.corneria"},          {18, "xeleenet.stages.names.venom"},
+    {19, "xeleenet.stages.names.poke_floats"},      {8, "xeleenet.stages.names.mute_city"},
+    {20, "xeleenet.stages.names.big_blue"},         {9, "xeleenet.stages.names.onett"},
+    {21, "xeleenet.stages.names.fourside"},         {10, "xeleenet.stages.names.icicle_mountain"},
+    {11, "xeleenet.stages.names.mushroom_kingdom"}, {22, "xeleenet.stages.names.mushroom_kingdom_2"},
+    {23, "xeleenet.stages.names.flat_zone"},        {28, "xeleenet.stages.names.kongo_jungle_64"},
+    {27, "xeleenet.stages.names.yoshis_island_64"},
 };
 constexpr int kStageCount = static_cast<int>(sizeof kStages / sizeof kStages[0]);
 constexpr unsigned kAllStages = (1u << 29) - 1;
@@ -89,13 +100,17 @@ int stage_count(unsigned mask) {
 // ---- the lobby's settings (H1) --------------------------------------------------
 
 enum Preset { kOneVsOne, kDoubles, kFreeForAll, kCustom, kPresetCount };
-const char* const kPresetNames[kPresetCount] = {"1v1", "Doubles", "Free-for-all", "Custom"};
+const char* const kPresetNames[kPresetCount] = {"xeleenet.host.presets.1v1", "xeleenet.host.presets.doubles",
+                                                "xeleenet.host.presets.ffa", "xeleenet.host.presets.custom"};
 const char* const kPresetIds[kPresetCount] = {"1v1", "doubles", "ffa", "custom"};
 const int kStocks[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 99};
 const int kMinutes[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30};
-const char* const kItemNames[] = {"Off", "Very low", "Low", "Medium", "High", "Very high"};
+const char* const kItemNames[] = {"xeleenet.host.items.off",  "xeleenet.host.items.very_low",
+                                  "xeleenet.host.items.low",  "xeleenet.host.items.medium",
+                                  "xeleenet.host.items.high", "xeleenet.host.items.very_high"};
 const char* const kItemIds[] = {"off", "very_low", "low", "medium", "high", "very_high"};
-const char* const kHandicapNames[] = {"Off", "Auto", "On"};
+const char* const kHandicapNames[] = {"xeleenet.rules.handicap.off", "xeleenet.rules.handicap.auto",
+                                      "xeleenet.rules.handicap.on"};
 
 // Kept for the next lobby, this launch and the next (xeleenet-lobby.txt).
 struct HostSettings {
@@ -221,25 +236,33 @@ template <size_t N> int step(const int (&values)[N], int v, int dir) {
     return values[(index_of(values, v) + dir + n) % n];
 }
 
-std::string minutes_label(int m) { return m == 0 ? std::string("No limit") : std::to_string(m) + ":00"; }
+std::string on_off(bool on) { return tr(on ? "xeleenet.host.values.on" : "xeleenet.host.values.off"); }
+
+std::string minutes_label(int m) {
+    return m == 0 ? tr("xeleenet.host.values.no_limit") : tr("xeleenet.host.values.minutes", {{"n", m}});
+}
 
 std::string lobby_name() {
-    return s_host.name.empty() ? std::string(pc_xn_name()) + "'s lobby" : s_host.name;
+    return s_host.name.empty() ? tr("xeleenet.host.lobby_name", {{"name", pc_xn_name()}}) : s_host.name;
 }
 
 std::string stage_list_label(unsigned mask) {
-    const char* kind = mask == kCompetitive ? "Competitive" : mask == kAllStages ? "All" : "Custom";
-    return std::string(kind) + " (" + std::to_string(stage_count(mask)) + ")";
+    const char* kind = mask == kCompetitive ? "xeleenet.host.stage_lists.competitive"
+                       : mask == kAllStages ? "xeleenet.host.stage_lists.all"
+                                            : "xeleenet.host.stage_lists.custom";
+    return tr(kind, {{"n", stage_count(mask)}});
 }
 
 // "Doubles · 4 stocks · 8:00": a lobby in a line.
 std::string rules_line(bool teams, int seats, bool stock, int stocks, int minutes, const char* items) {
-    const std::string mode = teams ? "Doubles" : seats == 2 ? "1v1" : "Free-for-all";
+    const std::string mode = tr(teams        ? "xeleenet.rules_line.doubles"
+                                : seats == 2 ? "xeleenet.rules_line.1v1"
+                                             : "xeleenet.rules_line.ffa");
     std::string r = mode + kDot +
-                    (stock ? std::to_string(stocks) + (stocks == 1 ? " stock" : " stocks") : std::string("Time"));
+                    (stock ? tr("xeleenet.rules_line.stocks", {{"n", stocks}}) : tr("xeleenet.rules_line.time"));
     r += kDot + minutes_label(minutes);
     if (items != nullptr && items[0] != '\0' && std::strcmp(items, "off") != 0)
-        r += std::string(kDot) + "Items";
+        r += kDot + tr("xeleenet.rules_line.items");
     return r;
 }
 
@@ -304,7 +327,7 @@ struct Item {
     bool enabled = true;
     std::function<void(int)> change; // left/right, -1 or +1; unset: not a value
     std::function<void()> act;       // A
-    const char* hint = "";
+    std::string hint;
 };
 
 int s_result = PC_XN_MENU_STAY;
@@ -354,7 +377,8 @@ struct Screen : Rml::EventListener {
 
     std::string hostNote; // H1's error line
     std::string code;     // J1's code
-    std::string failTitle, failLine, failSmall;
+    std::string failWhy;          // J3: xeleenet.failed.<failWhy>
+    std::string failHost, failErr; // what fills it in
     int failStep = 0;      // the track's red dot: 0 Find, 1 Connect
     bool failCode = false; // the code's fault: Edit code
     PcXnListing joining{}; // the lobby being joined, as listed
@@ -397,110 +421,114 @@ struct Screen : Rml::EventListener {
 
     // ---- H1 and its pages ----------------------------------------------------
 
+    // name, hint and note are keys.
     void choice(std::string& r, const std::string& id, int col, int row, const char* name, const std::string& value,
                 std::function<void(int)> change, const char* hint, bool enabled = true, const char* note = nullptr) {
-        r += "<div id=\"" + id + "\" class=\"xrow" + (enabled ? "" : " off") + "\"><div class=\"n\">" + name +
-             (note != nullptr ? "<span class=\"note\">" + std::string(note) + "</span>" : std::string()) + "</div>";
+        r += "<div id=\"" + id + "\" class=\"xrow" + (enabled ? "" : " off") + "\"><div class=\"n\">" + enc(tr(name)) +
+             (note != nullptr ? "<span class=\"note\">" + enc(tr(note)) + "</span>" : std::string()) + "</div>";
         r += "<div class=\"v\"><span class=\"arr\">" + std::string(kLeft) + "</span>" + enc(value) +
              "<span class=\"arr\">" + kRight + "</span></div></div>";
         Item it{id, col, row, enabled};
         it.change = std::move(change);
-        it.hint = hint;
+        it.hint = tr(hint);
         items.push_back(std::move(it));
     }
 
     void link(std::string& r, const std::string& id, int col, int row, const char* name, const std::string& value,
               std::function<void()> act, const char* hint) {
-        r += "<div id=\"" + id + "\" class=\"xrow link\"><div class=\"n\">" + name + "</div><div class=\"v\">" +
+        r += "<div id=\"" + id + "\" class=\"xrow link\"><div class=\"n\">" + enc(tr(name)) + "</div><div class=\"v\">" +
              enc(value) + "<span class=\"go\">" + kRight + "</span></div></div>";
         Item it{id, col, row, true};
         it.act = std::move(act);
-        it.hint = hint;
+        it.hint = tr(hint);
         items.push_back(std::move(it));
     }
 
     static void group(std::string& r, const char* name) {
-        r += "<div class=\"grp\"><span>" + std::string(name) + "</span></div>";
+        r += "<div class=\"grp\"><span>" + enc(tr(name)) + "</span></div>";
     }
 
     void build_host() {
         HostSettings& h = s_host;
         auto custom = [] { s_host.preset = kCustom; };
         std::string r;
-        r += "<div id=\"preset\" class=\"pbar\"><div class=\"k\">PRESET</div><div class=\"pv\"><span class=\"arr\">" +
-             std::string(kLeft) + "</span>" + kPresetNames[h.preset] + "<span class=\"arr\">" + kRight +
-             "</span></div><div class=\"pk\">1v1" + kDot + "Doubles" + kDot + "Free-for-all" + kDot +
-             "Custom</div></div>";
+        r += "<div id=\"preset\" class=\"pbar\"><div class=\"k\">" + enc(tr("xeleenet.host.preset")) +
+             "</div><div class=\"pv\"><span class=\"arr\">" + kLeft + "</span>" + enc(tr(kPresetNames[h.preset])) +
+             "<span class=\"arr\">" + kRight + "</span></div><div class=\"pk\">";
+        for (int i = 0; i < kPresetCount; i++)
+            r += (i > 0 ? kDot : "") + enc(tr(kPresetNames[i]));
+        r += "</div></div>";
         {
             Item it{"preset", 0, 0, true};
             it.change = [](int d) { preset((s_host.preset + d + kPresetCount) % kPresetCount); };
-            it.hint = "1v1, Doubles or Free-for-all set every rule at once.";
+            it.hint = tr("xeleenet.host.hints.preset");
             items.push_back(std::move(it));
         }
         r += "<div class=\"col left\">";
-        group(r, "LOBBY");
-        r += "<div id=\"lname\" class=\"xrow link\"><div class=\"n\">Name</div><div class=\"v\">" + enc(lobby_name()) +
-             "<span class=\"type\">TYPE</span></div></div>";
+        group(r, "xeleenet.host.groups.lobby");
+        r += "<div id=\"lname\" class=\"xrow link\"><div class=\"n\">" + enc(tr("xeleenet.host.rows.name")) +
+             "</div><div class=\"v\">" + enc(lobby_name()) + "<span class=\"type\">" + enc(tr("xeleenet.host.type")) +
+             "</span></div></div>";
         {
             Item it{"lname", 0, 1, true};
             it.act = [] {
                 ask_keyboard(Typing::Lobby, s_host.name.empty() ? lobby_name() : s_host.name,
-                             "Name your lobby, up to 20 characters.", 20);
+                             tr("xeleenet.host.ask_name"), 20);
             };
-            it.hint = "The lobby's name in Join's list.";
+            it.hint = tr("xeleenet.host.hints.name");
             items.push_back(std::move(it));
         }
-        choice(r, "vis", 0, 2, "Visibility", h.open ? "Public" : "Private", [](int) { s_host.open = !s_host.open; },
-               "Public lobbies are listed in Join. Private ones open only with their code.");
-        choice(r, "seats", 0, 3, "Seats", std::to_string(h.seats),
+        choice(r, "vis", 0, 2, "xeleenet.host.rows.visibility",
+               tr(h.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private"),
+               [](int) { s_host.open = !s_host.open; }, "xeleenet.host.hints.visibility");
+        choice(r, "seats", 0, 3, "xeleenet.host.rows.seats", std::to_string(h.seats),
                [custom](int d) { s_host.seats = 2 + (s_host.seats - 2 + d + 3) % 3, custom(); },
-               "How many players the lobby takes, you included.");
-        group(r, "RULES");
-        choice(r, "teams", 0, 4, "Teams", h.teams ? "On" : "Off",
-               [custom](int) { s_host.teams = !s_host.teams, custom(); },
-               "Teams on: everyone picks a team on their door in the CSS.");
+               "xeleenet.host.hints.seats");
+        group(r, "xeleenet.host.groups.rules");
+        choice(r, "teams", 0, 4, "xeleenet.host.rows.teams", on_off(h.teams),
+               [custom](int) { s_host.teams = !s_host.teams, custom(); }, "xeleenet.host.hints.teams");
         if (h.stock)
-            choice(r, "stocks", 0, 5, "Stocks", std::to_string(h.stocks),
+            choice(r, "stocks", 0, 5, "xeleenet.host.rows.stocks", std::to_string(h.stocks),
                    [custom](int d) { s_host.stocks = step(kStocks, s_host.stocks, d), custom(); },
-                   "Stocks per player.");
+                   "xeleenet.host.hints.stocks");
         else
-            choice(r, "stocks", 0, 5, "Win by", "Time", [custom](int) { s_host.stock = true, custom(); },
-                   "Time: most KOs when the clock runs out.");
-        choice(r, "time", 0, 6, "Time limit", minutes_label(h.minutes),
+            choice(r, "stocks", 0, 5, "xeleenet.host.rows.win_by", tr("xeleenet.host.values.time"),
+                   [custom](int) { s_host.stock = true, custom(); }, "xeleenet.host.hints.win_by");
+        choice(r, "time", 0, 6, "xeleenet.host.rows.time", minutes_label(h.minutes),
                [custom](int d) { s_host.minutes = step(kMinutes, s_host.minutes, d), custom(); },
-               "How long a game lasts.");
-        choice(r, "items", 0, 7, "Items", kItemNames[h.items + 1],
+               "xeleenet.host.hints.time");
+        choice(r, "items", 0, 7, "xeleenet.host.rows.items", tr(kItemNames[h.items + 1]),
                [custom](int d) { s_host.items = (s_host.items + 1 + d + 6) % 6 - 1, custom(); },
-               "How often items appear.");
+               "xeleenet.host.hints.items");
         if (h.teams)
-            choice(r, "ff", 0, 8, "Friendly fire", h.friendly_fire ? "On" : "Off",
+            choice(r, "ff", 0, 8, "xeleenet.host.rows.ff", on_off(h.friendly_fire),
                    [custom](int) { s_host.friendly_fire = !s_host.friendly_fire, custom(); },
-                   "Teammates' attacks hurt each other.");
-        link(r, "more", 0, 9, "More rules", "Time mode, pause, handicap", [this] { go(Page::More); },
-             "Stock or time, pause, handicap and damage ratio.");
+                   "xeleenet.host.hints.ff");
+        link(r, "more", 0, 9, "xeleenet.host.rows.more", tr("xeleenet.host.values.more"), [this] { go(Page::More); },
+             "xeleenet.host.hints.more");
         r += "</div><div class=\"col right\">";
-        group(r, "STAGES");
-        link(r, "slist", 1, 1, "Stage list", stage_list_label(h.stages), [this] { go(Page::Stages); },
-             "The stages random picks draw from.");
-        choice(r, "pick", 1, 2, "Stage pick", "Everyone picks", [](int) {},
-               "Everyone picks, then one of the picks is drawn.", false, "SOON");
-        choice(r, "frozen", 1, 3, "Frozen Stadium", h.frozen ? "On" : "Off",
-               [custom](int) { s_host.frozen = !s_host.frozen, custom(); },
-               "Pok\xc3\xa9mon Stadium stays in its neutral form.");
-        choice(r, "place", 1, 4, "Placement time", "15 s", [](int) {},
-               "How long headset players get to place the stage before each match.", false, "SOON");
-        group(r, "SET");
-        choice(r, "format", 1, 5, "Format", "Endless", [](int) {}, "First to N wins, or endless.", false, "SOON");
-        group(r, "JOINING");
-        choice(r, "ask", 1, 6, "Ask before joining", "Off", [](int) {}, "Each join waits for your OK in the CSS.",
-               false, "SOON");
-        choice(r, "hide", 1, 7, "Hide code", h.hide_code ? "On" : "Off",
-               [](int) { s_host.hide_code = !s_host.hide_code; }, "The CSS banner masks the code, for streaming.");
-        r += "<button id=\"open\" class=\"gold\">OPEN LOBBY</button></div>";
+        group(r, "xeleenet.host.groups.stages");
+        link(r, "slist", 1, 1, "xeleenet.host.rows.stage_list", stage_list_label(h.stages),
+             [this] { go(Page::Stages); }, "xeleenet.host.hints.stage_list");
+        choice(r, "pick", 1, 2, "xeleenet.host.rows.stage_pick", tr("xeleenet.host.values.stage_pick"), [](int) {},
+               "xeleenet.host.hints.stage_pick", false, "xeleenet.host.soon");
+        choice(r, "frozen", 1, 3, "xeleenet.host.rows.frozen", on_off(h.frozen),
+               [custom](int) { s_host.frozen = !s_host.frozen, custom(); }, "xeleenet.host.hints.frozen");
+        choice(r, "place", 1, 4, "xeleenet.host.rows.placement", tr("xeleenet.host.values.placement"), [](int) {},
+               "xeleenet.host.hints.placement", false, "xeleenet.host.soon");
+        group(r, "xeleenet.host.groups.set");
+        choice(r, "format", 1, 5, "xeleenet.host.rows.format", tr("xeleenet.host.values.format"), [](int) {},
+               "xeleenet.host.hints.format", false, "xeleenet.host.soon");
+        group(r, "xeleenet.host.groups.joining");
+        choice(r, "ask", 1, 6, "xeleenet.host.rows.ask", on_off(false), [](int) {}, "xeleenet.host.hints.ask", false,
+               "xeleenet.host.soon");
+        choice(r, "hide", 1, 7, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
+               [](int) { s_host.hide_code = !s_host.hide_code; }, "xeleenet.host.hints.hide_code");
+        r += "<button id=\"open\" class=\"gold\">" + enc(tr("xeleenet.host.open")) + "</button></div>";
         {
             Item it{"open", 1, 9, true};
             it.act = [this] { open_lobby(); };
-            it.hint = "Open the lobby. You go to the CSS; friends join with its code.";
+            it.hint = tr("xeleenet.host.hints.open");
             items.push_back(std::move(it));
         }
         set_board(r);
@@ -510,24 +538,24 @@ struct Screen : Rml::EventListener {
         HostSettings& h = s_host;
         auto custom = [] { s_host.preset = kCustom; };
         std::string r = "<div class=\"col single\">";
-        group(r, "MORE RULES");
-        choice(r, "win", 0, 0, "Win by", h.stock ? "Stock" : "Time",
-               [custom](int) { s_host.stock = !s_host.stock, custom(); },
-               "Stock: last one standing. Time: most KOs when the clock runs out.");
-        choice(r, "pause", 0, 1, "Pause", h.pause ? "On" : "Off",
-               [custom](int) { s_host.pause = !s_host.pause, custom(); }, "Whether START pauses a match.");
-        choice(r, "handicap", 0, 2, "Handicap", kHandicapNames[h.handicap],
+        group(r, "xeleenet.rules.group");
+        choice(r, "win", 0, 0, "xeleenet.rules.rows.win_by",
+               tr(h.stock ? "xeleenet.rules.values.stock" : "xeleenet.rules.values.time"),
+               [custom](int) { s_host.stock = !s_host.stock, custom(); }, "xeleenet.rules.hints.win_by");
+        choice(r, "pause", 0, 1, "xeleenet.rules.rows.pause", on_off(h.pause),
+               [custom](int) { s_host.pause = !s_host.pause, custom(); }, "xeleenet.rules.hints.pause");
+        choice(r, "handicap", 0, 2, "xeleenet.rules.rows.handicap", tr(kHandicapNames[h.handicap]),
                [custom](int d) { s_host.handicap = (s_host.handicap + d + 3) % 3, custom(); },
-               "Melee's handicap: more knockback resistance for whoever is behind.");
+               "xeleenet.rules.hints.handicap");
         char dmg[16];
-        std::snprintf(dmg, sizeof dmg, "%.1f\xc3\x97", h.damage / 10.f);
-        choice(r, "damage", 0, 3, "Damage ratio", dmg,
+        std::snprintf(dmg, sizeof dmg, "%.1f", h.damage / 10.f);
+        choice(r, "damage", 0, 3, "xeleenet.rules.rows.damage", tr("xeleenet.rules.values.damage", {{"n", dmg}}),
                [custom](int d) { s_host.damage = 5 + (s_host.damage - 5 + d + 16) % 16, custom(); },
-               "How much damage every hit does.");
-        r += "<button id=\"done\" class=\"gold\">DONE</button></div>";
+               "xeleenet.rules.hints.damage");
+        r += "<button id=\"done\" class=\"gold\">" + enc(tr("xeleenet.rules.done")) + "</button></div>";
         Item it{"done", 0, 4, true};
         it.act = [this] { go(Page::Host, "more"); };
-        it.hint = "Back to the lobby's settings.";
+        it.hint = tr("xeleenet.rules.hints.done");
         items.push_back(std::move(it));
         set_board(r);
     }
@@ -535,26 +563,28 @@ struct Screen : Rml::EventListener {
     void build_stages() {
         const unsigned m = s_host.stages;
         std::string r = "<div class=\"chips\">";
-        const char* chips[3] = {"COMPETITIVE", "ALL", "CUSTOM"};
+        const char* chips[3] = {"xeleenet.stages.chips.competitive", "xeleenet.stages.chips.all",
+                                "xeleenet.stages.chips.custom"};
         const bool on[3] = {m == kCompetitive, m == kAllStages, m != kCompetitive && m != kAllStages};
         for (int i = 0; i < 3; i++) {
             const std::string id = "chip" + std::to_string(i);
             r += "<div id=\"" + id + "\" class=\"chipx" + (on[i] ? " on" : "") + (i == 2 ? " dash" : "") + "\">" +
-                 chips[i] + "</div>";
+                 enc(tr(chips[i])) + "</div>";
             Item it{id, i, 0, i < 2};
             it.act = [i] {
                 s_host.stages = i == 0 ? kCompetitive : kAllStages;
                 s_host.preset = kCustom;
             };
-            it.hint = "Random picks draw from the stages that are on.";
+            it.hint = tr("xeleenet.stages.hint");
             items.push_back(std::move(it));
         }
-        r += "<div class=\"count\">" + std::to_string(stage_count(m)) + " of " + std::to_string(kStageCount) +
-             " on</div></div><div id=\"grid\">";
+        r += "<div class=\"count\">" +
+             enc(tr("xeleenet.stages.count", {{"n", stage_count(m)}, {"total", kStageCount}})) +
+             "</div></div><div id=\"grid\">";
         for (int i = 0; i < kStageCount; i++) {
             const Stage& s = kStages[i];
             const std::string id = "st" + std::to_string(i);
-            r += "<div id=\"" + id + "\" class=\"tile" + ((m >> s.bit) & 1 ? " on" : "") + "\">" + enc(s.name) +
+            r += "<div id=\"" + id + "\" class=\"tile" + ((m >> s.bit) & 1 ? " on" : "") + "\">" + enc(tr(s.name)) +
                  "</div>";
             Item it{id, i % kGridAcross, 1 + i / kGridAcross, true};
             it.act = [b = s.bit] {
@@ -563,7 +593,7 @@ struct Screen : Rml::EventListener {
                     s_host.stages = want;
                 s_host.preset = kCustom;
             };
-            it.hint = "Random picks draw from the stages that are on.";
+            it.hint = tr("xeleenet.stages.hint");
             items.push_back(std::move(it));
         }
         r += "</div>";
@@ -575,7 +605,7 @@ struct Screen : Rml::EventListener {
             return;
         const char* url = pc_xn_url();
         if (url[0] == '\0') {
-            hostNote = "This build has no XeleeNet server set.";
+            hostNote = tr("xeleenet.host.no_server");
             sfx(SFX_BACK);
             return;
         }
@@ -645,13 +675,13 @@ struct Screen : Rml::EventListener {
 
     void build_lobbies() {
         std::string r = "<div class=\"bhead\"><div id=\"full\" class=\"chipx" + std::string(showFull ? " on" : "") +
-                        "\">SHOW FULL: " + (showFull ? "ON" : "OFF") + "</div><div class=\"upd\">";
+                        "\">" + enc(tr(showFull ? "xeleenet.lobbies.show_full.on" : "xeleenet.lobbies.show_full.off")) +
+                        "</div><div class=\"upd\">";
         if (fetch == 0)
-            r += "Looking for lobbies...";
+            r += enc(tr("xeleenet.lobbies.looking"));
         else
-            r += (rows.empty() ? std::string()
-                               : std::to_string(rows.size()) + (rows.size() == 1 ? " lobby" : " lobbies") + kDot) +
-                 "Updated " + std::to_string((SDL_GetTicks() - fetchedAt) / 1000) + " s ago";
+            r += enc((rows.empty() ? std::string() : tr("xeleenet.lobbies.count", {{"n", rows.size()}}) + kDot) +
+                     tr("xeleenet.lobbies.updated", {{"n", (SDL_GetTicks() - fetchedAt) / 1000}}));
         r += "</div></div><div id=\"list\">";
         // A window of kListRows that follows the cursor.
         const int n = static_cast<int>(rows.size());
@@ -664,20 +694,23 @@ struct Screen : Rml::EventListener {
         if (fetch < 0) {
             const char* reason = nullptr;
             const char* err = pc_xn_error(&reason);
-            r += "<div class=\"empty bad\">" + enc(err != nullptr && err[0] ? err : "Couldn't reach XeleeNet") +
-                 "</div>";
+            r += "<div class=\"empty bad\">" +
+                 enc(err != nullptr && err[0] ? std::string(err) : tr("xeleenet.lobbies.unreachable")) + "</div>";
         } else if (rows.empty() && fetch == 1) {
-            r += "<div class=\"empty\">No public lobbies right now. Host one, or join a friend's with its code.</div>";
+            r += "<div class=\"empty\">" + enc(tr("xeleenet.lobbies.empty")) + "</div>";
         }
         for (size_t i = 0; i < rows.size(); i++) {
             const PcXnListing& x = rows[i];
             const std::string id = "lb" + std::to_string(i);
             const bool full = x.taken >= x.seats;
-            const char* mode = x.teams ? "DOUBLES" : x.seats == 2 ? "1V1" : "FFA";
-            const std::string sub = std::string(x.host) + (x.tag[0] ? "#" + std::string(x.tag).substr(0, 4) : "") +
-                                    kDot + (x.stock ? std::to_string(x.stocks) + " stocks" : std::string("Time")) + kDot +
-                                    minutes_label(x.time_min) + kDot +
-                                    (x.first_to ? "First to " + std::to_string(x.first_to_n) : std::string("Endless"));
+            const char* mode = x.teams        ? "xeleenet.lobbies.modes.doubles"
+                               : x.seats == 2 ? "xeleenet.lobbies.modes.1v1"
+                                              : "xeleenet.lobbies.modes.ffa";
+            const std::string sub =
+                std::string(x.host) + (x.tag[0] ? "#" + std::string(x.tag).substr(0, 4) : "") + kDot +
+                (x.stock ? tr("xeleenet.lobbies.stocks", {{"n", x.stocks}}) : tr("xeleenet.lobbies.time")) + kDot +
+                minutes_label(x.time_min) + kDot +
+                (x.first_to ? tr("xeleenet.lobbies.first_to", {{"n", x.first_to_n}}) : tr("xeleenet.lobbies.endless"));
             Item it{id, 0, static_cast<int>(i), !full};
             it.act = [this, i] {
                 joining = rows[i];
@@ -685,15 +718,16 @@ struct Screen : Rml::EventListener {
                 code = rows[i].code;
                 join();
             };
-            it.hint = "Join a public lobby, or enter a friend's code.";
+            it.hint = tr("xeleenet.lobbies.hints.row");
             items.push_back(std::move(it));
             if (static_cast<int>(i) < scrollTop || static_cast<int>(i) >= scrollTop + kListRows)
                 continue;
             r += "<div id=\"" + id + "\" class=\"lrow" + (full ? " full" : "") + "\"><div class=\"lw\"><div class=\"ln\">" +
-                 enc(x.name) + "</div><div class=\"ls\">" + enc(sub) + "</div></div><div class=\"lm\">" + mode +
-                 "</div><div class=\"lb\">" +
-                 (x.playing ? "<span class=\"badge game\">IN GAME</span>"
-                            : x.xr ? "<span class=\"badge\">XR</span>" : "") +
+                 enc(x.name) + "</div><div class=\"ls\">" + enc(sub) + "</div></div><div class=\"lm\">" +
+                 enc(tr(mode)) + "</div><div class=\"lb\">" +
+                 (x.playing ? "<span class=\"badge game\">" + enc(tr("xeleenet.lobbies.in_game")) + "</span>"
+                  : x.xr    ? "<span class=\"badge\">" + enc(tr("xeleenet.lobbies.xr")) + "</span>"
+                            : std::string()) +
                  "</div><div class=\"lt\">" + std::to_string(x.taken) + "/" + std::to_string(x.seats) +
                  "</div><div class=\"lc\">" + enc(x.country) + "</div></div>";
         }
@@ -706,9 +740,7 @@ struct Screen : Rml::EventListener {
                  fmt((track - h) * scrollTop / (n - kListRows)) + "px; height: " + fmt(h) + "px;\"></div></div>";
         }
         if (others > 0)
-            r += "<div class=\"foot\">" + std::to_string(others) +
-                 (others == 1 ? " more lobby is" : " more lobbies are") +
-                 " on another Xelee version. Update to see them.</div>";
+            r += "<div class=\"foot\">" + enc(tr("xeleenet.lobbies.others", {{"n", others}})) + "</div>";
         set_board(r);
     }
 
@@ -735,26 +767,27 @@ struct Screen : Rml::EventListener {
                 if (code.size() == 6)
                     cursorId = "k-ok";
             };
-            it.hint = "Type the 6-letter code the host shared.";
+            it.hint = tr("xeleenet.code.hints.type");
             items.push_back(std::move(it));
         }
-        r += "<div id=\"k-ok\" class=\"key join\">JOIN</div></div>";
+        r += "<div id=\"k-ok\" class=\"key join\">" + enc(tr("xeleenet.code.join")) + "</div></div>";
         Item it{"k-ok", 5, n / 9, true};
         it.act = [this] { join(); };
-        it.hint = "Join the lobby with this code.";
+        it.hint = tr("xeleenet.code.hints.join");
         items.push_back(std::move(it));
         set_board(r);
     }
 
     // J2-J4 share the track and the card.
     std::string track(int at, bool failed) const {
-        const char* labels[3] = {"FIND", "CONNECT", "LOBBY"};
+        const char* labels[3] = {"xeleenet.joining.steps.find", "xeleenet.joining.steps.connect",
+                                 "xeleenet.joining.steps.lobby"};
         std::string r = "<div id=\"track\"><div class=\"line\"></div><div class=\"line done\" style=\"width: " +
                         fmt(at <= 0 ? 0.f : 50.f * std::min(at, 2)) + "%;\"></div>";
         for (int i = 0; i < 3; i++)
             r += "<div class=\"step" + std::string(at > i ? " done" : "") +
                  (at == i ? (failed ? " bad" : " now") : "") + "\" style=\"left: " + fmt(50.f * i) +
-                 "%;\"><div class=\"dot\"><div class=\"mark\"></div></div><div class=\"lbl\">" + labels[i] +
+                 "%;\"><div class=\"dot\"><div class=\"mark\"></div></div><div class=\"lbl\">" + enc(tr(labels[i])) +
                  "</div></div>";
         return r + "</div>";
     }
@@ -765,7 +798,8 @@ struct Screen : Rml::EventListener {
             return info.name;
         if (joiningKnown && joining.name[0])
             return joining.name;
-        return "Lobby " + code.substr(0, 3) + " " + code.substr(std::min<size_t>(3, code.size()));
+        return tr("xeleenet.joining.lobby",
+                  {{"code", code.substr(0, 3) + " " + code.substr(std::min<size_t>(3, code.size()))}});
     }
 
     std::string lobby_rules() const {
@@ -786,13 +820,14 @@ struct Screen : Rml::EventListener {
         std::string r = track(playing ? 2 : at, false);
         r += "<div id=\"lobbycard\">";
         if (playing) {
-            r += "<div class=\"head\">Game in progress</div><div class=\"rules\">" + enc(lobby_title()) + "</div>";
+            r += "<div class=\"head\">" + enc(tr("xeleenet.joining.in_progress")) + "</div><div class=\"rules\">" +
+                 enc(lobby_title()) + "</div>";
             std::string names;
             for (int i = 0; i < v.nplayers; i++)
                 if (!v.players[i].local)
                     names += (names.empty() ? "" : ", ") + std::string(v.players[i].name);
-            r += "<div class=\"text\">" + enc(names) +
-                 "</div><div class=\"fine\">You'll be seated when they're back on the CSS.</div>";
+            r += "<div class=\"text\">" + enc(names) + "</div><div class=\"fine\">" +
+                 enc(tr("xeleenet.joining.seated_later")) + "</div>";
         } else {
             r += "<div class=\"head\">" + enc(lobby_title()) + "</div>";
             const std::string rl = lobby_rules();
@@ -801,32 +836,41 @@ struct Screen : Rml::EventListener {
             r += "<div class=\"players\">";
             for (int i = 0; i < v.nplayers; i++) {
                 const auto& p = v.players[i];
-                const char* how = p.local      ? "you"
-                                  : p.linked   ? "connected"
-                                  : p.via_host ? "via host"
-                                               : "trying direct...";
+                const char* how = p.local      ? "xeleenet.joining.players.you"
+                                  : p.linked   ? "xeleenet.joining.players.connected"
+                                  : p.via_host ? "xeleenet.joining.players.via_host"
+                                               : "xeleenet.joining.players.trying";
                 r += "<div class=\"player" + std::string(p.linked ? " ok" : "") + (p.local ? " me" : "") +
                      "\"><div class=\"name\">" + enc(p.name) + "</div>" +
-                     (p.port == 0 ? "<div class=\"badge\">HOST</div>" : "") + "<div class=\"how\">" + how +
-                     "</div></div>";
+                     (p.port == 0 ? "<div class=\"badge\">" + enc(tr("xeleenet.joining.host")) + "</div>"
+                                  : std::string()) +
+                     "<div class=\"how\">" + enc(tr(how)) + "</div></div>";
             }
             r += "</div>";
-            r += v.nplayers == 0 ? "<div class=\"wait\">Finding the lobby...</div>"
-                                 : "<div class=\"fine\">The host must answer. Others can go through the host.</div>";
+            r += v.nplayers == 0 ? "<div class=\"wait\">" + enc(tr("xeleenet.joining.finding")) + "</div>"
+                                 : "<div class=\"fine\">" + enc(tr("xeleenet.joining.answer")) + "</div>";
         }
         r += "</div>";
         set_board(r);
     }
 
+    std::string fail_title() const {
+        const std::string host = failHost.empty() ? tr("xeleenet.failed.host.someone") : failHost;
+        return tr(("xeleenet.failed." + failWhy + ".title").c_str(), {{"host", host}});
+    }
+
     void build_failed() {
         std::string r = track(failStep, true);
-        r += "<div id=\"lobbycard\" class=\"failed\"><div class=\"head bad\">" + enc(failTitle) +
-             "</div><div class=\"why\">" + enc(failLine) + "</div>";
-        if (!failSmall.empty())
-            r += "<div class=\"fine\">" + enc(failSmall) + "</div>";
+        const std::string line = failWhy != "offline" ? tr(("xeleenet.failed." + failWhy + ".line").c_str())
+                                 : failErr.empty()    ? tr("xeleenet.failed.offline.line")
+                                                      : tr("xeleenet.failed.offline.line_error", {{"error", failErr}});
+        r += "<div id=\"lobbycard\" class=\"failed\"><div class=\"head bad\">" + enc(fail_title()) +
+             "</div><div class=\"why\">" + enc(line) + "</div>";
+        if (failWhy == "host")
+            r += "<div class=\"fine\">" + enc(tr("xeleenet.failed.host.small")) + "</div>";
         r += "</div><div class=\"buttons fail\">";
         if (failCode) {
-            r += "<button id=\"edit\" class=\"btn primary\">EDIT CODE</button>";
+            r += "<button id=\"edit\" class=\"btn primary\">" + enc(tr("xeleenet.failed.edit")) + "</button>";
             Item it{"edit", 0, 0, true};
             it.act = [this] {
                 pc_xn_punch_end();
@@ -834,7 +878,7 @@ struct Screen : Rml::EventListener {
             };
             items.push_back(std::move(it));
         } else {
-            r += "<button id=\"retry\" class=\"btn primary\">TRY AGAIN</button>";
+            r += "<button id=\"retry\" class=\"btn primary\">" + enc(tr("xeleenet.failed.retry")) + "</button>";
             Item it{"retry", 0, 0, true};
             it.act = [this] {
                 pc_xn_punch_end();
@@ -842,7 +886,7 @@ struct Screen : Rml::EventListener {
             };
             items.push_back(std::move(it));
         }
-        r += "<button id=\"back\" class=\"btn\">BACK</button></div>";
+        r += "<button id=\"back\" class=\"btn\">" + enc(tr("xeleenet.failed.back")) + "</button></div>";
         Item it{"back", 1, 0, true};
         it.act = [this] {
             pc_xn_punch_end();
@@ -859,36 +903,27 @@ struct Screen : Rml::EventListener {
         const std::string punch = pc_xn_punch_error();
         const std::string why = reason != nullptr ? reason : "";
         failCode = false;
-        failSmall.clear();
+        failHost.clear();
+        failErr.clear();
         failStep = 0;
         if (why == "not_found" || why == "bad_code") {
-            failTitle = "No lobby with that code";
-            failLine = "Check the code with the host. Codes end when the host leaves.";
+            failWhy = "not_found";
             failCode = true;
-        } else if (why == "full") {
-            failTitle = "Lobby is full", failLine = "Someone joined first.";
-        } else if (why == "declined") {
-            failTitle = "The host declined", failLine = "Try another lobby.";
-        } else if (why == "version") {
-            failTitle = "Different Xelee version", failLine = "Both of you need the same Xelee version.";
-        } else if (why == "banned") {
-            failTitle = "You were removed from this lobby", failLine = "The host removed you.";
-        } else if (why == "closed") {
-            failTitle = "The lobby closed", failLine = "The host closed it. Try another lobby.";
+        } else if (why == "full" || why == "declined" || why == "version" || why == "banned" || why == "closed") {
+            failWhy = why;
         } else if (punch.find("host") != std::string::npos || s_preview == "failed") {
             PcXnPunchView v;
             view(&v);
-            const std::string host = v.nplayers > 0 && v.players[0].port == 0 ? v.players[0].name : "the host";
-            failTitle = "Couldn't reach the host, " + host;
-            failLine = "One of your networks blocks direct connections (a strict router, or a phone hotspot).";
-            failSmall = "Try another lobby, or host one and have them join you.";
+            failWhy = "host";
+            if (v.nplayers > 0 && v.players[0].port == 0)
+                failHost = v.players[0].name;
             failStep = 1;
         } else {
-            failTitle = "XeleeNet is unreachable";
-            failLine = err != nullptr && err[0] ? std::string(err) + ". Check your internet, then try again."
-                                                : "Check your internet, then try again.";
+            failWhy = "offline";
+            if (err != nullptr)
+                failErr = err;
         }
-        pc_log_line("xeleenet pages: join failed: %s (%s)", failTitle.c_str(), why.c_str());
+        pc_log_line("xeleenet pages: join failed: %s (%s)", fail_title().c_str(), why.c_str());
         sfx(SFX_BACK);
         go(Page::Failed, failCode ? "edit" : "retry");
     }
@@ -922,7 +957,7 @@ struct Screen : Rml::EventListener {
         const std::string face = button == "stick"   ? "<div class=\"nub\"></div>"
                                  : button == "start" ? "START"
                                                      : std::string(1, static_cast<char>(std::toupper(button[0])));
-        return "<div class=\"lg\"><div class=\"gl " + button + "\">" + face + "</div>" + label + "</div>";
+        return "<div class=\"lg\"><div class=\"gl " + button + "\">" + face + "</div>" + enc(tr(label)) + "</div>";
     }
 
     std::string legend() const {
@@ -931,36 +966,40 @@ struct Screen : Rml::EventListener {
         std::string r;
         switch (page) {
         case Page::Host:
-            r += at != nullptr && at->change ? key("stick", "Change")
-                                             : key("a", id == "open" ? "Open lobby" : "Select");
+            r += at != nullptr && at->change
+                     ? key("stick", "xeleenet.legend.change")
+                     : key("a", id == "open" ? "xeleenet.legend.open" : "xeleenet.legend.select");
             if (id != "open")
-                r += key("start", "Open lobby");
-            r += key("b", "Back");
+                r += key("start", "xeleenet.legend.open");
+            r += key("b", "xeleenet.legend.back");
             break;
         case Page::More:
-            r += at != nullptr && at->change ? key("stick", "Change") : key("a", "Done");
-            r += key("b", "Back");
+            r += at != nullptr && at->change ? key("stick", "xeleenet.legend.change")
+                                             : key("a", "xeleenet.legend.done");
+            r += key("b", "xeleenet.legend.back");
             break;
         case Page::Stages:
-            r += key("a", "On / off") + key("x", "Competitive / all") + key("b", "Done");
+            r += key("a", "xeleenet.legend.toggle") + key("x", "xeleenet.legend.stage_sets") +
+                 key("b", "xeleenet.legend.done");
             break;
         case Page::Lobbies:
             if (!rows.empty())
-                r += key("a", "Join");
-            r += key("y", "Enter code") + key("x", "Refresh") + key("start", showFull ? "Hide full" : "Show full") +
-                 key("b", "Back");
+                r += key("a", "xeleenet.legend.join");
+            r += key("y", "xeleenet.legend.enter_code") + key("x", "xeleenet.legend.refresh") +
+                 key("start", showFull ? "xeleenet.legend.hide_full" : "xeleenet.legend.show_full") +
+                 key("b", "xeleenet.legend.back");
             break;
         case Page::Code:
-            r += key("a", id == "k-ok" ? "Join" : "Type");
+            r += key("a", id == "k-ok" ? "xeleenet.legend.join" : "xeleenet.legend.type");
             if (code.size() == 6 && id != "k-ok")
-                r += key("start", "Join");
-            r += key("b", code.empty() ? "Back" : "Delete");
+                r += key("start", "xeleenet.legend.join");
+            r += key("b", code.empty() ? "xeleenet.legend.back" : "xeleenet.legend.delete");
             break;
         case Page::Joining:
-            r += key("b", "Cancel");
+            r += key("b", "xeleenet.legend.cancel");
             break;
         case Page::Failed:
-            r += key("a", "Select") + key("b", "Back");
+            r += key("a", "xeleenet.legend.select") + key("b", "xeleenet.legend.back");
             break;
         }
         return "<div class=\"keys\">" + r + "</div>";
@@ -1197,31 +1236,31 @@ struct Screen : Rml::EventListener {
             PcXnPunchView v;
             view(&v);
             const int n = std::max(0, v.nplayers - 1);
-            hintText = n > 0 ? "Connecting to " + std::to_string(n) + (n == 1 ? " player..." : " players...")
-                             : "Finding the lobby...";
+            hintText = n > 0 ? tr("xeleenet.joining.hints.connecting", {{"n", n}})
+                             : tr("xeleenet.joining.hints.finding");
         } else if (page == Page::Failed) {
-            hintText = "This attempt is saved to your logs.";
+            hintText = tr("xeleenet.failed.hint");
         } else if (page == Page::Lobbies && items.empty()) {
-            hintText = "Host a lobby from Online Mode, or enter a friend's code.";
+            hintText = tr("xeleenet.lobbies.hints.empty");
         } else if (page == Page::Code) {
-            hintText = code.size() == 6 ? "Join the lobby with this code." : "Type the 6-letter code the host shared.";
+            hintText = tr(code.size() == 6 ? "xeleenet.code.hints.join" : "xeleenet.code.hints.type");
         } else if (!hostNote.empty() && page == Page::Host) {
             hintText = hostNote;
         } else {
-            hintText = items.empty() ? "" : items[cursor].hint;
+            hintText = items.empty() ? std::string() : items[cursor].hint;
         }
         return hintText.c_str();
     }
 
     const char* title() const {
         switch (page) {
-        case Page::Host: return "Host";
-        case Page::More: return "Rules";
-        case Page::Stages: return "Stages";
-        case Page::Lobbies: return "Lobbies";
-        case Page::Code: return "Code";
+        case Page::Host: return pc_tr("xeleenet.host.title");
+        case Page::More: return pc_tr("xeleenet.rules.title");
+        case Page::Stages: return pc_tr("xeleenet.stages.title");
+        case Page::Lobbies: return pc_tr("xeleenet.lobbies.title");
+        case Page::Code: return pc_tr("xeleenet.code.title");
         case Page::Joining:
-        case Page::Failed: return "Joining";
+        case Page::Failed: return pc_tr("xeleenet.joining.title");
         }
         return "";
     }
@@ -1389,7 +1428,7 @@ struct Banner {
         PcXnListing info{};
         const bool known = pc_xn_lobby_info(&info);
         const bool host = v.host;
-        const std::string name = host ? lobby_name() : known ? info.name : "XeleeNet lobby";
+        const std::string name = host ? lobby_name() : known ? std::string(info.name) : tr("xeleenet.banner.lobby");
         const std::string rules =
             host ? rules_line(s_host.teams, s_host.seats, s_host.stock, s_host.stocks, s_host.minutes,
                               kItemIds[s_host.items + 1])
@@ -1398,11 +1437,13 @@ struct Banner {
         if (host && s_host.hide_code)
             code = "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2 \xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2";
         const int seats = host ? s_host.seats : known && info.seats ? info.seats : 4;
-        const std::string r = "<div class=\"brand\"><span>XeleeNet</span></div><div class=\"pill\"><div class=\"names\"><div "
-                              "class=\"bn\">" + enc(name) + "</div><div class=\"br\">" + enc(rules) +
-                              "</div></div><div class=\"seats\">" + std::to_string(std::max(1, v.nplayers)) + "/" +
-                              std::to_string(seats) + "</div>" +
-                              (code.empty() ? "" : "<div class=\"code\">CODE " + enc(code) + "</div>") + "</div>";
+        const std::string r =
+            "<div class=\"brand\"><span>" + enc(tr("xeleenet.banner.brand")) +
+            "</span></div><div class=\"pill\"><div class=\"names\"><div class=\"bn\">" + enc(name) +
+            "</div><div class=\"br\">" + enc(rules) + "</div></div><div class=\"seats\">" +
+            std::to_string(std::max(1, v.nplayers)) + "/" + std::to_string(seats) + "</div>" +
+            (code.empty() ? "" : "<div class=\"code\">" + enc(tr("xeleenet.banner.code", {{"code", code}})) + "</div>") +
+            "</div>";
         if (r != last) {
             last = r;
             bar->SetInnerRML(r);
@@ -1416,11 +1457,14 @@ bool s_active = false;
 bool s_shown = false;
 bool s_f5_was = false;
 
-// F5: every document's stylesheets again from disk, for working on the look.
+// F5: every document's stylesheets again from disk, and the text
+// (resources/lang), for working on the look and the words. The pages pick the
+// text up as they next build.
 void reload_styles() {
     const bool* keys = SDL_GetKeyboardState(nullptr);
     const bool down = keys != nullptr && keys[SDL_SCANCODE_F5];
     if (down && !s_f5_was) {
+        pc_lang_reload();
         if (auto* context = aurora::rmlui::get_context()) {
             Rml::Factory::ClearStyleSheetCache();
             for (int i = 0; i < context->GetNumDocuments(); i++)
@@ -1445,8 +1489,7 @@ extern "C" void pc_xn_menu_begin(int what) {
     // Name was picked.
     if (s_preview.empty() && (what == PC_XN_MENU_NAME || pc_xn_name()[0] == '\0'))
         ask_keyboard(Typing::Player, pc_xn_name(),
-                     pc_xn_name()[0] == '\0' ? "Pick a name for XeleeNet. Others see it, and it can repeat."
-                                             : "Your XeleeNet name.",
+                     tr(pc_xn_name()[0] == '\0' ? "xeleenet.name.ask_first" : "xeleenet.name.ask"),
                      12);
     if (s_preview == "stages") {
         s_screen.go(Page::Stages);
@@ -1536,7 +1579,9 @@ extern "C" void pc_xn_menu_rules(PcXnRules* out) {
     out->frozen_stadium = h.frozen;
 }
 
-extern "C" const char* pc_xn_menu_title(void) { return s_what == PC_XN_MENU_NAME ? "Name" : s_screen.title(); }
+extern "C" const char* pc_xn_menu_title(void) {
+    return s_what == PC_XN_MENU_NAME ? pc_tr("xeleenet.name.title") : s_screen.title();
+}
 
 extern "C" const char* pc_xn_menu_hint(void) { return s_shown ? s_screen.hint() : nullptr; }
 

@@ -12,6 +12,7 @@
 #include <melee/lb/lbaudio_ax.h>
 #include <sysdolphin/baselib/gobj.h>
 
+#include "pc/lang.h"
 #include "pc/net_match.h"
 #include "pc/net_punch.h"
 #include "pc/slippi/slp_user.h"
@@ -20,17 +21,18 @@
 
 /* Main Menu > Online Mode. Each entry selects its GM_ONLINE lobby mode. The
  * labels are drawn text (the menu's own labels are textures with no room for
- * new words), spelled as Slippi spells them. */
+ * new words), spelled as Slippi spells them. XeleeNet's are keys
+ * (resources/lang/en.yaml). */
 
 static const char* const online_labels[] = {
-    "XeleeNet",
+    "xeleenet.menu.online.label",
     "Slippi",
     "LAN",
 };
 
 /* <= 44 chars: that is what fits the bottom bar at mnmain.c's font size */
 static const char* const online_descriptions[] = {
-    "Host or join a lobby of up to four players.",
+    "xeleenet.menu.online.desc",
     "Play over the internet with Slippi.",
     "Play another player on your local network.",
 };
@@ -57,26 +59,32 @@ static int slippiRow(int selection)
     return !place && selection >= row_place ? selection + 1 : selection;
 }
 
-/* Online Mode > XeleeNet (wireframe M2): Host, Join, Name.
+/* Online Mode > XeleeNet (wireframe M2): Host, Join, Name, by key.
  * The Name row shows the name and the key's tag. */
+static const char* const xn_labels[] = {
+    "xeleenet.menu.online.host.label",
+    "xeleenet.menu.online.join.label",
+    "xeleenet.menu.online.name.label",
+};
 static const char* const xn_descriptions[] = {
-    "Open a lobby. Friends join with its code.",
-    "Type the code a friend's lobby shows.",
-    "The name other players see.",
+    "xeleenet.menu.online.host.desc",
+    "xeleenet.menu.online.join.desc",
+    "xeleenet.menu.online.name.desc",
 };
 
 /* The Name row's description: the name and the key's tag, since the pill has
  * no room for them (SIS text has no ';' either). */
 static const char* xnNameDescription(void)
 {
-    static char text[48];
+    static char text[128];
+    char full[48];
     const char* name = pc_xn_name();
     const char* tag = pc_xn_tag();
     if (name[0] == '\0') {
-        return "Pick the name other players see.";
+        return pc_tr("xeleenet.menu.online.name.desc_none");
     }
-    snprintf(text, sizeof text, "You are %s%s%s.", name, tag[0] ? "#" : "", tag);
-    return text;
+    snprintf(full, sizeof full, "%s%s%s", name, tag[0] ? "#" : "", tag);
+    return pc_trf(text, sizeof text, xn_descriptions[SEL_XN_NAME], "name", full, NULL);
 }
 
 static const char* notice;
@@ -104,13 +112,12 @@ const char* mnOnline_Label(MenuKind kind, int selection)
     if (kind == MENU_KIND_ONLINE && selection >= 0 &&
         selection < (int) ARRAY_SIZE(online_labels))
     {
-        return online_labels[selection];
+        return selection == SEL_ONLINE_XN ? pc_tr(online_labels[selection]) : online_labels[selection];
     }
-    if (kind == MENU_KIND_ONLINE_XN) {
-        return selection == SEL_XN_HOST ? "Host" :
-               selection == SEL_XN_JOIN ? "Join" :
-               selection == SEL_XN_NAME ? "Name" :
-                                          NULL;
+    if (kind == MENU_KIND_ONLINE_XN && selection >= 0 &&
+        selection < (int) ARRAY_SIZE(xn_labels))
+    {
+        return pc_tr(xn_labels[selection]);
     }
     if (kind == MENU_KIND_ONLINE_SLIPPI) {
         if (!pc_net_match_slippi_ready()) {
@@ -134,12 +141,13 @@ const char* mnOnline_Description(MenuKind kind, int selection)
     if (kind == MENU_KIND_ONLINE && selection >= 0 &&
         selection < (int) ARRAY_SIZE(online_descriptions))
     {
-        return online_descriptions[selection];
+        return selection == SEL_ONLINE_XN ? pc_tr(online_descriptions[selection])
+                                          : online_descriptions[selection];
     }
     if (kind == MENU_KIND_ONLINE_XN && selection >= 0 &&
         selection < (int) ARRAY_SIZE(xn_descriptions))
     {
-        return selection == SEL_XN_NAME ? xnNameDescription() : xn_descriptions[selection];
+        return selection == SEL_XN_NAME ? xnNameDescription() : pc_tr(xn_descriptions[selection]);
     }
     if (kind == MENU_KIND_ONLINE_SLIPPI) {
         if (!pc_net_match_slippi_ready()) {
@@ -185,7 +193,7 @@ static void enterAfterPlacing(OnlineKind kind)
                          place ? "PLACE THE STAGE" :
                          kind == ONLINE_KIND_UNRANKED ? "UNRANKED" :
                          kind == ONLINE_KIND_DIRECT ? "DIRECT" :
-                         kind == ONLINE_KIND_XN ? "XELEENET" : "LAN");
+                         kind == ONLINE_KIND_XN ? pc_tr("xeleenet.menu.place") : "LAN");
         gmOnline_SetKindAfterPlace(kind);
         enterOnline(ONLINE_KIND_PLACE);
         return;

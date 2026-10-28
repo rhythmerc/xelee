@@ -70,6 +70,8 @@ if [[ -d "${ROOT_DIR}/resources" ]]; then
             cp "${item}" "${APP_DIR}/"
         fi
     done
+    # The game's text (src/pc/lang.h), read as lang/<language>.yaml.
+    cp -R "${ROOT_DIR}/resources/lang" "${APP_DIR}/"
 fi
 
 if [[ -f "${ROOT_DIR}/tools/initial_pipeline_cache.db.gz" ]]; then

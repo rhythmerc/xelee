@@ -1,0 +1,329 @@
+# The game's own text in English, by key (src/pc/lang.h). Each language has
+# a file like this one (ja.yaml, ...), picked with MELEE_LANG; a key missing
+# from it comes from here, and a key missing here shows on screen as the key.
+#
+# Edit the text freely; in the game, F5 reads this file again.
+#   - {name} and the like are filled in by the game: keep them as written.
+#   - one: / other: are a plural's forms, picked by its count.
+#   - Quote a text that starts with { or ", or holds ": " or " #".
+#
+# Two kinds of text, with different limits:
+#   - Melee-drawn: the menu rows, the hint box under the pages and the tab.
+#     Melee's font has no ';'. A hint or description over 40 characters goes
+#     on two lines, and a line over 48 is squeezed to fit; the page hints
+#     stop at 127 characters. The tab fits about 14 letters (31 at most).
+#   - RmlUi-drawn: everything inside the pages and the CSS banner. No limit
+#     but the room on screen.
+#
+# Only XeleeNet's text is here so far.
+
+xeleenet:
+  # Main Menu > Online Mode: XeleeNet's row, then its own menu (Melee-drawn).
+  menu:
+    online:
+      label: XeleeNet
+      desc: Host or join a lobby of up to four players.
+      host:
+        label: Host
+        desc: Open a lobby. Friends join with its code.
+      join:
+        label: Join
+        desc: Type the code a friend's lobby shows.
+      name:
+        label: Name
+        desc: You are {name}.            # {name} is NAME#TAG
+        desc_none: Pick the name other players see.
+    # The tab over every XeleeNet page, left of the page's own title.
+    tab: XeleeNet
+    # Headset only: the placing screen's way on to XeleeNet (39 at most).
+    place: XELEENET
+
+  # Melee's keyboard for the player's name: from Name, or Host and Join
+  # with no name yet. Its tab reads title.
+  name:
+    title: Name
+    ask_first: Pick a name for XeleeNet. Others see it, and it can repeat.
+    ask: Your XeleeNet name.
+
+  # Host (H1): the lobby's settings under the preset bar.
+  host:
+    title: Host
+    preset: PRESET
+    presets:
+      1v1: 1v1
+      doubles: Doubles
+      ffa: Free-for-all
+      custom: Custom
+    groups:
+      lobby: LOBBY
+      rules: RULES
+      stages: STAGES
+      set: SET
+      joining: JOINING
+    rows:
+      name: Name
+      visibility: Visibility
+      seats: Seats
+      teams: Teams
+      stocks: Stocks
+      win_by: Win by                 # in Stocks' place when the lobby plays on time
+      time: Time limit
+      items: Items
+      ff: Friendly fire
+      more: More rules
+      stage_list: Stage list
+      stage_pick: Stage pick
+      frozen: Frozen Stadium
+      placement: Placement time
+      format: Format
+      ask: Ask before joining
+      hide_code: Hide code
+    values:
+      "on": "On"
+      "off": "Off"
+      public: Public
+      private: Private
+      time: Time
+      no_limit: No limit             # also on Join's list
+      minutes: "{n}:00"              # also on Join's list and the rules line
+      more: Time mode, pause, handicap
+      stage_pick: Everyone picks
+      placement: 15 s
+      format: Endless
+    items:
+      "off": "Off"
+      very_low: Very low
+      low: Low
+      medium: Medium
+      high: High
+      very_high: Very high
+    stage_lists:
+      competitive: Competitive ({n})
+      all: All ({n})
+      custom: Custom ({n})
+    lobby_name: "{name}'s lobby"     # when none was typed; also the CSS banner
+    type: TYPE                       # the Name row's tag
+    soon: SOON                       # a row that doesn't work yet
+    open: OPEN LOBBY
+    ask_name: Name your lobby, up to 20 characters.   # the keyboard's
+    no_server: This build has no XeleeNet server set.
+    # In the hint box, for the row under the cursor (Melee-drawn).
+    hints:
+      preset: 1v1, Doubles or Free-for-all set every rule at once.
+      name: The lobby's name in Join's list.
+      visibility: Public lobbies are listed in Join. Private ones open only with their code.
+      seats: How many players the lobby takes, you included.
+      teams: "Teams on: everyone picks a team on their door in the CSS."
+      stocks: Stocks per player.
+      win_by: "Time: most KOs when the clock runs out."
+      time: How long a game lasts.
+      items: How often items appear.
+      ff: Teammates' attacks hurt each other.
+      more: Stock or time, pause, handicap and damage ratio.
+      stage_list: The stages random picks draw from.
+      stage_pick: Everyone picks, then one of the picks is drawn.
+      frozen: Pokémon Stadium stays in its neutral form.
+      placement: How long headset players get to place the stage before each match.
+      format: First to N wins, or endless.
+      ask: Each join waits for your OK in the CSS.
+      hide_code: The CSS banner masks the code, for streaming.
+      open: Open the lobby. You go to the CSS; friends join with its code.
+
+  # Host > More rules.
+  rules:
+    title: Rules
+    group: MORE RULES
+    rows:
+      win_by: Win by
+      pause: Pause
+      handicap: Handicap
+      damage: Damage ratio
+    values:
+      stock: Stock
+      time: Time
+      damage: "{n}×"                 # {n} is 0.5 to 2.0
+    handicap:
+      "off": "Off"
+      auto: Auto
+      "on": "On"
+    done: DONE
+    hints:
+      win_by: "Stock: last one standing. Time: most KOs when the clock runs out."
+      pause: Whether START pauses a match.
+      handicap: "Melee's handicap: more knockback resistance for whoever is behind."
+      damage: How much damage every hit does.
+      done: Back to the lobby's settings.
+
+  # Host > Stage list: the stages random picks draw from.
+  stages:
+    title: Stages
+    chips:
+      competitive: COMPETITIVE
+      all: ALL
+      custom: CUSTOM
+    count: "{n} of {total} on"
+    hint: Random picks draw from the stages that are on.
+    names:
+      battlefield: Battlefield
+      final_destination: Final Dest.
+      dream_land: Dream Land
+      yoshis_story: Yoshi's Story
+      fountain: Fountain
+      pokemon_stadium: Pokémon Std.
+      peachs_castle: Peach's Castle
+      rainbow_cruise: Rainbow Cruise
+      kongo_jungle: Kongo Jungle
+      jungle_japes: Jungle Japes
+      great_bay: Great Bay
+      temple: Temple
+      brinstar: Brinstar
+      brinstar_depths: Br. Depths
+      yoshis_island: Yoshi's Island
+      green_greens: Green Greens
+      corneria: Corneria
+      venom: Venom
+      poke_floats: Poké Floats
+      mute_city: Mute City
+      big_blue: Big Blue
+      onett: Onett
+      fourside: Fourside
+      icicle_mountain: Icicle Mtn.
+      mushroom_kingdom: Mushroom K.
+      mushroom_kingdom_2: Mushroom K. II
+      flat_zone: Flat Zone
+      kongo_jungle_64: Kongo 64
+      yoshis_island_64: Yoshi's Is. 64
+
+  # Join: the public lobbies (B1).
+  lobbies:
+    title: Lobbies
+    show_full:
+      "on": "SHOW FULL: ON"
+      "off": "SHOW FULL: OFF"
+    looking: Looking for lobbies...
+    count:
+      one: "{n} lobby"
+      other: "{n} lobbies"
+    updated: Updated {n} s ago
+    unreachable: Couldn't reach XeleeNet     # when XeleeNet gave no reason
+    empty: No public lobbies right now. Host one, or join a friend's with its code.
+    # A lobby's row: its mode, badges, and the line under its name.
+    modes:
+      1v1: 1V1
+      doubles: DOUBLES
+      ffa: FFA
+    in_game: IN GAME
+    xr: XR
+    stocks: "{n} stocks"
+    time: Time
+    first_to: First to {n}
+    endless: Endless
+    others:
+      one: "{n} more lobby is on another Xelee version. Update to see them."
+      other: "{n} more lobbies are on another Xelee version. Update to see them."
+    hints:
+      row: Join a public lobby, or enter a friend's code.
+      empty: Host a lobby from Online Mode, or enter a friend's code.
+
+  # Join > Enter code (J1).
+  code:
+    title: Code
+    join: JOIN
+    hints:
+      type: Type the 6-letter code the host shared.
+      join: Join the lobby with this code.
+
+  # Joining (J2): Find, Connect, Lobby, with the lobby's card; a game in
+  # progress (J4).
+  joining:
+    title: Joining                   # also when it failed
+    steps:
+      find: FIND
+      connect: CONNECT
+      lobby: LOBBY
+    lobby: Lobby {code}              # a lobby known only by its code
+    in_progress: Game in progress
+    seated_later: You'll be seated when they're back on the CSS.
+    players:
+      you: you
+      connected: connected
+      via_host: via host
+      trying: trying direct...
+    host: HOST
+    finding: Finding the lobby...
+    answer: The host must answer. Others can go through the host.
+    hints:
+      connecting:
+        one: Connecting to {n} player...
+        other: Connecting to {n} players...
+      finding: Finding the lobby...
+
+  # A lobby's rules in a line, "Doubles · 4 stocks · 8:00": the joining
+  # card and the CSS banner.
+  rules_line:
+    1v1: 1v1
+    doubles: Doubles
+    ffa: Free-for-all
+    stocks:
+      one: "{n} stock"
+      other: "{n} stocks"
+    time: Time
+    items: Items
+
+  # Joining failed (J3): why, and what to do.
+  failed:
+    edit: EDIT CODE
+    retry: TRY AGAIN
+    back: BACK
+    hint: This attempt is saved to your logs.
+    not_found:
+      title: No lobby with that code
+      line: Check the code with the host. Codes end when the host leaves.
+    full:
+      title: Lobby is full
+      line: Someone joined first.
+    declined:
+      title: The host declined
+      line: Try another lobby.
+    version:
+      title: Different Xelee version
+      line: Both of you need the same Xelee version.
+    banned:
+      title: You were removed from this lobby
+      line: The host removed you.
+    closed:
+      title: The lobby closed
+      line: The host closed it. Try another lobby.
+    host:
+      title: Couldn't reach the host, {host}
+      someone: the host              # {host} when the host's name isn't known
+      line: One of your networks blocks direct connections (a strict router, or a phone hotspot).
+      small: Try another lobby, or host one and have them join you.
+    offline:
+      title: XeleeNet is unreachable
+      line: Check your internet, then try again.
+      line_error: "{error}. Check your internet, then try again."   # {error}: XeleeNet's own words
+
+  # What the buttons do, under the pages.
+  legend:
+    change: Change
+    select: Select
+    open: Open lobby
+    back: Back
+    done: Done
+    toggle: On / off
+    stage_sets: Competitive / all
+    join: Join
+    enter_code: Enter code
+    refresh: Refresh
+    show_full: Show full
+    hide_full: Hide full
+    type: Type
+    delete: Delete
+    cancel: Cancel
+
+  # The lobby's banner over the CSS: its name, rules and code.
+  banner:
+    brand: XeleeNet
+    lobby: XeleeNet lobby            # a lobby whose name isn't known yet
+    code: CODE {code}

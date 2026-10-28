@@ -8,6 +8,7 @@
 #include "mnonline.h"
 #include "mnslippi.h"
 #include "mnxeleenet.h"
+#include "pc/lang.h"
 #include "pc/menu_screen.h"
 #include <melee/it/forward.h>
 #include <melee/lb/lb_00B0.h>
@@ -570,7 +571,7 @@ void mnPage_PanelMainTitle(HSD_JObj* panel, bool ours)
         mnPage_mainTitle->default_kerning = 1;
         mnPage_mainTitle->font_size.x = 0.034f;
         mnPage_mainTitle->font_size.y = 0.040f;
-        HSD_SisLib_803A6B98(mnPage_mainTitle, 0.0f, 0.0f, "XeleeNet");
+        HSD_SisLib_803A6B98(mnPage_mainTitle, 0.0f, 0.0f, "%s", pc_tr("xeleenet.menu.tab"));
         mnPage_mainTitle->render_callback = mnPage_MainItalic;
     }
     lb_8000B1CC(joint, NULL, &pos);
