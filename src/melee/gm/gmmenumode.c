@@ -233,6 +233,12 @@ void onEnter(GameModeState* scene)
             data->menu_kind = MENU_KIND_ONLINE_SLIPPI;
             data->hovered_selection = SEL_SLIPPI_PLACE;
             break;
+        case ONLINE_KIND_XN:
+            data->menu_kind = MENU_KIND_ONLINE_XN;
+            data->hovered_selection = gmOnline_XnIntent() == XN_INTENT_JOIN ? SEL_XN_JOIN :
+                                      gmOnline_XnIntent() == XN_INTENT_NAME ? SEL_XN_NAME :
+                                                                              SEL_XN_HOST;
+            break;
         default:
             data->menu_kind = MENU_KIND_ONLINE;
             data->hovered_selection = SEL_ONLINE_LAN;

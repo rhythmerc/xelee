@@ -13,6 +13,9 @@ permissions:
 # Where Send logs uploads, compiled into every build (CMakeLists.txt).
 env:
   XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
+  # The XeleeNet lobby service compiled in (src/pc/net_punch.c); a repository
+  # variable, so a test service can be swapped without a commit.
+  XELEENET_URL: ${{ vars.XELEENET_URL }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

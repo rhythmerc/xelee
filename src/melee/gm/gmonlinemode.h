@@ -19,9 +19,14 @@ typedef enum OnlineKind {
     ONLINE_KIND_LOGIN = 5, /* Slippi sign-in: the keyboard screen, not a match */
     ONLINE_KIND_PLACE = 6, /* XR: the stage-placement scene, then back to the menu */
     ONLINE_KIND_REGISTER = 7, /* Slippi sign-up: the keyboard and pages, not a match */
+    ONLINE_KIND_XN = 8,       /* XeleeNet: host or join a lobby by code (docs/xeleenet-plan.md) */
 } OnlineKind;
 
 void gmOnline_SetKind(OnlineKind kind);
+/* What the XeleeNet menu asked for; the lobby scene acts on it. */
+enum { XN_INTENT_HOST, XN_INTENT_JOIN, XN_INTENT_NAME };
+void gmOnline_SetXnIntent(int intent);
+int gmOnline_XnIntent(void);
 OnlineKind gmOnline_GetKind(void);
 /* True while a Slippi account is signed in and the mode is Unranked or Direct:
  * the CSS comes first and the search follows (see gmonlinemode.c). */

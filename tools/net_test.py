@@ -364,7 +364,7 @@ def settle(insts, frames):
 # is stateless: a retry starts from the same place. X = A button in the
 # keyboard map, Z = B.
 # Main Menu -> Online Mode (third, under VS. Mode) -> (Slippi is first; Down to) LAN
-LAN_SUBMENU = [("Down", 7), ("Down", 7), ("X", 7), ("Down", 7), ("X", 7)]
+LAN_SUBMENU = [("Down", 7), ("Down", 7), ("X", 7), ("Down", 7), ("Down", 7), ("X", 7)]  # Online: XeleeNet, Slippi, LAN
 MENU_SETTLE = 90  # frames of animation a menu hop can eat a press during
 CSS_BACK = 40     # frames of held B that leave a character-select screen (>30)
 

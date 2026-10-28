@@ -53,6 +53,7 @@ typedef struct XnIntro { /* host -> guest: a player who joined after it */
     uint8_t port, ncands, reserved[2];
     uint8_t key[32];
     uint8_t cands[PC_XN_CANDS][6]; /* IPv4 then port, network order */
+    char name[16];                 /* NUL-padded */
     uint8_t sig[64];
 } XnIntro;
 
@@ -122,6 +123,8 @@ static uint8_t s_lobby[8];
 static uint64_t s_nonce;
 static Who s_who[4];
 static uint16_t s_block;
+static char s_lobby_code[8];
+static bool s_start_req; /* host: start without waiting for every seat */
 static XnStart s_start; /* the host's, sent or accepted */
 static XnAck s_ack;     /* a guest's answer to it, for the late repeats */
 
@@ -327,9 +330,11 @@ static void on_intro(const XnIntro* m) {
         memcpy(&w->ip[c], m->cands[c], 4);
         w->udp[c] = (uint16_t)(m->cands[c][4] << 8 | m->cands[c][5]);
     }
+    memcpy(w->name, m->name, sizeof w->name);
+    w->name[sizeof w->name - 1] = '\0';
     w->known = true;
     w->known_ms = now_ms();
-    pc_log_line("xeleenet: the host introduced P%d", p + 1);
+    pc_log_line("xeleenet: the host introduced P%d (%s)", p + 1, w->name);
 }
 
 static void on_start(const XnStart* m) {
@@ -358,6 +363,13 @@ static void receive(void) {
         struct sockaddr_in from;
         socklen_t len = sizeof from;
         int n = (int)recvfrom(s_sock, (char*)buf, sizeof buf, 0, (struct sockaddr*)&from, &len);
+#if defined(_WIN32)
+        /* Winsock hands an unconnected UDP socket the ICMP unreachable from a
+         * candidate nobody listens on as a recvfrom error; the queue goes on. */
+        if (n < 0 && WSAGetLastError() == WSAECONNRESET) {
+            continue;
+        }
+#endif
         if (n <= 0 || s_sock == SOCK_INVALID) {
             return;
         }
@@ -620,6 +632,7 @@ static void punch_tick(void) {
             m.port = (uint8_t)o;
             m.ncands = (uint8_t)x->ncands;
             memcpy(m.key, x->key, 32);
+            memcpy(m.name, x->name, sizeof m.name);
             for (int c = 0; c < x->ncands; c++) {
                 memcpy(m.cands[c], &x->ip[c], 4);
                 m.cands[c][4] = (uint8_t)(x->udp[c] >> 8);
@@ -631,9 +644,9 @@ static void punch_tick(void) {
     pc_xn_set_roster((const uint8_t(*)[32])keys, nkeys);
 }
 
-/* Host: the seats are filled, every guest reaches us and every pair of guests
- * has decided its route. */
-static bool ready_to_start(void) {
+/* Host: someone has joined, every guest reaches us and every pair of guests
+ * has decided its route; and the seats are filled or the host said start. */
+static bool links_decided(int* players_out) {
     int players = 1;
     for (int g = 1; g < 4; g++) {
         const Who* w = &s_who[g];
@@ -650,7 +663,13 @@ static bool ready_to_start(void) {
             }
         }
     }
-    return players >= s_seats;
+    *players_out = players;
+    return players >= 2;
+}
+
+static bool ready_to_start(void) {
+    int players = 0;
+    return links_decided(&players) && (players >= s_seats || s_start_req);
 }
 
 static void start_build(void) {
@@ -757,6 +776,7 @@ int pc_xn_punch_poll(void) {
             s_lobby[i] = (uint8_t)v;
         }
         s_in_ms = t;
+        memcpy(s_lobby_code, code, sizeof s_lobby_code);
         s_phase = PH_PUNCH;
         if (s_local == 0) {
             pc_log_line("xeleenet: lobby code %s", code); /* tools/net_test_n.py reads it */
@@ -788,6 +808,8 @@ bool pc_xn_punch_start(const char* url, const char* name, const char* code, int 
         return false;
     }
     memset(s_who, 0, sizeof s_who);
+    s_lobby_code[0] = '\0';
+    s_start_req = false;
     s_phase = PH_STUN;
     s_why[0] = '\0';
     s_local = -1;
@@ -853,6 +875,14 @@ void pc_xn_punch_cancel(void) {
     fail("cancelled");
 }
 
+const char* pc_xn_url(void) {
+#ifndef XELEENET_URL
+#define XELEENET_URL ""
+#endif
+    const char* env = getenv("MELEE_XN_URL");
+    return env != NULL && env[0] != '\0' ? env : XELEENET_URL;
+}
+
 bool pc_xn_punch_from_env(void) {
     const char* xn = getenv("MELEE_XN");
     if (xn == NULL || xn[0] == '\0') {
@@ -885,6 +915,126 @@ bool pc_xn_punch_from_env(void) {
     if (r != 1) {
         pc_log_line("xeleenet: no session (%s)", r < 0 ? s_why : "timed out");
         pc_xn_punch_cancel();
+    } else {
+        net.direct = true; /* up from boot: the session agrees its own match */
     }
     return true;
+}
+
+void pc_xn_punch_request_start(void) {
+    if (s_local == 0 && s_phase == PH_PUNCH && !s_start_req) {
+        s_start_req = true;
+        pc_log_line("xeleenet: the host starts the session");
+    }
+}
+
+void pc_xn_punch_end(void) {
+    if (s_phase == PH_OFF) {
+        return;
+    }
+    if (s_phase == PH_DONE) {
+        pc_net_set_datagram_handler(NULL);
+    } else if (s_sock != SOCK_INVALID) {
+        sock_close(s_sock);
+        s_sock = SOCK_INVALID;
+    }
+    pc_xn_stop(); /* leave the lobby; a host closes it */
+    s_phase = PH_OFF;
+    s_local = -1;
+    crypto_wipe(&s_id, sizeof s_id);
+}
+
+void pc_xn_punch_view(PcXnPunchView* v) {
+    memset(v, 0, sizeof *v);
+    v->phase = s_phase == PH_OFF                           ? PC_XN_PUNCH_OFF :
+               s_phase == PH_STUN || s_phase == PH_SERVICE ? PC_XN_PUNCH_SERVICE :
+               s_phase == PH_PUNCH                         ? PC_XN_PUNCH_LOBBY :
+               s_phase == PH_STARTING                      ? PC_XN_PUNCH_STARTING :
+               s_phase == PH_DONE                          ? PC_XN_PUNCH_UP :
+                                                             PC_XN_PUNCH_FAILED;
+    v->host = s_code[0] == '\0';
+    v->error = s_why;
+    memcpy(v->code, s_lobby_code, sizeof v->code);
+    for (int p = 0; p < 4; p++) {
+        bool me = p == s_local;
+        if (!me && !s_who[p].known) {
+            continue;
+        }
+        if (me && s_local < 0) {
+            continue;
+        }
+        int i = v->nplayers++;
+        v->players[i].port = p;
+        v->players[i].local = me;
+        v->players[i].linked = me || s_who[p].up;
+        v->players[i].via_host = !me && s_who[p].gave;
+        snprintf(v->players[i].name, sizeof v->players[i].name, "%s", me ? s_name : s_who[p].name);
+    }
+    int players = 0;
+    v->can_start = s_local == 0 && s_phase == PH_PUNCH && links_decided(&players);
+}
+
+/* ---- the player's name and tag ------------------------------------------ */
+
+static char s_xn_name[16];
+static bool s_xn_name_read;
+
+static char* profile_file(const char* leaf, char* out, size_t cap) {
+    const char* dir_env = getenv("MELEE_XN_IDENTITY");
+    char* pref = dir_env == NULL ? SDL_GetPrefPath(NULL, "melee-pc") : NULL;
+    const char* dir = dir_env != NULL ? dir_env : pref;
+    if (dir == NULL) {
+        return NULL;
+    }
+    snprintf(out, cap, "%s%s%s", dir, dir[0] && dir[strlen(dir) - 1] == '/' ? "" : "/", leaf);
+    SDL_free(pref);
+    return out;
+}
+
+const char* pc_xn_name(void) {
+    const char* env = getenv("MELEE_XN_NAME");
+    if (env != NULL && env[0] != '\0') {
+        return env;
+    }
+    if (!s_xn_name_read) {
+        char path[1024];
+        s_xn_name_read = true;
+        FILE* f = profile_file("xeleenet-name.txt", path, sizeof path) ? fopen(path, "r") : NULL;
+        if (f != NULL) {
+            if (fgets(s_xn_name, sizeof s_xn_name, f) == NULL) {
+                s_xn_name[0] = '\0';
+            }
+            s_xn_name[strcspn(s_xn_name, "\r\n")] = '\0';
+            fclose(f);
+        }
+    }
+    return s_xn_name;
+}
+
+void pc_xn_set_name(const char* name) {
+    char path[1024];
+    snprintf(s_xn_name, sizeof s_xn_name, "%.12s", name != NULL ? name : "");
+    s_xn_name_read = true;
+    FILE* f = profile_file("xeleenet-name.txt", path, sizeof path) ? fopen(path, "w") : NULL;
+    if (f != NULL) {
+        fprintf(f, "%s\n", s_xn_name);
+        fclose(f);
+    }
+    pc_log_line("xeleenet: name is now %s", s_xn_name);
+}
+
+const char* pc_xn_tag(void) {
+    static char tag[5];
+    if (tag[0] == '\0') {
+        PcNetIdentity id;
+        const char* dir_env = getenv("MELEE_XN_IDENTITY");
+        char* pref = dir_env == NULL ? SDL_GetPrefPath(NULL, "melee-pc") : NULL;
+        if (pc_identity_load(&id, dir_env != NULL ? dir_env : pref, "PLAYER")) {
+            const char* hash = strchr(id.code, '#');
+            snprintf(tag, sizeof tag, "%.4s", hash != NULL ? hash + 1 : "");
+        }
+        crypto_wipe(&id, sizeof id);
+        SDL_free(pref);
+    }
+    return tag;
 }

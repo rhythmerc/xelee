@@ -128,6 +128,8 @@ typedef enum MenuKind {
     /* PC: the Slippi sign-in, sign-up and setup pages (mnslippi.c), shown in
      * the online lobby scene. */
     MENU_KIND_SLIPPI_PAGE = 37,
+    /* PC: VS Mode > Online > XeleeNet (Host Lobby, Join with Code, Name). */
+    MENU_KIND_ONLINE_XN = 38,
 #endif
 } MenuKind;
 
@@ -186,11 +188,21 @@ typedef enum VsMenuSelection {
 } VsMenuSelection;
 
 #ifdef TARGET_PC
-/* Online Mode: Slippi (a submenu of its modes) or LAN. */
+/* Online Mode: XeleeNet (its lobby screens), Slippi (a submenu of its
+ * modes) or LAN. */
 typedef enum OnlineMenuSelection {
-    SEL_ONLINE_SLIPPI = 0,
-    SEL_ONLINE_LAN = 1,
+    SEL_ONLINE_XN = 0,
+    SEL_ONLINE_SLIPPI = 1,
+    SEL_ONLINE_LAN = 2,
 } OnlineMenuSelection;
+
+/* Online Mode > XeleeNet (docs/xeleenet-plan.md, wireframe M2). Browse
+ * comes with the host settings page (XN3). */
+typedef enum XnMenuSelection {
+    SEL_XN_HOST = 0,
+    SEL_XN_JOIN = 1,
+    SEL_XN_NAME = 2,
+} XnMenuSelection;
 
 /* Online Mode > Slippi: signed out there is just Login (row 0); signed in
  * it is Unranked, Direct and Logout. See mnOnline_SlippiAction. */

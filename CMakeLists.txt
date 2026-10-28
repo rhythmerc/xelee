@@ -92,6 +92,14 @@ else ()
     message(STATUS "melee: Send logs saves files only (set XELEE_LOGS_URL)")
 endif ()
 
+# The XeleeNet lobby service the game uses (src/pc/net_punch.c), from the
+# environment at configure time; MELEE_XN_URL overrides it at run time.
+if (NOT "$ENV{XELEENET_URL}" STREQUAL "")
+    set_property(SOURCE src/pc/net_punch.c APPEND PROPERTY
+        COMPILE_DEFINITIONS "XELEENET_URL=\"$ENV{XELEENET_URL}\"")
+    message(STATUS "melee: XeleeNet service $ENV{XELEENET_URL}")
+endif ()
+
 # The version the app reports and the updater compares: the release tag CI
 # builds from (MELEE_VERSION, read at configure time), else version.cpp's.
 if (NOT "$ENV{MELEE_VERSION}" STREQUAL "")

@@ -88,6 +88,8 @@ typedef struct PcNetLink {
  * controller port `local`. Ownership of the socket moves on success only. */
 bool pc_net_connect_links(
     intptr_t socket, const PcNetLink* links, int n, int local, uint32_t seed);
+/* The controller ports in the session, ours included (bit per port); 0 offline. */
+int pc_net_port_mask(void);
 /* Connect over the Slippi transport (MELEE_NET_STACK=slippi,
  * docs/slippi-migration-plan.md). Uses the Slippi ENet protocol; the game-side
  * rollback/barrier/ring machinery is unchanged. `local_udp_port` 0 lets ENet

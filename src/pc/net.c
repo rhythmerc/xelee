@@ -3616,11 +3616,21 @@ bool pc_net_connect_links(
         peers[i] = (PeerSpec){ips[i], links[i].port, links[i].player, links[i].key,
             links[i].via_host};
     }
-    if (!connect_impl((sock_t)socket, peers, n, local, seed)) {
-        return false;
+    /* A lobby-started session: the lobby drives the handshake
+     * (pc_net_host_match / pc_net_guest_wait_match), as LAN's does; the
+     * boot-time env path sets net.direct itself (net_punch.c). */
+    return connect_impl((sock_t)socket, peers, n, local, seed);
+}
+
+int pc_net_port_mask(void) {
+    if (!net.active) {
+        return 0;
     }
-    net.direct = true; /* the session agrees its own match, as MELEE_NET_PEERS's */
-    return true;
+    int mask = 1 << net.local;
+    for (int i = 0; i < net.npeers; i++) {
+        mask |= 1 << net.peer_port[i];
+    }
+    return mask;
 }
 
 /* MELEE_NET_PEERS="0=host:port,1=host:port,2=host:port": a direct session of

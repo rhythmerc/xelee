@@ -6,12 +6,14 @@
 #include "mnpage.h"
 #include "types.h"
 #include <melee/gm/gmonlinemode.h>
+#include <stdio.h>
 #include <melee/gm/gmscene.h>
 #include <melee/gm/types.h>
 #include <melee/lb/lbaudio_ax.h>
 #include <sysdolphin/baselib/gobj.h>
 
 #include "pc/net_match.h"
+#include "pc/net_punch.h"
 #include "pc/slippi/slp_user.h"
 #include "pc/xr_calibrate.h"
 #include "pc/xr_place.h"
@@ -21,12 +23,14 @@
  * new words), spelled as Slippi spells them. */
 
 static const char* const online_labels[] = {
+    "XeleeNet",
     "Slippi",
     "LAN",
 };
 
 /* <= 44 chars: that is what fits the bottom bar at mnmain.c's font size */
 static const char* const online_descriptions[] = {
+    "Host or join a lobby of up to four players.",
     "Play over the internet with Slippi.",
     "Play another player on your local network.",
 };
@@ -51,6 +55,28 @@ static int slippiRow(int selection)
         return -1;
     }
     return !place && selection >= row_place ? selection + 1 : selection;
+}
+
+/* Online Mode > XeleeNet (wireframe M2): Host, Join, Name.
+ * The Name row shows the name and the key's tag. */
+static const char* const xn_descriptions[] = {
+    "Open a lobby. Friends join with its code.",
+    "Type the code a friend's lobby shows.",
+    "The name other players see.",
+};
+
+/* The Name row's description: the name and the key's tag, since the pill has
+ * no room for them (SIS text has no ';' either). */
+static const char* xnNameDescription(void)
+{
+    static char text[48];
+    const char* name = pc_xn_name();
+    const char* tag = pc_xn_tag();
+    if (name[0] == '\0') {
+        return "Pick the name other players see.";
+    }
+    snprintf(text, sizeof text, "You are %s%s%s.", name, tag[0] ? "#" : "", tag);
+    return text;
 }
 
 static const char* notice;
@@ -80,6 +106,12 @@ const char* mnOnline_Label(MenuKind kind, int selection)
     {
         return online_labels[selection];
     }
+    if (kind == MENU_KIND_ONLINE_XN) {
+        return selection == SEL_XN_HOST ? "Host" :
+               selection == SEL_XN_JOIN ? "Join" :
+               selection == SEL_XN_NAME ? "Name" :
+                                          NULL;
+    }
     if (kind == MENU_KIND_ONLINE_SLIPPI) {
         if (!pc_net_match_slippi_ready()) {
             return selection == 0 ? "Login" : selection == 1 ? "Register" : NULL;
@@ -103,6 +135,11 @@ const char* mnOnline_Description(MenuKind kind, int selection)
         selection < (int) ARRAY_SIZE(online_descriptions))
     {
         return online_descriptions[selection];
+    }
+    if (kind == MENU_KIND_ONLINE_XN && selection >= 0 &&
+        selection < (int) ARRAY_SIZE(xn_descriptions))
+    {
+        return selection == SEL_XN_NAME ? xnNameDescription() : xn_descriptions[selection];
     }
     if (kind == MENU_KIND_ONLINE_SLIPPI) {
         if (!pc_net_match_slippi_ready()) {
@@ -147,7 +184,8 @@ static void enterAfterPlacing(OnlineKind kind)
         pc_xr_place_plan(calibrate, place,
                          place ? "PLACE THE STAGE" :
                          kind == ONLINE_KIND_UNRANKED ? "UNRANKED" :
-                         kind == ONLINE_KIND_DIRECT ? "DIRECT" : "LAN");
+                         kind == ONLINE_KIND_DIRECT ? "DIRECT" :
+                         kind == ONLINE_KIND_XN ? "XELEENET" : "LAN");
         gmOnline_SetKindAfterPlace(kind);
         enterOnline(ONLINE_KIND_PLACE);
         return;
@@ -190,6 +228,10 @@ void mnOnline_Think(HSD_GObj* gp)
     mn_804A04F0.buttons = buttons;
     if (buttons & MenuInput_Confirm) {
         switch (mn_804A04F0.hovered_selection) {
+        case SEL_ONLINE_XN:
+            sfxForward();
+            mn_80229894(MENU_KIND_ONLINE_XN, SEL_XN_HOST, 1);
+            break;
         case SEL_ONLINE_SLIPPI:
             sfxForward();
             mn_80229894(MENU_KIND_ONLINE_SLIPPI, SEL_SLIPPI_UNRANKED, 1);
@@ -251,5 +293,39 @@ void mnOnline_SlippiThink(HSD_GObj* gp)
         mn_80229894(MENU_KIND_ONLINE, SEL_ONLINE_SLIPPI, 3);
     } else {
         moveHover(buttons, mnOnline_SlippiCount());
+    }
+}
+
+/// @brief Online Mode > XeleeNet think: Host Lobby, Join with Code, Name.
+/// Each goes to the lobby scene (gmonlinemode.c), which asks for a name the
+/// first time and shows the keyboard, the joining steps and the room.
+void mnOnline_XnThink(HSD_GObj* gp)
+{
+    u32 buttons = mn_80229624(4);
+
+    mn_804A04F0.buttons = buttons;
+    if (buttons & MenuInput_Confirm) {
+        switch (mn_804A04F0.hovered_selection) {
+        case SEL_XN_HOST:
+            gmOnline_SetXnIntent(XN_INTENT_HOST);
+            enterAfterPlacing(ONLINE_KIND_XN);
+            break;
+        case SEL_XN_JOIN:
+            gmOnline_SetXnIntent(XN_INTENT_JOIN);
+            enterAfterPlacing(ONLINE_KIND_XN);
+            break;
+        case SEL_XN_NAME:
+            gmOnline_SetXnIntent(XN_INTENT_NAME);
+            enterOnline(ONLINE_KIND_XN);
+            break;
+        default:
+            break;
+        }
+    } else if (buttons & MenuInput_Back) {
+        sfxBack();
+        mn_804A04F0.entering_menu = 0;
+        mn_80229894(MENU_KIND_ONLINE, SEL_ONLINE_XN, 3);
+    } else {
+        moveHover(buttons, (int) ARRAY_SIZE(xn_descriptions));
     }
 }

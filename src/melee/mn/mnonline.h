@@ -13,6 +13,8 @@
 void mnOnline_Think(HSD_GObj*);
 /* The Slippi submenu (MENU_KIND_ONLINE_SLIPPI). */
 void mnOnline_SlippiThink(HSD_GObj*);
+/* The XeleeNet submenu (MENU_KIND_ONLINE_XN). */
+void mnOnline_XnThink(HSD_GObj*);
 
 /* Literal label / bottom-bar text for PC-only entries; NULL = stock. */
 const char* mnOnline_Label(MenuKind, int selection);

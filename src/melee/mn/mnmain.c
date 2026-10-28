@@ -110,7 +110,7 @@ static u16 mn_803EAE7C[] = {
     0x2, 0x3, 0x4, 0x9, 0xB, 0xC, 0xD, 0x0,
 };
 #ifdef TARGET_PC
-#define MENU_KIND_TABLE_LEN (MENU_KIND_SLIPPI_PAGE + 1)
+#define MENU_KIND_TABLE_LEN (MENU_KIND_ONLINE_XN + 1)
 #else
 #define MENU_KIND_TABLE_LEN 0x22
 #endif
@@ -309,6 +309,11 @@ static AnimLoopSettings mn_803EAE8C[MENU_KIND_TABLE_LEN][3] = {
         { 3050, 3099, 3070 },
         { 3100, 3199, 3120 },
     },
+    { /* MENU_KIND_ONLINE_XN: the VS. Mode title, as Slippi's */
+        { 400, 449, 400 },
+        { 450, 499, 450 },
+        { 500, 599, 500 },
+    },
 #endif
 };
 
@@ -356,8 +361,11 @@ static AnimLoopSettings mn_803EB48C[] = {
 
 #ifdef TARGET_PC
 /* MENU_KIND_ONLINE preview pane: the Melee (CSS) preview for every item */
-static AnimLoopSettings mn_OnlinePreview[2] = {
-    { 700, 749, 720 }, { 700, 749, 720 },
+static AnimLoopSettings mn_OnlinePreview[3] = {
+    { 700, 749, 720 }, { 700, 749, 720 }, { 700, 749, 720 },
+};
+static AnimLoopSettings mn_OnlineXnPreview[3] = {
+    { 700, 749, 720 }, { 700, 749, 720 }, { 700, 749, 720 },
 };
 static AnimLoopSettings mn_OnlineSlippiPreview[4] = {
     { 700, 749, 720 }, { 700, 749, 720 }, { 700, 749, 720 }, { 700, 749, 720 },
@@ -722,6 +730,13 @@ MenuKindData mn_803EB6B0[MENU_KIND_TABLE_LEN] = {
         NULL,
         0x01,
         NULL,
+    },
+    { /* MENU_KIND_ONLINE_XN */
+        mn_OnlineXnPreview,
+        40,
+        NULL,
+        ARRAY_SIZE(mn_OnlineXnPreview),
+        mnOnline_XnThink,
     },
 #endif
 };
@@ -1820,7 +1835,10 @@ static void mn_PcStackRow(MenuKind kind, HSD_JObj* row, int index, int count)
     float at = index - (count - 1) * 0.5f;
     Vec3 pos;
 
-    if ((kind != MENU_KIND_ONLINE && kind != MENU_KIND_ONLINE_SLIPPI) || count < 2) {
+    if ((kind != MENU_KIND_ONLINE && kind != MENU_KIND_ONLINE_SLIPPI &&
+         kind != MENU_KIND_ONLINE_XN) ||
+        count < 2)
+    {
         return;
     }
     pos.x = middle.x + at * (step.x + gap * down.x);
@@ -2243,6 +2261,7 @@ int mn_8022C010(int menu_kind, int selection)
 #ifdef TARGET_PC
     case MENU_KIND_ONLINE:
     case MENU_KIND_ONLINE_SLIPPI:
+    case MENU_KIND_ONLINE_XN:
     case MENU_KIND_SLIPPI_PAGE:
 #endif
         return 1;

@@ -21,13 +21,56 @@
 extern "C" {
 #endif
 
-/* Host (`code` NULL, waiting for `seats` players) or join by code. */
+/* The service to use: MELEE_XN_URL, else the one the build names
+ * (XELEENET_URL at configure time), else "". */
+const char* pc_xn_url(void);
+/* Host (`code` NULL, for up to `seats` players) or join by code. */
 bool pc_xn_punch_start(const char* url, const char* name, const char* code, int seats);
 /* Drive it (game thread, often): 0 still going, 1 the session is up, -1 it
  * failed (pc_xn_punch_error). */
 int pc_xn_punch_poll(void);
 const char* pc_xn_punch_error(void);
 void pc_xn_punch_cancel(void);
+/* The host starts the session now, without waiting for the seats to fill:
+ * as soon as someone has joined and every link is decided. */
+void pc_xn_punch_request_start(void);
+/* Leave the lobby (a host closes it) and forget this run, session or not.
+ * The session itself is pc_net_disconnect's. */
+void pc_xn_punch_end(void);
+
+/* What the waiting room shows (gmonlinemode.c). */
+enum {
+    PC_XN_PUNCH_OFF,
+    PC_XN_PUNCH_SERVICE,  /* finding our address, signing in, opening or joining */
+    PC_XN_PUNCH_LOBBY,    /* in: players come and links go up */
+    PC_XN_PUNCH_STARTING, /* the host sent the start */
+    PC_XN_PUNCH_UP,       /* the session is running */
+    PC_XN_PUNCH_FAILED,   /* `error` says why */
+};
+typedef struct PcXnPunchView {
+    int phase;
+    bool host;
+    char code[8]; /* the lobby's, once in */
+    int nplayers; /* us included, port order */
+    struct {
+        int port;
+        char name[16];
+        bool local;
+        bool linked;   /* punched (us: always) */
+        bool via_host; /* a guest we gave up reaching directly */
+    } players[4];
+    bool can_start; /* host: someone joined and every link is decided */
+    const char* error;
+} PcXnPunchView;
+void pc_xn_punch_view(PcXnPunchView* out);
+
+/* The player's XeleeNet name (docs/xeleenet-plan.md ID-2): its own, never
+ * Slippi's, kept in xeleenet-name.txt in the profile. "" until chosen. */
+const char* pc_xn_name(void);
+void pc_xn_set_name(const char* name);
+/* The first characters of this install's key tag, for "NAME#TAG": two
+ * players with the same name are told apart by it. "" without a key. */
+const char* pc_xn_tag(void);
 /* MELEE_XN=host or join:CODE (with MELEE_XN_URL, MELEE_XN_NAME, MELEE_XN_SEATS):
  * the connect phase at boot, blocking until the session is up, as
  * MELEE_NET_PEERS is up from boot. False when MELEE_XN is unset. */

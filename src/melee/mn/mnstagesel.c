@@ -197,8 +197,9 @@ static void rankStageFrame(void)
  * shared seed, so both peers agree without another message. Values are
  * table indices (mnStageSel_803F06D0), 30 = random. */
 #define NET_MSG_STAGE_PICK 0x20
-static int net_local_pick = -1;
-static int net_remote_pick = -1;
+/* One pick per controller port, the sender's port riding in the message: a
+ * XeleeNet lobby has up to four players (docs/xeleenet-plan.md). */
+static int net_picks[4] = { -1, -1, -1, -1 };
 static bool net_slippi_fixed; /* the ticket chose the stage; skip the pick exchange */
 
 static bool netStageSel_Active(void)
@@ -208,7 +209,9 @@ static bool netStageSel_Active(void)
 
 static void netStageSel_Reset(void)
 {
-    net_local_pick = net_remote_pick = -1;
+    for (int i = 0; i < 4; i++) {
+        net_picks[i] = -1;
+    }
     net_slippi_fixed = false;
 }
 
@@ -246,42 +249,75 @@ static void netStageSel_Poll(void)
 {
     u8 type;
     u8 buf[4];
-    while (pc_net_recv_reliable(&type, buf, sizeof buf) >= 0) {
-        if (type == NET_MSG_STAGE_PICK) {
-            net_remote_pick = buf[0];
-            pc_log_line("sss: opponent picked %d", net_remote_pick);
+    int n;
+    while ((n = pc_net_recv_reliable(&type, buf, sizeof buf)) >= 0) {
+        if (type == NET_MSG_STAGE_PICK && n >= 1) {
+            /* [pick, port]; a one-byte pick is the other player of a 1v1 */
+            int port = n >= 2 && buf[1] < 4 ? buf[1] : 1 - pc_net_local_player();
+            if (port >= 0 && port < 4 && port != pc_net_local_player()) {
+                net_picks[port] = buf[0];
+                pc_log_line("sss: P%d picked %d", port + 1, buf[0]);
+            }
         }
     }
 }
 
 static void netStageSel_SendPick(int idx)
 {
-    u8 b = (u8) idx;
-    net_local_pick = idx;
-    pc_net_send_reliable(NET_MSG_STAGE_PICK, &b, 1);
+    u8 b[2] = { (u8) idx, (u8) pc_net_local_player() };
+    net_picks[pc_net_local_player() & 3] = idx;
+    pc_net_send_reliable(NET_MSG_STAGE_PICK, b, 2);
     pc_log_line("sss: we picked %d", idx);
 }
 
-/* Both peers have picked: order the picks by port so the expression is the
- * same on both sides, then let the shared seed flip the coin. */
+/* The ports in the session (ours too); a 1v1 is P1 and P2. */
+static int netStageSel_Ports(void)
+{
+    int mask = pc_net_port_mask();
+    return mask != 0 ? mask : 3;
+}
+
+/* True once every player in the session has picked. */
+static bool netStageSel_AllPicked(void)
+{
+    int ports = netStageSel_Ports();
+    for (int i = 0; i < 4; i++) {
+        if ((ports & (1 << i)) && net_picks[i] < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Every player has picked: fold the picks in port order so the expression
+ * is the same on every peer, then let the shared seed choose among them. */
 static u32 netStageSel_Mix(void)
 {
-    int local = pc_net_local_player();
-    int p0 = local == 0 ? net_local_pick : net_remote_pick;
-    int p1 = local == 0 ? net_remote_pick : net_local_pick;
-    if (p0 < 0 || p1 < 0) {
+    int ports = netStageSel_Ports();
+    u32 h = 0;
+    if (!netStageSel_AllPicked()) {
         return pc_net_seed() * 2654435761u + (u32) mnStageSel_804D6CAE;
     }
-    return pc_net_seed() * 2654435761u + (u32) (p0 * 31 + p1);
+    for (int i = 0; i < 4; i++) {
+        if (ports & (1 << i)) {
+            h = h * 31 + (u32) net_picks[i];
+        }
+    }
+    return pc_net_seed() * 2654435761u + h;
 }
 
 static int netStageSel_Resolve(void)
 {
-    int local = pc_net_local_player();
-    int p0 = local == 0 ? net_local_pick : net_remote_pick;
-    int p1 = local == 0 ? net_remote_pick : net_local_pick;
-    int pick = (netStageSel_Mix() >> 16) & 1 ? p1 : p0;
-    pc_log_line("sss: picks P1=%d P2=%d -> %d", p0, p1, pick);
+    int ports = netStageSel_Ports();
+    int list[4], n = 0;
+    for (int i = 0; i < 4; i++) {
+        if (ports & (1 << i)) {
+            list[n++] = net_picks[i];
+        }
+    }
+    int pick = list[(netStageSel_Mix() >> 16) % (u32) n];
+    pc_log_line("sss: picks P1=%d P2=%d P3=%d P4=%d -> %d", net_picks[0], net_picks[1],
+                net_picks[2], net_picks[3], pick);
     return pick;
 }
 
@@ -1307,8 +1343,8 @@ void mnStageSel_Scene_OnFrame(void)
                 return;
             }
             if (!net_slippi_fixed) {
-                if (net_remote_pick < 0) {
-                    return; /* opponent still choosing; keep showing our pick */
+                if (!netStageSel_AllPicked()) {
+                    return; /* someone still choosing; keep showing our pick */
                 }
                 mnStageSel_804D6CAE = netStageSel_Resolve();
                 if (mnStageSel_804D6CAE >= NUM_STAGES) {
