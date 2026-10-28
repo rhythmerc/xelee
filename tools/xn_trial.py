@@ -77,29 +77,34 @@ def serve(args):
         shutil.rmtree(state, ignore_errors=True)
 
 
-def trial_env(xn, url, seats, name):
+def trial_env(xn, url, seats, name, wait_min=10):
     return {
         "MELEE_XN": xn,
         "MELEE_XN_URL": url,
         "MELEE_XN_SEATS": str(seats),
         "MELEE_XN_NAME": name,
-        "MELEE_XN_WAIT_S": "600",
+        "MELEE_XN_WAIT_S": str(int(wait_min * 60)),
         "MELEE_APP_REV": REV,
+        # Every device boots without a memory card: a card that prompts (a
+        # fresh machine's first boot) holds that one in the boot scene, and
+        # the others give up on it.
+        "MELEE_NO_CARD": "1",
         "MELEE_DEBUG_VS": f"human{seats}",
     }
 
 
 def play(args, xn, role):
-    # In the bundle (`bundle`), the game sits beside this script.
-    bundled = os.path.join(HERE, "run.sh")
-    exe = args.exe or (bundled if os.path.exists(bundled) else os.path.join(ROOT, "build", "linux", "melee"))
+    # In the bundle (`bundle`), the game sits beside this script, started by
+    # its run.sh (not tools/run.sh, the gdb wrapper).
+    in_bundle = os.path.exists(os.path.join(HERE, "melee"))
+    exe = args.exe or (os.path.join(HERE, "run.sh") if in_bundle else os.path.join(ROOT, "build", "linux", "melee"))
     if not os.path.exists(args.disc):
         sys.exit(f"no disc at {args.disc}; pass --disc")
-    env = dict(os.environ, **trial_env(xn, args.url, args.seats, args.name or role.upper()))
+    env = dict(os.environ, **trial_env(xn, args.url, args.seats, args.name or role.upper(), args.wait))
     log_path = os.path.expanduser(f"~/xn-trial-{role}.log")
     print(f"log: {log_path}", flush=True)
     with open(log_path, "wb") as log:
-        proc = subprocess.Popen([exe, args.disc], env=env, stdout=subprocess.PIPE,
+        proc = subprocess.Popen([exe, "--no-card", args.disc], env=env, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT)
         # Echo the connect phase and the session's verdicts; everything goes to the log.
         keep = re.compile(rb"xeleenet:|net: (rollback with|link to|P\d|DESYNC|disconnected)|"
@@ -150,7 +155,7 @@ def quest_write(lines):
 
 def quest(args):
     kept = quest_env_lines()
-    env = trial_env(f"join:{args.code}", args.url, args.seats, args.name or "QUEST")
+    env = trial_env(f"join:{args.code}", args.url, args.seats, args.name or "QUEST", args.wait)
     quest_write(kept + [BEGIN] + [f"{k}={v}" for k, v in env.items()] + [END])
     print(f"The Quest joins {args.code} at its next launch. Start Xelee and press Play.")
     print("Its connect phase, from logcat:\n", flush=True)
@@ -233,6 +238,7 @@ def main():
             p.add_argument("--url", default=f"http://127.0.0.1:{PORT}")
         p.add_argument("--seats", type=int, default=3, choices=(2, 3, 4))
         p.add_argument("--name", default="", help="up to 12 letters, digits, spaces")
+        p.add_argument("--wait", type=float, default=10, help="minutes to wait for the others")
         if name != "quest":
             p.add_argument("--exe", default="")
             p.add_argument("--disc", default=DEFAULT_DISC)

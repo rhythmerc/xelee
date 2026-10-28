@@ -694,7 +694,10 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
     s_argc = argc;
     s_argv = argv;
     const char* disc = NULL;
-    bool card = true;
+    /* MELEE_NO_CARD: --no-card where there is no command line (Quest, via
+     * melee-env.txt). Netplay peers must boot the same way, and a card that
+     * prompts on one of them holds it in the boot scene (tools/xn_trial.py). */
+    bool card = getenv("MELEE_NO_CARD") == NULL;
     for (int i = 1; i < argc; i++) {
         const char* d = NULL;
         if (strcmp(argv[i], "--dvd") == 0) {
