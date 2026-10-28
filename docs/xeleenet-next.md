@@ -4,7 +4,7 @@ The thread to pick up after a break. The plan itself (requirements,
 architecture, milestones, decisions) is `docs/xeleenet-plan.md`. This file is
 the short version of the state, kept current.
 
-Last updated 2026-10-28. Branch `feat/xelee-net` on the fork. Push to the
+Last updated 2026-10-28 (evening). Branch `feat/xelee-net` on the fork. Push to the
 `fork` remote: `origin` is upstream and refuses with a 403.
 
 ## Done
@@ -15,6 +15,9 @@ Last updated 2026-10-28. Branch `feat/xelee-net` on the fork. Push to the
 | XN1 | `65a1a87f`…`a697c3fa` | The engine plays 3-4 players: per-port rings, a `Peer` per link, host-led agreements, relaying through the host, voiding the match on a drop. |
 | XN2 (desktop) | `012b208f` | Joining by code: STUN, signed punch probes, host introductions, per-link keys and routes decided before the session. |
 | XN2 trial prep | `374a7163`, `f2425c11`, `efdd205e` | Hotspot punching (answer where a probe came from), Quest HTTP (cleartext switch, logged Java errors), the desync check re-arms per scene, `MELEE_NO_CARD`, the connect wait honours Ctrl-C, `tools/xn_trial.py`. |
+| XN3 (most of it) | `237683e4`, `673d1b4f`, `7120fc98`, `242bb209` | Online Mode > XeleeNet (Host, Join, Name). RmlUi pages to the wireframe: H1 with presets, H2 stage grid, More rules, B1 browser (auto-refresh, Show full, scrolls, up to 50), J1 keypad, J2-J4 track and card, J3 failures. Button legend with GC glyphs. Connecting runs from the menu (`pc_xn_punch_poll`); the host starts with the first joiner. Settings persist (`xeleenet-lobby.txt`). Preview harness: `tools/xn_preview.py`. |
+| XN4 (started) | `673d1b4f`, `7120fc98` | The CSS is the lobby: the C1 banner over the CSS's top strip, a door per port, the host's rules (teams byte in RULES), per-port stage picks drawn by seed. Roster reload: joiners arrive into a live session through a two-step switch (ack, then switch at frame + 90). |
+| XN5 (pieces) | `b6d6da9b`, `76adaaa7` | Windows GET + bearer over WinHTTP (built, never run on Windows); CI passes `vars.XELEENET_URL` into builds. |
 
 ## The real-network trial (in progress)
 
@@ -64,32 +67,49 @@ Port 8790, not 8787: the tailnet share listens on 8787.
 - Desktop logs are `~/xn-trial-host.log` and `~/xn-trial-join.log`. The
   Quest's is logcat, and its buffer rolls over in minutes, so save it soon.
 
-## Next steps, in order
+## Where we are (2026-10-28, evening)
 
-1. **Finish the 3-way trial** (above). If a pair can't punch, check
-   whether it came out "through the host" and still played.
-2. **The title-screen desync** (Quest vs desktop, `MELEE_DEBUG_VS`).
-   - Find what drew the extra random number on frame 689. Compare the two
-     sides' RNG call sites on that frame; the state dump prints only the seed.
-   - It matters only if the real CSS flow shows the same thing. Rule that out
-     during XN4.
-3. **Deploy the service.** Cloudflare login or API token, plus the
-   `XELEENET_TOKEN_KEY` secret. The CI deploys from `main` only. Until then,
-   trials use `xn_trial.py serve`.
-4. **XN3, the menus** (plan §4): XeleeNet rows above Slippi, the name, the
-   Host page, the stage grid, Browse, Join with Code, join steps and errors,
-   and the ask-to-join prompt.
-   - The connect phase becomes asynchronous: `pc_xn_punch_poll` from the menu,
-     not the boot-time wait in `pc_xn_punch_from_env`.
-   - The host gets a start button instead of "starts when the seats are full".
-5. **XN4, the lobby on the CSS** (plan §3.4-§3.5a): the banner and overlay,
-   timed settings applies, the roster reload (joiners arriving into a live
-   session, which reuse the punch on the session's socket via the datagram
-   handler), the set score, and the placement barrier.
-6. **XN5:** Windows HTTP (GET with a bearer token; WinHTTP only does POST
-   today), the version gate, and logs.
-7. **XN6:** a relay for a guest that can't reach the host. Today that
-   guest waits 20 s and fails.
+We skipped ahead: XN3's menus and the start of XN4 were built before the
+3-way real-network match was played (step 1 below was never finished).
+
+**Proven:** on one desktop, 3 instances go Host → Join by code → CSS with 3
+doors → shared stage → a match with equal checksums
+(`tools/net_test_xn_menu.py --players 3`). The first join into a live CSS
+reloads it (frame 119). Over real networks (XN2 trial): all three links
+punched direct, Quest ↔ hotspot included.
+
+**Built, not yet run:**
+- The second join into a live session (the two-step switch; the first
+  version deadlocked).
+- B1 against a real service with real lobbies; scrolling past five rows.
+- Every J3 failure on screen (seen only in the preview).
+- Windows XeleeNet at all; the Quest with the new pages (Touch on them too).
+
+**Not built:** from XN3, ask-to-join, Stage pick, Placement time and
+Format (the SOON rows). From XN4, settings changes from the CSS, remove /
+leave / close, the set score, the placement barrier, chat (dropped for
+now). From XN5, the version gate on screen, XR placement. XN6 (relay) has not
+started.
+
+## Next steps: a friends' test (Windows + Quest, 3-4 players)
+
+1. **Re-verify locally:** `tools/net_test_xn_menu.py --players 3` (the second
+   join), then 4 players.
+2. **The service on a Tailscale Funnel** (authorized): `xn_trial.py serve`
+   (wrangler dev, port 8790) behind `tailscale funnel`. It's HTTPS, so the
+   Quest needs no cleartext build.
+3. **Builds with that URL:** set the repo variable `XELEENET_URL`, then build
+   Windows in CI and run it on a Windows box before handing it out. Then the
+   Quest APK with the URL.
+4. **A 3-4 player run across networks:** read the routes, rollbacks and any
+   DESYNC (see "What to read afterwards").
+5. **Then:** deploy to Cloudflare for real; the title-screen desync only if
+   the CSS flow shows one; the `net: fullhash` peer-local difference from
+   frame 1440 (seen in clean runs too; `fix/camera-sim-reads` is unmerged
+   until a desync reproduces); the rest of XN4.
+
+The web build waits on WebRTC (browsers can't punch UDP); per-client cameras
+are planned and deferred (`docs/client-camera-plan.md`).
 
 ## Open follow-ups from XN1 and XN2
 
