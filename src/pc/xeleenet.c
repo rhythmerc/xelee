@@ -309,7 +309,8 @@ static bool host(void) {
     s_port = 0;
     s_status = PC_XN_IN;
     SDL_UnlockMutex(s_lock);
-    pc_log_line("xeleenet: hosting lobby %s, code %s, %d seats", id, code, seats);
+    pc_log_line("xeleenet: hosting lobby %s, code %s, %d seats (build %s, disc %s)", id, code, seats,
+        pc_app_rev(), pc_lan_disc_id());
     return true;
 }
 
@@ -367,7 +368,8 @@ static bool join(void) {
             s_status = PC_XN_IN;
             SDL_UnlockMutex(s_lock);
             pc_slippi_json_free(r);
-            pc_log_line("xeleenet: joined lobby %s as P%d with %d others", id, s_port + 1, s_nmembers);
+            pc_log_line("xeleenet: joined lobby %s as P%d with %d others (build %s, disc %s)", id,
+                s_port + 1, s_nmembers, pc_app_rev(), pc_lan_disc_id());
             return true;
         }
         pc_slippi_json_free(r);

@@ -19,6 +19,7 @@
 
     <application
         android:allowBackup="true"
+        android:usesCleartextTraffic="${usesCleartextTraffic}"
         android:hardwareAccelerated="true"
         android:appCategory="game"
         android:icon="@mipmap/icon"

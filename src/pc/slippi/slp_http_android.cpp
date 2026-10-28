@@ -7,17 +7,36 @@
 #if defined(__ANDROID__)
 
 #include <SDL3/SDL_system.h>
+#include <android/log.h>
 #include <jni.h>
 #include <cstring>
+#include <initializer_list>
 #include <string>
 
 namespace {
 
+/* A pending Java exception, cleared and logged: the failure's reason
+ * ("Cleartext HTTP traffic ... not permitted", a timeout) is otherwise lost. */
 bool threw(JNIEnv* env) {
     if (env->ExceptionCheck() == JNI_FALSE) {
         return false;
     }
+    jthrowable e = env->ExceptionOccurred();
     env->ExceptionClear();
+    jclass cls = e != nullptr ? env->GetObjectClass(e) : nullptr;
+    jmethodID to_string = cls != nullptr ? env->GetMethodID(cls, "toString", "()Ljava/lang/String;") : nullptr;
+    jstring text = to_string != nullptr ? static_cast<jstring>(env->CallObjectMethod(e, to_string)) : nullptr;
+    env->ExceptionClear();
+    const char* c = text != nullptr ? env->GetStringUTFChars(text, nullptr) : nullptr;
+    __android_log_print(ANDROID_LOG_INFO, "Melee", "http: %s", c != nullptr ? c : "a Java exception");
+    if (c != nullptr) {
+        env->ReleaseStringUTFChars(text, c);
+    }
+    for (jobject o : {static_cast<jobject>(text), static_cast<jobject>(cls), static_cast<jobject>(e)}) {
+        if (o != nullptr) {
+            env->DeleteLocalRef(o);
+        }
+    }
     return true;
 }
 

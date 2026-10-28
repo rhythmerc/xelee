@@ -192,6 +192,11 @@ static void s_slippi_send_inputs(void);
 static bool s_slippi_recv(void);
 static bool s_slippi_wait_remote(int32_t need);
 static bool s_slippi_ck_checked_once;
+/* A desync stops the comparing only until the next scene: one in a menu
+ * must not hide one in the fight that follows (the first Quest <-> desktop
+ * XeleeNet trial desynced on the title screen and could not say whether the
+ * match did). net.desync_reported stays set for the session. */
+static bool s_desync_this_scene;
 static uint32_t s_ck_ring[RING];  /* our checksum entering each frame */
 /* Per-frame Slippi wire checksum, computed the same place s_ck_ring is. The
  * wire carries Slippi's formula, not our FNV one, so the desync check under
@@ -1404,7 +1409,7 @@ static void slp_setup_cb(void* user, uint32_t seed, int32_t start_frame) {
     net.hs = HS_DONE;
     net.hs_host = false;
     net.ck_from = start_frame;
-    net.desync_reported = false;
+    net.desync_reported = s_desync_this_scene = false;
     pc_log_line("net: Slippi setup from host: seed=%u start_frame=%d (frame %d)", seed,
         start_frame, net.tick_frame);
 }
@@ -2238,7 +2243,7 @@ static void dump_rings_around(int32_t f) {
  * for, oldest first, each once. A frame the peer never reported is left for
  * the next call until a later one is compared or it ages out of the rings. */
 static void check_desync(void) {
-    if (net.desync_reported || net.hs == HS_PENDING) {
+    if (s_desync_this_scene || net.hs == HS_PENDING) {
         return;
     }
     int32_t upto = confirmed_frame();
@@ -2282,6 +2287,7 @@ static void check_desync(void) {
         }
         if (bad) {
             net.desync_reported = true;
+            s_desync_this_scene = true;
             pc_log_line("net: DESYNC at frame %d with peer %d (P%d) (local %08x remote %08x)", f,
                 pi, p->port + 1, local, p->rck[i].ck);
             dump_rings_around(f);
@@ -2852,6 +2858,7 @@ static void session_reset(void) {
         }
     }
     net.desync_reported = s_peer_left = s_no_progress = false;
+    s_desync_this_scene = false;
     s_slippi_ck_checked_once = false;
     s_progress_ns = 0;
     s_warn_src = s_warn_sess = s_warn_bad = s_warn_mac = false;
@@ -4565,6 +4572,16 @@ static void fresh_tick(PADStatus* head, bool raw) {
              * is the measurement any fix for it has to move. */
             pc_log_line("net: scene %d -> %d at frame %d", s_scene_last, scene, net.frame);
             s_scene_last = scene;
+            if (s_desync_this_scene) {
+                /* Compare again from this scene's first frame on. */
+                s_desync_this_scene = false;
+                for (int i = 0; i < net.npeers; i++) {
+                    if (s_peer[i].ck_checked < net.frame - 1) {
+                        s_peer[i].ck_checked = net.frame - 1;
+                    }
+                }
+                pc_log_line("net: desync check re-armed for scene %d", scene);
+            }
             int lead = in_fight() ? FIGHT_ENTRY_LEAD : IO_QUIET;
             barrier_raise(net.frame + lead);
         }

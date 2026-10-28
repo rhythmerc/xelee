@@ -94,6 +94,8 @@ typedef struct Who { /* another player, by controller port */
     bool up;                  /* they echoed ours: both ways work */
     bool gave;                /* a guest pair that ran out of time */
     struct sockaddr_in addr;  /* where they answered from */
+    struct sockaddr_in seen;  /* where their last valid probe came from, up or not */
+    bool seen_set;
     uint64_t next_probe;
     uint8_t known_m, up_m, gave_m; /* host: this guest's last report */
     bool acked;                    /* host: it answered the start */
@@ -195,8 +197,17 @@ static void send_signed(void* buf, size_t n, int to) {
         send_to(buf, n, w->addr.sin_addr.s_addr, ntohs(w->addr.sin_port), to);
         return;
     }
+    bool seen_is_cand = !w->seen_set;
     for (int c = 0; c < w->ncands; c++) {
         send_to(buf, n, w->ip[c], w->udp[c], to);
+        seen_is_cand |= w->ip[c] == w->seen.sin_addr.s_addr && htons(w->udp[c]) == w->seen.sin_port;
+    }
+    /* Their probe came from an address none of their candidates name: a NAT
+     * that maps every destination to its own port (a phone's carrier, often)
+     * showed STUN one port and shows us another. Answer where it came from;
+     * that mapping is open toward us. */
+    if (!seen_is_cand) {
+        send_to(buf, n, w->seen.sin_addr.s_addr, ntohs(w->seen.sin_port), to);
     }
 }
 
@@ -277,6 +288,20 @@ static void begin_session(uint32_t seed) {
 static void on_probe(const XnProbe* m, const struct sockaddr_in* from) {
     Who* w = &s_who[m->h.from];
     w->nonce = get64(m->nonce);
+    if (!w->seen_set || w->seen.sin_addr.s_addr != from->sin_addr.s_addr ||
+        w->seen.sin_port != from->sin_port)
+    {
+        bool cand = false;
+        for (int c = 0; c < w->ncands; c++) {
+            cand |= w->ip[c] == from->sin_addr.s_addr && htons(w->udp[c]) == from->sin_port;
+        }
+        if (!cand && !w->up) {
+            pc_log_line("xeleenet: P%d probes from %s, not a candidate; answering there too",
+                m->h.from + 1, ip_text(from->sin_addr.s_addr, ntohs(from->sin_port)));
+        }
+        w->seen = *from;
+        w->seen_set = true;
+    }
     if (get64(m->echo) == s_nonce && !w->up) {
         w->up = true;
         w->addr = *from;
