@@ -4,15 +4,19 @@ code (docs/xeleenet-plan.md, XN2), with the lobby service on the host's
 desktop instead of Cloudflare.
 
     tools/xn_trial.py serve                       wrangler dev for every network
+    tools/xn_trial.py menu --url URL              a desktop game, driven by hand in the menus
+    tools/xn_trial.py quest-menu --url URL        the Quest, the same (adb), then Play
     tools/xn_trial.py host [--seats 3]            the host's game; prints the code
     tools/xn_trial.py join CODE --url URL         a desktop guest
     tools/xn_trial.py quest CODE --url URL        a Quest guest (adb), then Play
     tools/xn_trial.py quest-clean                 take the trial off the Quest
     tools/xn_trial.py bundle                      zip the desktop build for another machine
 
-`serve` listens on every interface and prints its LAN and tailnet URLs. A
-guest at home uses the LAN one; one elsewhere (a phone hotspot) the tailnet
-one. Only the lobby calls go that way: the games punch their own links over
+`serve` listens on every interface and prints its LAN, tailnet and (when
+`tailscale funnel --bg 8790` is on) public URLs. A guest at home uses the LAN
+one; one elsewhere (a phone hotspot) the tailnet or Funnel one. `menu` and
+`quest-menu` play through Online Mode > XeleeNet (Host, Join) by hand: every
+device only needs the URL and the same build tag. Only the lobby calls go that way: the games punch their own links over
 the internet (net_punch.c).
 
 Every player runs the same MELEE_APP_REV (the service only seats players on the
@@ -35,7 +39,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 PORT = 8790  # not 8787: the tailnet share listens there
-REV = "xn2-trial"
+REV = "xn-trial"
 QUEST_ENV = "/sdcard/Android/data/dev.melee.game/files/melee-env.txt"
 BEGIN, END = "# xn-trial begin", "# xn-trial end"
 DEFAULT_DISC = os.path.expanduser("~/Downloads/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).iso")
@@ -58,6 +62,17 @@ def tailnet_ip():
     return None
 
 
+def funnel_url():
+    """The Funnel's public URL when one serves PORT, else None."""
+    try:
+        out = subprocess.run(["tailscale", "funnel", "status"], capture_output=True, text=True,
+                             timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"(https://\S+?)/? \(Funnel on\)[\s\S]*?proxy http://127\.0\.0\.1:%d" % PORT, out)
+    return m.group(1) if m else None
+
+
 def serve(args):
     state = tempfile.mkdtemp(prefix="xn-trial-")
     cmd = ["npx", "wrangler", "dev", "--ip", "0.0.0.0", "--port", str(PORT), "--persist-to", state,
@@ -68,6 +83,8 @@ def serve(args):
     print(f"  at home        http://{lan_ip()}:{PORT}")
     ts = tailnet_ip()
     print(f"  elsewhere      http://{ts}:{PORT}" if ts else "  elsewhere      (no tailnet address found)")
+    fu = funnel_url()
+    print(f"  public         {fu}" if fu else f"  public         (no Funnel: tailscale funnel --bg {PORT})")
     print("Ctrl-C stops it.\n", flush=True)
     try:
         subprocess.run(cmd, cwd=os.path.join(HERE, "xeleenet"), env=env)
@@ -93,14 +110,20 @@ def trial_env(xn, url, seats, name, wait_min=10):
     }
 
 
-def play(args, xn, role):
+def menu_env(url):
+    # No MELEE_XN: the menus host and join (Online Mode > XeleeNet).
+    return {"MELEE_XN_URL": url, "MELEE_APP_REV": REV, "MELEE_NO_CARD": "1"}
+
+
+def play(args, xn, role, env_extra=None):
     # In the bundle (`bundle`), the game sits beside this script, started by
     # its run.sh (not tools/run.sh, the gdb wrapper).
     in_bundle = os.path.exists(os.path.join(HERE, "melee"))
     exe = args.exe or (os.path.join(HERE, "run.sh") if in_bundle else os.path.join(ROOT, "build", "linux", "melee"))
     if not os.path.exists(args.disc):
         sys.exit(f"no disc at {args.disc}; pass --disc")
-    env = dict(os.environ, **trial_env(xn, args.url, args.seats, args.name or role.upper(), args.wait))
+    env = dict(os.environ, **(env_extra if env_extra is not None else
+                              trial_env(xn, args.url, args.seats, args.name or role.upper(), args.wait)))
     log_path = os.path.expanduser(f"~/xn-trial-{role}.log")
     print(f"log: {log_path}", flush=True)
     with open(log_path, "wb") as log:
@@ -153,11 +176,14 @@ def quest_write(lines):
         os.unlink(path)
 
 
-def quest(args):
+def quest(args, env=None):
     kept = quest_env_lines()
-    env = trial_env(f"join:{args.code}", args.url, args.seats, args.name or "QUEST", args.wait)
+    if env is None:
+        env = trial_env(f"join:{args.code}", args.url, args.seats, args.name or "QUEST", args.wait)
+        print(f"The Quest joins {args.code} at its next launch. Start Xelee and press Play.")
+    else:
+        print("The Quest reaches the service at its next launch. Start Xelee and press Play.")
     quest_write(kept + [BEGIN] + [f"{k}={v}" for k, v in env.items()] + [END])
-    print(f"The Quest joins {args.code} at its next launch. Start Xelee and press Play.")
     print("Its connect phase, from logcat:\n", flush=True)
     adb("logcat", "-c", check=False)
     try:
@@ -181,11 +207,11 @@ README = """Xelee XeleeNet trial build (feat/xelee-net {rev})
 Needs Linux x86_64 with glibc 2.39 or newer, libcurl and OpenSSL 3 (any
 current Fedora, Ubuntu 24.04+, Arch), and your own Melee disc image.
 
-Join a lobby (the host gives you the code and the service URL):
+Play (the host gives you the service URL), then Online Mode > XeleeNet:
 
-    ./xn_trial.py join CODE --url http://HOST:{port} --disc /path/to/melee.iso
+    ./xn_trial.py menu --url URL --disc /path/to/melee.iso
 
-The log goes to ~/xn-trial-join.log; send it back after the run.
+The log goes to ~/xn-trial-menu.log; send it back after the run.
 """
 
 
@@ -242,6 +268,12 @@ def main():
         if name != "quest":
             p.add_argument("--exe", default="")
             p.add_argument("--disc", default=DEFAULT_DISC)
+    for name in ("menu", "quest-menu"):
+        p = sub.add_parser(name)
+        p.add_argument("--url", required=True, help="the service, as `serve` printed it")
+        if name == "menu":
+            p.add_argument("--exe", default="")
+            p.add_argument("--disc", default=DEFAULT_DISC)
     sub.add_parser("quest-clean")
     sub.add_parser("bundle")
     args = ap.parse_args()
@@ -253,6 +285,10 @@ def main():
         play(args, f"join:{args.code}", "join")
     elif args.cmd == "quest":
         quest(args)
+    elif args.cmd == "menu":
+        play(args, None, "menu", menu_env(args.url))
+    elif args.cmd == "quest-menu":
+        quest(args, menu_env(args.url))
     elif args.cmd == "bundle":
         bundle(args)
     else:
