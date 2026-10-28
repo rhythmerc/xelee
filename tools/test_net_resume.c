@@ -306,6 +306,11 @@ void rel_link_drop(int peer) {
     (void)peer;
 }
 
+/* net_punch.c: XeleeNet's connect phase, never started by the fixture. */
+bool pc_xn_punch_from_env(void) {
+    return false;
+}
+
 /* net_handshake.c / net_sync.c */
 void rules_restore(void) {}
 void handshake_direct(void) {}

@@ -11,7 +11,8 @@ This document has the requirements, the technical plan and the milestones.
 The UI wireframe is a separate page (`xeleenet-lobby-wireframe.html` on the
 tailnet share). Open questions are at the end.
 
-Status: design agreed 2026-10-27. XN0 (the service) built 2026-10-27.
+Status: design agreed 2026-10-27. XN0 (the service) built 2026-10-27, XN1 (the
+N-player engine) and XN2 on desktop (join by code) 2026-10-28.
 
 **User decisions (2026-10-27):**
 - **Four seats in v1.** The engine's multi-player work happens as part of this.
@@ -298,7 +299,7 @@ score    [ per port or team ]                        host-written
 | `GET /v1/lobbies/{id}/join` | guest | Ask again after "pending" (waits ≤ 20 s for the host's answer) |
 | `POST /v1/lobbies/{id}/admit` | host | Accept or decline a pending join (H-11) |
 | `POST /v1/lobbies/{id}/kick` | host | Remove and ban a key for this lobby |
-| `DELETE /v1/lobbies/{id}`, `POST …/leave` | host, guest | Close, leave |
+| `DELETE /v1/lobbies/{id}` (or `POST …/close`), `POST …/leave` | host, guest | Close, leave |
 
 **Only the host polls** (changed from a long-poll by every member, 2026-10-27).
 Durable Objects bill wall-clock time while a request is open, so members
@@ -547,7 +548,7 @@ Every milestone is checked on desktop first: N instances, `wrangler dev`, and
 |---|---|---|
 | **XN0** Service ✅ | Worker + DOs, auth, lobbies, directory, host heartbeat, admit, expiry, rate limits; `xn_cli.py`; CI test + deploy | `tools/xeleenet/test_service.py` hosts, lists, joins (with and without ask-to-join), removes and closes against `wrangler dev`: 42 checks pass (2026-10-27). Rate limits only enforced deployed |
 | **XN1** N-peer engine | §3.2 over direct addresses (env-configured, like `MELEE_NET` today): `Peer[]`, rings, v12 wire, host-led agreements, worst-peer sync, forwarding, void-on-drop | `net_test.py` with 3 and 4 instances, 40-140 ms per link, loss and jitter: 20 FFA and 10 Teams games with equal checksums. One pair forced through the host. The 1v1 regression suite still passes. |
-| **XN2** Connect | `net_stun.c`, `net_punch.c`, candidates through the service, per-link routes | 4 desktop instances join by code. Then a real test: home + phone hotspot + a second network |
+| **XN2** Connect (desktop ✅) | `net_stun.c`, `net_punch.c`, candidates through the service, per-link routes | 4 desktop instances join by code. Then a real test: home + phone hotspot + a second network |
 | **XN3** Menus | XeleeNet rows, name, Host page, stage grid, Browse, Join with Code, join steps and errors, ask-to-join prompt | Host → browse → join → CSS on desktop with a gamepad; every J-5 failure seen on screen |
 | **XN4** Lobby on the CSS | Banner, overlay, read-only view, timed apply, roster reload, game-in-progress wait, remove, leave and close, pick rules, set score, chat names; placement barrier | 4 instances: 20 settings changes and 10 joins/leaves under latency with equal checksums; the next game uses the new rules. Placement: one Monado XR instance + 3 flat. Hold, adjust again, release on all-ready and on timer; no hold with 4 flat or with the XR instance on "Start right away". Checksums equal from frame 0. |
 | **XN5** Quest + hardening | Touch lasers everywhere, XR placement, logs, version gate, Windows build | A 4-player lobby with at least one Quest and two NATs |
@@ -621,6 +622,62 @@ built 2026-10-28, see the commits on `feat/xelee-net`):
      fallback.
    - A relayed message that finds the lane full is logged and lost.
    - Route detection assumes a link that fails, fails both ways.
+
+**XN2 steps** (started 2026-10-28):
+
+1. **STUN** (`net_stun.c`): a binding request and response codec (RFC 5389;
+   tested against RFC 5769's sample) and our LAN address (the source address
+   on the route out). Two servers by default (Google, Cloudflare;
+   `MELEE_XN_STUN` overrides, `off` skips). If the two see different ports,
+   the NAT maps per destination, and the log says direct guest links will
+   likely fail.
+2. **Service client** (`xeleenet.c`): sign in, host (and heartbeat every 2 s
+   with the roster of guests the game reaches), join, leave and close, all on
+   one thread of its own. It uses GET and POST only, so the service gained
+   `POST /v1/lobbies/<id>/close` next to `DELETE`.
+3. **The punch** (`net_punch.c`). One socket from STUN to the match.
+   - Every punch datagram is `"XNP"`, a type, both ports and the lobby, and is
+     signed with the sender's identity key. The service handed out every key.
+   - **Probes** carry the sender's nonce and echo the receiver's. A link is up
+     when a probe comes back echoing ours: both directions work, and we use
+     the address it came from.
+   - Only the host polls, so the host **introduces** each guest to the
+     guests who joined after it. Each guest **reports** which links are up,
+     or have given up after 8 s.
+   - The host **starts** once the seats are full, every guest reaches it, and
+     every guest pair has decided. The start message carries the seed, who
+     plays, which pairs are direct (both ends punched), and every player's
+     nonce.
+   - Each link is keyed from the lobby, both nonces and both public keys. The
+     handshake doesn't rekey it.
+4. **Into the engine** (`pc_net_connect_links`). The engine gets the socket
+   and each link's address, key and route. A pair that didn't punch starts
+   out dead: its guests tell the host at once (REL_ROUTE), and the 8 s
+   discovery inside the session doesn't happen.
+5. **Harness:** `net_test_n.py --xn` starts `wrangler dev`, the host opens a
+   lobby, and the others join with the code from its log
+   (`MELEE_XN=host|join:CODE`, `MELEE_XN_URL`, `MELEE_XN_SEATS`,
+   `MELEE_XN_IDENTITY`). `--block` blocks the punch too.
+
+   **Desktop results** (one machine, real STUN, local `wrangler dev`):
+   - 3 players: every link punched in under a second. Session up 1-3 s after
+     the last join, and the match played clean.
+   - 4 players, P2/P3 blocked, 30 ms and 1% loss: both guests gave up on
+     each other at 8 s, and the host started them "through the host". The
+     engine relayed from the first second, and the match passed with equal
+     checksums.
+
+   **Not done yet:**
+   - The real test: home, a phone hotspot and a second network (the user's
+     devices).
+   - On Android, the HTTP path may not return a refusal's body (status only);
+     Windows has no GET/bearer path yet (XN5).
+   - A joiner arriving while a session runs (XN4's roster reload), and the
+     host's own start button (XN3/XN4). For now the host starts when the
+     seats are full.
+   - A guest that can't reach the host waits 20 s and fails. XN6's relay is
+     what fixes that case.
+   - The mid-session route fallback (8 s) stays for links that die later.
 
 **Testing four players for real** needs four devices on at least two networks.
 Plan the XN5 session ahead: Quest, PC, the Android tablet and a fourth device.

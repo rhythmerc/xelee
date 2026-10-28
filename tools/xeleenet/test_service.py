@@ -56,13 +56,16 @@ def free_port():
         return s.getsockname()[1]
 
 
-def start_wrangler():
+def start_wrangler(short=True):
+    """wrangler dev on a free port. `short`: this test's short timeouts and
+    word list; otherwise the service's own (tools/net_test_n.py --xn)."""
     port = free_port()
     state = tempfile.mkdtemp(prefix="xn-test-")
     cmd = ["npx", "wrangler", "dev", "--ip", "127.0.0.1", "--port", str(port), "--persist-to", state,
-           "--var", "TOKEN_KEY:test-token-key", "--var", f"EXPIRE_SECS:{EXPIRE}",
-           "--var", f"JOIN_WAIT_SECS:{JOIN_WAIT}", "--var", f"ROSTER_GRACE_SECS:{GRACE}",
-           "--var", f"NAME_BLOCKLIST:{BLOCKED}"]
+           "--var", "TOKEN_KEY:test-token-key"]
+    if short:
+        cmd += ["--var", f"EXPIRE_SECS:{EXPIRE}", "--var", f"JOIN_WAIT_SECS:{JOIN_WAIT}",
+                "--var", f"ROSTER_GRACE_SECS:{GRACE}", "--var", f"NAME_BLOCKLIST:{BLOCKED}"]
     env = dict(os.environ, WRANGLER_SEND_METRICS="false", CI="1")
     log = open(os.path.join(state, "wrangler.log"), "w")
     proc = subprocess.Popen(cmd, cwd=HERE, stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
@@ -208,6 +211,9 @@ def run(url):
     second = r["code"]
     f.close(ask_lobby)
     refused(lambda: g.join(ask_code, ["203.0.113.7:41000"]), "not_found", "a closed lobby's code")
+    r = h.host("Third", ["198.51.100.2:41000"])
+    h.call("POST", f"/v1/lobbies/{r['id']}/close", {})
+    refused(lambda: g.join(r["code"], ["203.0.113.7:41000"]), "not_found", "closing with POST (the game's way)")
     time.sleep(EXPIRE + 2.5)
     refused(lambda: d.join(second, ["203.0.113.4:41000"]), "not_found",
             f"a lobby without heartbeats for {EXPIRE} s expires")

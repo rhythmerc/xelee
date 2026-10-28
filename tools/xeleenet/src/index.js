@@ -11,7 +11,7 @@
 //   PUT    /v1/lobbies/<id>/settings   host
 //   POST   /v1/lobbies/<id>/admit      host {key, accept}     (Ask before joining)
 //   POST   /v1/lobbies/<id>/kick       host {key}
-//   DELETE /v1/lobbies/<id>            host
+//   DELETE /v1/lobbies/<id>            host (or POST /v1/lobbies/<id>/close)
 //   POST   /v1/join                    {code, ...}            -> joined | pending | refusal
 //   GET    /v1/lobbies/<id>/join       joiner, after "pending" -> joined | pending | refusal
 //   POST   /v1/lobbies/<id>/leave      member
@@ -31,7 +31,7 @@ import {
 export { Directory, Lobby };
 
 const MAX_BODY = 4096;
-const LOBBY_PATH = /^\/v1\/lobbies\/([0-9a-f]{32})(?:\/(heartbeat|settings|admit|kick|join|leave))?$/;
+const LOBBY_PATH = /^\/v1\/lobbies\/([0-9a-f]{32})(?:\/(heartbeat|settings|admit|kick|join|leave|close))?$/;
 
 export default {
   async fetch(request, env) {
@@ -88,6 +88,7 @@ async function route(request, env) {
       return reply(await lobby.kick(me.pubkey, String(b.key || "")));
     }
     case "DELETE ":
+    case "POST close": // the same, for clients that only speak GET and POST (the game)
       return reply(await lobby.close("closed by host", me.pubkey));
     case "GET join":
       return reply(await lobby.joinStatus(me.pubkey));

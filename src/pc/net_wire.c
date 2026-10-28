@@ -268,6 +268,15 @@ void net_key_direct(const char* secret) {
     s_key_pinned = true;
 }
 
+void net_key_link(int peer, const uint8_t key[32]) {
+    if (peer < 0 || peer >= MAX_PEERS) {
+        return;
+    }
+    memcpy(s_key[peer], key, sizeof s_key[peer]);
+    s_key_on[peer] = true;
+    s_key_pinned = true;
+}
+
 void net_key_clear(void) {
     crypto_wipe(s_key, sizeof s_key);
     memset(s_key_on, 0, sizeof s_key_on);

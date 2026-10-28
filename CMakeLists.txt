@@ -375,6 +375,7 @@ set(PC_SOURCES
         src/pc/net_dht_item.c
         src/pc/net_identity.c
         src/pc/net_match.c
+        src/pc/net_punch.c
         src/pc/net_rank.c
         src/pc/net_rank_store.c
         src/pc/net_rank_session.c
@@ -390,9 +391,11 @@ set(PC_SOURCES
         src/pc/net_sfx.c
         src/pc/net_sim.c
         src/pc/net_snapshot.c
+        src/pc/net_stun.c
         src/pc/net_sync.c
         src/pc/net_watchdog.c
         src/pc/net_wire.c
+        src/pc/xeleenet.c
         # The GameCube's own trig: platform libm differs by an ULP between
         # targets, which is a cross-platform desync (docs/netcode-plan.md
         # section 5), and so does any libm from the GameCube's, which a
@@ -716,6 +719,12 @@ if (NOT ANDROID AND NOT IOS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         add_test(NAME slp_session COMMAND slp_session_test)
         set_tests_properties(slp_session PROPERTIES LABELS melee TIMEOUT 30)
         add_dependencies(unit_tests slp_session_test)
+        # net_stun (XeleeNet XN2): the STUN codec against RFC 5769's sample.
+        add_executable(net_stun_test EXCLUDE_FROM_ALL tools/test_net_stun.c)
+        target_compile_options(net_stun_test PRIVATE -UNDEBUG)
+        add_test(NAME net_stun COMMAND net_stun_test)
+        set_tests_properties(net_stun PROPERTIES LABELS melee TIMEOUT 30)
+        add_dependencies(unit_tests net_stun_test)
         # slp_json (M4): the JSON reader, #includes its .c like the others.
         add_executable(slp_json_test EXCLUDE_FROM_ALL tools/test_slp_json.c)
         target_include_directories(slp_json_test PRIVATE src)

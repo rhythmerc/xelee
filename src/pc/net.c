@@ -31,6 +31,7 @@
 #include "pc/slp.h"
 #include "pc/net_internal.h"
 #include "pc/net_sfx.h"
+#include "pc/net_punch.h"
 #include "pc/slippi/slp_adapter.h"
 #include "pc/slippi/slp_checksum.h"
 
@@ -3063,7 +3064,9 @@ static bool addr_is_host(const struct sockaddr* sa) {
 typedef struct PeerSpec {
     const char* ip;
     uint16_t port;
-    int player; /* its controller port, 0-3 */
+    int player;         /* its controller port, 0-3 */
+    const uint8_t* key; /* the link's MAC key from XeleeNet's punch; NULL: the handshake's */
+    bool dead;          /* never punched: through the host from the start */
 } PeerSpec;
 
 /* A session with n peers (1..MAX_PEERS), this side on controller port
@@ -3258,6 +3261,19 @@ static bool connect_impl(
         net_key_direct(key);
         pc_log_line("net: datagrams authenticated from MELEE_NET_KEY (the handshake will not "
                     "rekey this session)");
+    }
+    /* XeleeNet's punch keyed every link already, and decided which guest
+     * pairs never got through: those start out dead, and the first
+     * links_poll tells the host, so no 8 s wait finds it out again. */
+    for (int i = 0; i < n; i++) {
+        if (peers[i].key != NULL) {
+            net_key_link(i, peers[i].key);
+        }
+        if (peers[i].dead && local != 0 && peers[i].player != 0) {
+            net.link_dead[i] = true;
+            s_route_mask |= (uint8_t)(1u << peers[i].player);
+            s_route_told = false;
+        }
     }
     SDL_LockMutex(net.tx_lock);
     net.sock = sock;
@@ -3579,6 +3595,27 @@ bool pc_net_connect_socket(
     return connect_impl((sock_t)socket, &peer, 1, player ? 1 : 0, seed);
 }
 
+bool pc_net_connect_links(
+    intptr_t socket, const PcNetLink* links, int n, int local, uint32_t seed) {
+    if (socket == -1 || n < 1 || n > MAX_PEERS) {
+        return false;
+    }
+    static char ips[MAX_PEERS][INET_ADDRSTRLEN];
+    PeerSpec peers[MAX_PEERS];
+    for (int i = 0; i < n; i++) {
+        struct in_addr a;
+        a.s_addr = links[i].ip;
+        inet_ntop(AF_INET, &a, ips[i], sizeof ips[i]);
+        peers[i] = (PeerSpec){ips[i], links[i].port, links[i].player, links[i].key,
+            links[i].via_host};
+    }
+    if (!connect_impl((sock_t)socket, peers, n, local, seed)) {
+        return false;
+    }
+    net.direct = true; /* the session agrees its own match, as MELEE_NET_PEERS's */
+    return true;
+}
+
 /* MELEE_NET_PEERS="0=host:port,1=host:port,2=host:port": a direct session of
  * up to four players, every one listed by controller port (this side's own
  * entry, MELEE_NET_PLAYER's, is skipped). False when unset or malformed. */
@@ -3626,6 +3663,9 @@ static bool peers_from_env(uint32_t seed) {
 
 void pc_net_init(void) {
     s_game_thread = SDL_GetCurrentThreadID(); /* pc_platform_init runs on it */
+    if (pc_xn_punch_from_env()) {
+        return; /* XeleeNet: a lobby code instead of addresses */
+    }
     const char* peer = getenv("MELEE_NET");
     const char* many = getenv("MELEE_NET_PEERS");
     if (many != NULL && many[0] != '\0') {

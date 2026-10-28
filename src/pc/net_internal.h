@@ -517,6 +517,8 @@ uint32_t nonces_hash(Nonces nc, uint32_t session);
  * mid-flight and lose the datagrams that straddle the change. */
 void net_key_session(int peer, uint64_t host_nonce, uint64_t guest_nonce);
 void net_key_direct(const char* secret);
+/* A key agreed outside the session (XeleeNet's punch), pinned like MELEE_NET_KEY. */
+void net_key_link(int peer, const uint8_t key[32]);
 void net_key_clear(void);
 bool net_key_ready(int peer);
 /* True when the key came from MELEE_NET_KEY rather than the handshake. Both
@@ -542,6 +544,9 @@ Held* held_due(Held* held, uint64_t now);
 void tx(int peer, const void* buf, size_t len); /* caller holds tx_lock */
 void tx_flush(void);                  /* caller holds tx_lock */
 void sim_env(uint16_t bind_port);     /* MELEE_NET_SIM_* into net.sim_* */
+/* MELEE_NET_SIM_BLOCK as bits (a * 4 + b), both ways per pair; the punch
+ * phase (net_punch.c) honours it too. */
+uint16_t net_sim_block_mask(void);
 void sim_reset(void);
 
 /* ---- net_reliable.c --------------------------------------------------- */

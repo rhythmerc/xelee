@@ -23,6 +23,14 @@ the host, and get each other's input and messages through it (net.c, routes).
 silence. The others must agree where its input ends, void the match on one
 frame and play on (net.c, drops); the killed instance is not judged.
 
+--xn connects through XeleeNet instead of listing addresses: a local
+`wrangler dev` of the lobby service (tools/xeleenet; or --xn-url), player 1
+hosts (MELEE_XN=host), and once its log names the lobby code the others join
+with it (MELEE_XN=join:CODE). Each has its own key (MELEE_XN_IDENTITY), STUN
+and its LAN address for candidates, and the punch (net_punch.c) decides every
+link and keys it before the engine starts. With --block, the blocked pairs
+must come out of the punch "through the host".
+
 --no-key leaves MELEE_NET_KEY unset, so the links run on keys derived from
 the handshake: host<->guest from RULES/READY, guest<->guest from the host's
 REL_NONCES (net_handshake.c). The link simulator's knobs apply to every link
@@ -89,6 +97,7 @@ def run(args):
         if not nt.wait_port_free(p):
             return False
     insts = []
+    code = None
     for k, name in enumerate(names):
         env = {
             "MELEE_NET_PEERS": peers,
@@ -96,7 +105,21 @@ def run(args):
             "MELEE_DEBUG_VS": f"human{args.players}",
             "MELEE_NET_EXIT_AFTER_FRAMES": str(frames),
         }
-        if not args.no_key:
+        if args.xn_url:
+            ident = os.path.join(args.work, f"{name}.id")
+            os.makedirs(ident)
+            env = {
+                "MELEE_XN": f"join:{code}" if k else "host",
+                "MELEE_XN_URL": args.xn_url,
+                "MELEE_XN_SEATS": str(args.players),
+                "MELEE_XN_NAME": f"PLAYER {k + 1}",
+                "MELEE_XN_IDENTITY": ident,
+                "MELEE_DEBUG_VS": f"human{args.players}",
+                "MELEE_NET_EXIT_AFTER_FRAMES": str(frames),
+            }
+            if args.stun:
+                env["MELEE_XN_STUN"] = args.stun
+        elif not args.no_key:
             env["MELEE_NET_KEY"] = nt.NET_KEY
         if args.loss:
             env["MELEE_NET_SIM_LOSS"] = str(args.loss)
@@ -108,12 +131,29 @@ def run(args):
             env["MELEE_NET_SIM_BLOCK"] = args.block
         # lan=True: Instance sets no MELEE_NET of its own; the env above is the session.
         insts.append(nt.Instance(name, args.exe, args.disc, args.work, ports[k], 0, env, True))
+        if args.xn_url and k == 0:
+            # The others join with the code the host's log names.
+            if not insts[0].wait_log(r"xeleenet: lobby code [A-Z0-9]{6}", 60):
+                print("net_test_n: the host never opened a lobby", flush=True)
+                insts[0].kill()
+                return False
+            code = nt.re.search(r"xeleenet: lobby code ([A-Z0-9]{6})", insts[0].text()).group(1)
+            print(f"net_test_n: lobby code {code}", flush=True)
     print(f"net_test_n: {args.players} players loss={args.loss}% delay={args.delay}ms "
           f"{'jitter ' if args.jitter else ''}{'derived keys ' if args.no_key else ''}"
           f"minutes={args.minutes} frames={frames} logs={args.work}", flush=True)
     ok = True
     drive = None
     try:
+        if args.xn_url:
+            # Boot waits in the connect phase until the host starts everyone;
+            # nothing reads the key FIFO before that.
+            for inst in insts:
+                if not inst.wait_log(r"xeleenet: session up", 180):
+                    print(f"[{inst.name}] the XeleeNet connect phase did not finish", flush=True)
+                    ok = False
+            if not ok:
+                return False
         # The session is up from boot: player 1's Start reaches every sim.
         ok = nt.press_until(insts, "Return", 9, nt.SCENE_FILE["match"], tries=40, each=8.0,
                             on=(insts[0],))
@@ -155,6 +195,19 @@ def run(args):
             inst.kill(20)
     judged = [i for k, i in enumerate(insts)
               if not (args.kill and names[k] == args.kill.partition("@")[0])]
+    if args.xn_url:
+        for inst in judged:
+            if not nt.re.search(rf"xeleenet: session up as P\d with {args.players - 1} others", inst.text()):
+                print(f"[{inst.name}] FAIL: the XeleeNet connect phase did not finish")
+                ok = False
+            print(f"[{inst.name}] " + "; ".join(nt.re.findall(
+                r"xeleenet: (P\d (?:direct|through the host)) at", inst.text())))
+        for pair in filter(None, args.block.split(",")):
+            a, b = sorted(int(x) for x in pair.split(":"))
+            if a and not nt.re.search(rf"xeleenet: P{a + 1} and P{b + 1} go through the host",
+                                      insts[0].text()):
+                print(f"FAIL: the punch did not route P{a + 1} and P{b + 1} through the host")
+                ok = False
     # Every instance must have linked to every other one.
     for inst in judged:
         seen = len(nt.re.findall(r"net: peer \d+ is P\d at ", inst.text()))
@@ -198,11 +251,26 @@ def main():
     ap.add_argument("--no-key", action="store_true", help="links keyed by the handshake only")
     ap.add_argument("--block", default="", help="port pairs that cannot reach each other, e.g. 1:2")
     ap.add_argument("--kill", default="", help="instance@seconds into the match to SIGKILL, e.g. c@20")
+    ap.add_argument("--xn", action="store_true", help="join by code through a local XeleeNet service")
+    ap.add_argument("--xn-url", default="", help="an XeleeNet service already running (implies --xn)")
+    ap.add_argument("--stun", default="", help="MELEE_XN_STUN for every instance, e.g. off")
     ap.add_argument("--exe", default=os.path.join(HERE, "..", "build", "melee"))
     ap.add_argument("--disc", default=os.path.join(HERE, "..", "..", "melee.ciso"))
     ap.add_argument("--port", type=int, default=42150, help="P1's UDP port; P2.. use +1..")
     ap.add_argument("--work", default="/tmp/net_test_n")
-    ok = run(ap.parse_args())
+    args = ap.parse_args()
+    service = None
+    if args.xn and not args.xn_url:
+        sys.path.insert(0, os.path.join(HERE, "xeleenet"))
+        import test_service  # noqa: E402
+        proc, args.xn_url, state = test_service.start_wrangler(short=False)
+        service = (test_service, proc, state)
+        print(f"net_test_n: XeleeNet at {args.xn_url}", flush=True)
+    try:
+        ok = run(args)
+    finally:
+        if service:
+            service[0].stop_wrangler(service[1], service[2])
     print("net_test_n: " + ("PASS" if ok else "FAIL"))
     sys.exit(0 if ok else 1)
 

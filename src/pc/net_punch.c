@@ -1,0 +1,864 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+#include "compat.h"
+#include "pc/net_internal.h"
+#include "pc/net_identity.h"
+#include "pc/net_punch.h"
+#include "pc/net_stun.h"
+#include "pc/xeleenet.h"
+#include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_stdinc.h>
+#include <SDL3/SDL_timer.h>
+#include <monocypher.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+extern const char* pc_get_net_name(void);
+
+#define STUN_MS 1500       /* how long the public address may take */
+#define STUN_RESEND_MS 300
+#define PROBE_MS 100       /* a link not punched yet: every candidate this often */
+#define KEEP_MS 500        /* a punched one: keep its mapping and the echo going */
+#define TELL_MS 250        /* a guest's report, the host's introductions */
+#define START_MS 200       /* the host's start, until every guest answers */
+#define PAIR_WAIT_MS 8000  /* two guests not through by then go via the host */
+#define HOST_WAIT_MS 20000 /* a guest that cannot reach the host cannot play */
+
+#define DEFAULT_STUN "stun.l.google.com:19302,stun.cloudflare.com:3478"
+
+/* ---- wire ------------------------------------------------------------------
+ * Every punch datagram is a head, a fixed body per type, and the sender's
+ * Ed25519 signature over both; the lobby service gave everyone everyone's
+ * key. Byte arrays only, so nothing depends on packing or byte order. */
+enum { T_PROBE = 'P', T_INTRO = 'I', T_REPORT = 'R', T_START = 'S', T_ACK = 'K' };
+
+typedef struct XnHead {
+    uint8_t magic[3]; /* "XNP": never the first bytes of an engine datagram or STUN */
+    uint8_t version;
+    uint8_t type;
+    uint8_t from, to; /* controller ports */
+    uint8_t reserved;
+    uint8_t lobby[8]; /* the first half of the lobby's id */
+} XnHead;
+
+typedef struct XnProbe {
+    XnHead h;
+    uint8_t nonce[8]; /* the sender's, for this lobby run */
+    uint8_t echo[8];  /* the receiver's, once the sender has heard it; else 0 */
+    uint8_t sig[64];
+} XnProbe;
+
+typedef struct XnIntro { /* host -> guest: a player who joined after it */
+    XnHead h;
+    uint8_t port, ncands, reserved[2];
+    uint8_t key[32];
+    uint8_t cands[PC_XN_CANDS][6]; /* IPv4 then port, network order */
+    uint8_t sig[64];
+} XnIntro;
+
+typedef struct XnReport { /* guest -> host: how its links are going (port masks) */
+    XnHead h;
+    uint8_t known, up, gave, reserved;
+    uint8_t sig[64];
+} XnReport;
+
+typedef struct XnStart { /* host -> guest */
+    XnHead h;
+    uint8_t ports;     /* who plays */
+    uint8_t reserved[3];
+    uint8_t direct[4]; /* per port: the ports it has its own link to */
+    uint8_t seed[4];
+    uint8_t nonces[4][8];
+    uint8_t sig[64];
+} XnStart;
+
+typedef struct XnAck {
+    XnHead h;
+    uint8_t seed[4];
+    uint8_t sig[64];
+} XnAck;
+
+/* ---- state ---------------------------------------------------------------- */
+
+typedef enum { PH_OFF, PH_STUN, PH_SERVICE, PH_PUNCH, PH_STARTING, PH_DONE, PH_FAILED } Phase;
+
+typedef struct Who { /* another player, by controller port */
+    bool known;      /* key and candidates */
+    uint8_t key[32];
+    char name[16];
+    int ncands;
+    uint32_t ip[PC_XN_CANDS];
+    uint16_t udp[PC_XN_CANDS];
+    uint64_t known_ms;
+    uint64_t nonce;           /* theirs, from their probes */
+    bool up;                  /* they echoed ours: both ways work */
+    bool gave;                /* a guest pair that ran out of time */
+    struct sockaddr_in addr;  /* where they answered from */
+    uint64_t next_probe;
+    uint8_t known_m, up_m, gave_m; /* host: this guest's last report */
+    bool acked;                    /* host: it answered the start */
+} Who;
+
+static Phase s_phase;
+static char s_why[160];
+static sock_t s_sock = SOCK_INVALID;
+static uint16_t s_bound;
+static PcNetIdentity s_id;
+static char s_url[256], s_name[16], s_code[8];
+static int s_seats;
+static uint64_t s_t0, s_stun_next, s_tell_next, s_in_ms;
+static struct {
+    struct sockaddr_in to;
+    uint8_t txid[12];
+    bool got;
+    uint32_t ip;
+    uint16_t udp;
+} s_stun[2];
+static int s_nstun;
+static int s_local = -1;
+static uint8_t s_lobby[8];
+static uint64_t s_nonce;
+static Who s_who[4];
+static uint16_t s_block;
+static XnStart s_start; /* the host's, sent or accepted */
+static XnAck s_ack;     /* a guest's answer to it, for the late repeats */
+
+static uint64_t now_ms(void) {
+    return SDL_GetTicks();
+}
+
+static void put64(uint8_t* p, uint64_t v) {
+    for (int i = 7; i >= 0; i--, v >>= 8) {
+        p[i] = (uint8_t)v;
+    }
+}
+
+static uint64_t get64(const uint8_t* p) {
+    uint64_t v = 0;
+    for (int i = 0; i < 8; i++) {
+        v = v << 8 | p[i];
+    }
+    return v;
+}
+
+static void fail(const char* why) {
+    if (s_phase == PH_FAILED) {
+        return;
+    }
+    snprintf(s_why, sizeof s_why, "%s", why);
+    s_phase = PH_FAILED;
+    pc_log_line("xeleenet: %s", why);
+    if (s_sock != SOCK_INVALID) {
+        sock_close(s_sock);
+        s_sock = SOCK_INVALID;
+    }
+    pc_xn_stop();
+}
+
+static const char* ip_text(uint32_t ip, uint16_t port) {
+    static char buf[4][24];
+    static int k;
+    char* b = buf[k++ & 3];
+    uint32_t h = ntohl(ip);
+    snprintf(b, 24, "%u.%u.%u.%u:%u", h >> 24, h >> 16 & 255, h >> 8 & 255, h & 255, port);
+    return b;
+}
+
+static void head(XnHead* h, uint8_t type, int to) {
+    memcpy(h->magic, "XNP", 3);
+    h->version = 1;
+    h->type = type;
+    h->from = (uint8_t)s_local;
+    h->to = (uint8_t)to;
+    h->reserved = 0;
+    memcpy(h->lobby, s_lobby, sizeof s_lobby);
+}
+
+static void send_to(const void* buf, size_t n, uint32_t ip, uint16_t port, int to) {
+    if (to >= 0 && (s_block & (1u << (s_local * 4 + to)))) {
+        return; /* MELEE_NET_SIM_BLOCK: as two guests behind strict NATs */
+    }
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = ip;
+    a.sin_port = htons(port);
+    sendto(s_sock, (const char*)buf, (int)n, 0, (const struct sockaddr*)&a, sizeof a);
+}
+
+/* Signs the datagram (its last 64 bytes are the signature) and sends it to
+ * that player: where they answered from, or every candidate before that. */
+static void send_signed(void* buf, size_t n, int to) {
+    pc_identity_sign(&s_id, (uint8_t*)buf + n - 64, buf, n - 64);
+    const Who* w = &s_who[to];
+    if (w->up) {
+        send_to(buf, n, w->addr.sin_addr.s_addr, ntohs(w->addr.sin_port), to);
+        return;
+    }
+    for (int c = 0; c < w->ncands; c++) {
+        send_to(buf, n, w->ip[c], w->udp[c], to);
+    }
+}
+
+/* The key for the link between two players: both nonces and both public
+ * keys, lower port first, bound to the lobby. Both ends feed it the same
+ * bytes, and nobody off the path has seen the nonces. */
+static void link_key(int a, int b, const uint8_t nonces[4][8], uint8_t out[32]) {
+    if (a > b) {
+        int t = a;
+        a = b;
+        b = t;
+    }
+    static const char label[] = "xeleenet link key v1";
+    const uint8_t* ka = a == s_local ? s_id.public_key : s_who[a].key;
+    const uint8_t* kb = b == s_local ? s_id.public_key : s_who[b].key;
+    uint8_t pa = (uint8_t)a, pb = (uint8_t)b;
+    crypto_blake2b_ctx ctx;
+    crypto_blake2b_init(&ctx, 32);
+    crypto_blake2b_update(&ctx, (const uint8_t*)label, sizeof label - 1);
+    crypto_blake2b_update(&ctx, s_lobby, sizeof s_lobby);
+    crypto_blake2b_update(&ctx, &pa, 1);
+    crypto_blake2b_update(&ctx, nonces[a], 8);
+    crypto_blake2b_update(&ctx, ka, 32);
+    crypto_blake2b_update(&ctx, &pb, 1);
+    crypto_blake2b_update(&ctx, nonces[b], 8);
+    crypto_blake2b_update(&ctx, kb, 32);
+    crypto_blake2b_final(&ctx, out);
+}
+
+/* ---- after the start: the engine owns the socket -------------------------- */
+
+/* A guest whose answer to the start was lost hears it again from the
+ * host, now on the engine's receive thread: answer with the same bytes. */
+static bool late_datagram(const void* buf, size_t n, uint32_t ip, uint16_t port) {
+    if (n < 3 || memcmp(buf, "XNP", 3) != 0) {
+        return false;
+    }
+    if (s_local != 0 && n == sizeof s_start && memcmp(buf, &s_start, n) == 0) {
+        pc_net_send_datagram(&s_ack, sizeof s_ack, ip, port);
+    }
+    return true; /* any other punch datagram is late and done with */
+}
+
+static void begin_session(uint32_t seed) {
+    PcNetLink links[3];
+    int n = 0;
+    for (int p = 0; p < 4; p++) {
+        if (p == s_local || !(s_start.ports & (1u << p))) {
+            continue;
+        }
+        const Who* w = &s_who[p];
+        PcNetLink* l = &links[n++];
+        memset(l, 0, sizeof *l);
+        l->player = p;
+        l->ip = w->up ? w->addr.sin_addr.s_addr : w->ip[0];
+        l->port = w->up ? ntohs(w->addr.sin_port) : w->udp[0];
+        l->via_host = !(s_start.direct[s_local] & (1u << p));
+        link_key(s_local, p, (const uint8_t(*)[8])s_start.nonces, l->key);
+        pc_log_line("xeleenet: P%d %s at %s", p + 1, l->via_host ? "through the host" : "direct",
+            ip_text(l->ip, l->port));
+    }
+    sock_t sock = s_sock;
+    s_sock = SOCK_INVALID;
+    if (!pc_net_connect_links((intptr_t)sock, links, n, s_local, seed)) {
+        sock_close(sock);
+        fail("Couldn't start the session");
+        return;
+    }
+    crypto_wipe(links, sizeof links);
+    pc_net_set_datagram_handler(late_datagram);
+    s_phase = PH_DONE;
+    pc_log_line("xeleenet: session up as P%d with %d others after %.1f s", s_local + 1, n,
+        (now_ms() - s_t0) / 1000.0);
+}
+
+/* ---- receiving ------------------------------------------------------------ */
+
+static void on_probe(const XnProbe* m, const struct sockaddr_in* from) {
+    Who* w = &s_who[m->h.from];
+    w->nonce = get64(m->nonce);
+    if (get64(m->echo) == s_nonce && !w->up) {
+        w->up = true;
+        w->addr = *from;
+        w->next_probe = 0; /* echo theirs at once */
+        pc_log_line("xeleenet: P%d punched at %s after %.1f s", m->h.from + 1,
+            ip_text(from->sin_addr.s_addr, ntohs(from->sin_port)), (now_ms() - w->known_ms) / 1000.0);
+    } else if (w->next_probe > now_ms() + PROBE_MS) {
+        w->next_probe = now_ms(); /* they have not heard us: answer now */
+    }
+}
+
+static void on_intro(const XnIntro* m) {
+    int p = m->port;
+    if (p < 1 || p > 3 || p == s_local || s_who[p].known || m->ncands < 1 ||
+        m->ncands > PC_XN_CANDS)
+    {
+        return;
+    }
+    Who* w = &s_who[p];
+    memcpy(w->key, m->key, 32);
+    w->ncands = m->ncands;
+    for (int c = 0; c < w->ncands; c++) {
+        memcpy(&w->ip[c], m->cands[c], 4);
+        w->udp[c] = (uint16_t)(m->cands[c][4] << 8 | m->cands[c][5]);
+    }
+    w->known = true;
+    w->known_ms = now_ms();
+    pc_log_line("xeleenet: the host introduced P%d", p + 1);
+}
+
+static void on_start(const XnStart* m) {
+    if (s_phase != PH_PUNCH || !(m->ports & (1u << s_local)) || get64(m->nonces[s_local]) != s_nonce) {
+        return;
+    }
+    for (int p = 1; p < 4; p++) {
+        if ((m->ports & (1u << p)) && p != s_local && !s_who[p].known) {
+            return; /* cannot happen: the host waits for our report to know them */
+        }
+    }
+    s_start = *m;
+    head(&s_ack.h, T_ACK, 0);
+    memcpy(s_ack.seed, m->seed, 4);
+    for (int i = 0; i < 3; i++) {
+        send_signed(&s_ack, sizeof s_ack, 0);
+    }
+    uint32_t seed = (uint32_t)m->seed[0] << 24 | (uint32_t)m->seed[1] << 16 |
+                    (uint32_t)m->seed[2] << 8 | m->seed[3];
+    begin_session(seed);
+}
+
+static void receive(void) {
+    uint8_t buf[512];
+    for (;;) {
+        struct sockaddr_in from;
+        socklen_t len = sizeof from;
+        int n = (int)recvfrom(s_sock, (char*)buf, sizeof buf, 0, (struct sockaddr*)&from, &len);
+        if (n <= 0 || s_sock == SOCK_INVALID) {
+            return;
+        }
+        if (from.sin_family != AF_INET) {
+            continue;
+        }
+        for (int i = 0; i < s_nstun; i++) {
+            if (!s_stun[i].got && pc_stun_parse(buf, (size_t)n, s_stun[i].txid, &s_stun[i].ip, &s_stun[i].udp)) {
+                s_stun[i].got = true;
+            }
+        }
+        const XnHead* h = (const XnHead*)buf;
+        if (s_local < 0 || n < (int)sizeof(XnHead) + 64 || memcmp(h->magic, "XNP", 3) != 0 ||
+            h->version != 1 || h->to != s_local || h->from > 3 || h->from == s_local ||
+            memcmp(h->lobby, s_lobby, sizeof s_lobby) != 0 || !s_who[h->from].known)
+        {
+            continue; /* an engine datagram from a peer already started arrives here too */
+        }
+        size_t want = h->type == T_PROBE  ? sizeof(XnProbe) :
+                      h->type == T_INTRO  ? sizeof(XnIntro) :
+                      h->type == T_REPORT ? sizeof(XnReport) :
+                      h->type == T_START  ? sizeof(XnStart) :
+                      h->type == T_ACK    ? sizeof(XnAck) :
+                                            0;
+        if ((size_t)n != want || !pc_identity_verify(s_who[h->from].key, buf + n - 64, buf, (size_t)n - 64)) {
+            continue;
+        }
+        bool from_host = h->from == 0;
+        switch (h->type) {
+        case T_PROBE:
+            on_probe((const XnProbe*)buf, &from);
+            break;
+        case T_INTRO:
+            if (from_host) {
+                on_intro((const XnIntro*)buf);
+            }
+            break;
+        case T_REPORT:
+            if (s_local == 0) {
+                const XnReport* r = (const XnReport*)buf;
+                Who* w = &s_who[h->from];
+                w->known_m = r->known;
+                w->up_m = r->up;
+                w->gave_m = r->gave;
+            }
+            break;
+        case T_START:
+            if (from_host) {
+                on_start((const XnStart*)buf);
+            }
+            break;
+        case T_ACK:
+            if (s_local == 0 && memcmp(((const XnAck*)buf)->seed, s_start.seed, 4) == 0) {
+                s_who[h->from].acked = true;
+            }
+            break;
+        }
+    }
+}
+
+/* ---- the phases ----------------------------------------------------------- */
+
+static bool resolve(const char* host, const char* port, struct sockaddr_in* out) {
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    if (getaddrinfo(host, port, &hints, &res) != 0 || res == NULL) {
+        return false;
+    }
+    memcpy(out, res->ai_addr, sizeof *out);
+    freeaddrinfo(res);
+    return true;
+}
+
+static void stun_begin(void) {
+    const char* list = getenv("MELEE_XN_STUN");
+    list = list != NULL ? list : DEFAULT_STUN;
+    s_nstun = 0;
+    if (strcmp(list, "off") == 0) {
+        return;
+    }
+    char copy[256];
+    snprintf(copy, sizeof copy, "%s", list);
+    for (char *t = copy, *next; t != NULL && *t != '\0' && s_nstun < 2; t = next) {
+        char* comma = strchr(t, ',');
+        next = comma != NULL ? comma + 1 : NULL;
+        if (comma != NULL) {
+            *comma = '\0';
+        }
+        char* colon = strrchr(t, ':');
+        if (colon == NULL) {
+            continue;
+        }
+        *colon = '\0';
+        if (!resolve(t, colon + 1, &s_stun[s_nstun].to)) {
+            pc_log_line("xeleenet: cannot resolve STUN server %s", t);
+            continue;
+        }
+        pc_identity_random(s_stun[s_nstun].txid, sizeof s_stun[s_nstun].txid);
+        s_stun[s_nstun].got = false;
+        s_nstun++;
+    }
+}
+
+static void stun_send(void) {
+    for (int i = 0; i < s_nstun; i++) {
+        if (!s_stun[i].got) {
+            uint8_t req[PC_STUN_REQUEST_BYTES];
+            pc_stun_request(req, s_stun[i].txid);
+            sendto(s_sock, (const char*)req, sizeof req, 0, (const struct sockaddr*)&s_stun[i].to,
+                sizeof s_stun[i].to);
+        }
+    }
+}
+
+/* STUN is in (or out of time): hand the candidates to the service. */
+static void stun_done(void) {
+    uint32_t ip[PC_XN_CANDS];
+    uint16_t udp[PC_XN_CANDS];
+    int n = 0;
+    uint32_t lan;
+    if (pc_stun_local_ipv4(&lan)) {
+        ip[n] = lan;
+        udp[n++] = s_bound;
+    }
+    for (int i = 0; i < s_nstun; i++) {
+        if (!s_stun[i].got) {
+            continue;
+        }
+        bool dup = false;
+        for (int c = 0; c < n; c++) {
+            dup |= ip[c] == s_stun[i].ip && udp[c] == s_stun[i].udp;
+        }
+        if (!dup && n < PC_XN_CANDS) {
+            ip[n] = s_stun[i].ip;
+            udp[n++] = s_stun[i].udp;
+        }
+    }
+    if (s_nstun == 2 && s_stun[0].got && s_stun[1].got && s_stun[0].udp != s_stun[1].udp) {
+        /* The NAT maps us to a new port for every destination, so the one
+         * STUN saw is not the one another player will: punching straight
+         * to another guest will likely fail, and that pair goes via the host. */
+        pc_log_line("xeleenet: our NAT maps each destination to its own port (%u, %u)",
+            s_stun[0].udp, s_stun[1].udp);
+    }
+    if (n == 0) {
+        ip[n] = htonl(0x7f000001u);
+        udp[n++] = s_bound; /* no route at all: only this machine can reach us */
+    }
+    for (int c = 0; c < n; c++) {
+        pc_log_line("xeleenet: reachable at %s", ip_text(ip[c], udp[c]));
+    }
+    if (!pc_xn_start(s_url, &s_id, s_name, s_code[0] ? s_code : NULL, s_seats, ip, udp, n)) {
+        fail("Couldn't start the XeleeNet client");
+        return;
+    }
+    s_phase = PH_SERVICE;
+}
+
+static void learn_members(void) {
+    PcXnMember m[3];
+    int n = pc_xn_members(m, 3);
+    for (int i = 0; i < n; i++) {
+        Who* w = &s_who[m[i].port];
+        if (m[i].port == s_local || w->known) {
+            continue;
+        }
+        memcpy(w->key, m[i].key, 32);
+        snprintf(w->name, sizeof w->name, "%s", m[i].name);
+        w->ncands = m[i].ncands;
+        memcpy(w->ip, m[i].ip, sizeof w->ip);
+        memcpy(w->udp, m[i].udp, sizeof w->udp);
+        w->known = true;
+        w->known_ms = now_ms();
+        pc_log_line("xeleenet: P%d is %s#%s", m[i].port + 1, w->name, m[i].tag);
+    }
+}
+
+static uint8_t mask_of(bool (*test)(const Who*)) {
+    uint8_t m = 0;
+    for (int p = 0; p < 4; p++) {
+        if (p != s_local && test(&s_who[p])) {
+            m |= (uint8_t)(1u << p);
+        }
+    }
+    return m;
+}
+
+static bool is_known(const Who* w) {
+    return w->known;
+}
+
+static bool is_up(const Who* w) {
+    return w->up;
+}
+
+static bool is_gave(const Who* w) {
+    return w->gave;
+}
+
+static void punch_tick(void) {
+    uint64_t t = now_ms();
+    for (int p = 0; p < 4; p++) {
+        Who* w = &s_who[p];
+        if (p == s_local || !w->known) {
+            continue;
+        }
+        if (s_local != 0 && p != 0 && !w->up && !w->gave && t - w->known_ms > PAIR_WAIT_MS) {
+            w->gave = true;
+            pc_log_line("xeleenet: no direct link to P%d after %d s; it goes through the host",
+                p + 1, PAIR_WAIT_MS / 1000);
+        }
+        if (t >= w->next_probe && !w->gave) {
+            XnProbe m;
+            head(&m.h, T_PROBE, p);
+            put64(m.nonce, s_nonce);
+            put64(m.echo, w->nonce);
+            send_signed(&m, sizeof m, p);
+            w->next_probe = t + (w->up ? KEEP_MS : PROBE_MS);
+        }
+    }
+    if (t < s_tell_next) {
+        return;
+    }
+    s_tell_next = t + TELL_MS;
+    if (s_local != 0) {
+        if (!s_who[0].up && t - s_in_ms > HOST_WAIT_MS) {
+            fail("Couldn't connect to the host");
+            return;
+        }
+        if (s_who[0].known) {
+            XnReport r;
+            memset(&r, 0, sizeof r);
+            head(&r.h, T_REPORT, 0);
+            r.known = mask_of(is_known);
+            r.up = mask_of(is_up);
+            r.gave = mask_of(is_gave);
+            send_signed(&r, sizeof r, 0);
+        }
+        return;
+    }
+    /* Host: introduce every guest to those it has not heard of. */
+    uint8_t keys[3][32];
+    int nkeys = 0;
+    for (int g = 1; g < 4; g++) {
+        Who* w = &s_who[g];
+        if (!w->known || !w->up) {
+            continue;
+        }
+        memcpy(keys[nkeys++], w->key, 32);
+        for (int o = 1; o < 4; o++) {
+            const Who* x = &s_who[o];
+            if (o == g || !x->known || (w->known_m & (1u << o))) {
+                continue;
+            }
+            XnIntro m;
+            memset(&m, 0, sizeof m);
+            head(&m.h, T_INTRO, g);
+            m.port = (uint8_t)o;
+            m.ncands = (uint8_t)x->ncands;
+            memcpy(m.key, x->key, 32);
+            for (int c = 0; c < x->ncands; c++) {
+                memcpy(m.cands[c], &x->ip[c], 4);
+                m.cands[c][4] = (uint8_t)(x->udp[c] >> 8);
+                m.cands[c][5] = (uint8_t)x->udp[c];
+            }
+            send_signed(&m, sizeof m, g);
+        }
+    }
+    pc_xn_set_roster((const uint8_t(*)[32])keys, nkeys);
+}
+
+/* Host: the seats are filled, every guest reaches us and every pair of guests
+ * has decided its route. */
+static bool ready_to_start(void) {
+    int players = 1;
+    for (int g = 1; g < 4; g++) {
+        const Who* w = &s_who[g];
+        if (!w->known) {
+            continue;
+        }
+        players++;
+        if (!w->up) {
+            return false;
+        }
+        for (int o = 1; o < 4; o++) {
+            if (o != g && s_who[o].known && !((w->up_m | w->gave_m) & (1u << o))) {
+                return false;
+            }
+        }
+    }
+    return players >= s_seats;
+}
+
+static void start_build(void) {
+    memset(&s_start, 0, sizeof s_start);
+    uint32_t seed;
+    pc_identity_random(&seed, sizeof seed);
+    seed |= 1;
+    s_start.seed[0] = (uint8_t)(seed >> 24);
+    s_start.seed[1] = (uint8_t)(seed >> 16);
+    s_start.seed[2] = (uint8_t)(seed >> 8);
+    s_start.seed[3] = (uint8_t)seed;
+    s_start.ports = 1;
+    put64(s_start.nonces[0], s_nonce);
+    for (int g = 1; g < 4; g++) {
+        const Who* w = &s_who[g];
+        if (!w->known) {
+            continue;
+        }
+        s_start.ports |= (uint8_t)(1u << g);
+        put64(s_start.nonces[g], w->nonce);
+        s_start.direct[0] |= (uint8_t)(1u << g);
+        s_start.direct[g] |= 1;
+        for (int o = 1; o < 4; o++) {
+            /* Direct only when both ends have punched it. */
+            if (o != g && s_who[o].known && (w->up_m & (1u << o)) && (s_who[o].up_m & (1u << g))) {
+                s_start.direct[g] |= (uint8_t)(1u << o);
+            }
+        }
+    }
+    for (int g = 1; g < 4; g++) {
+        for (int o = g + 1; o < 4; o++) {
+            if ((s_start.ports & (1u << g)) && (s_start.ports & (1u << o)) &&
+                !(s_start.direct[g] & (1u << o)))
+            {
+                pc_log_line("xeleenet: P%d and P%d go through the host", g + 1, o + 1);
+            }
+        }
+    }
+    s_phase = PH_STARTING;
+    pc_log_line("xeleenet: starting, players %02x, seed %u", s_start.ports, seed);
+}
+
+static void start_tick(void) {
+    uint64_t t = now_ms();
+    if (t < s_tell_next) {
+        return;
+    }
+    s_tell_next = t + START_MS;
+    bool all = true;
+    for (int g = 1; g < 4; g++) {
+        if ((s_start.ports & (1u << g)) && !s_who[g].acked) {
+            all = false;
+            head(&s_start.h, T_START, g);
+            send_signed(&s_start, sizeof s_start, g);
+        }
+    }
+    if (all) {
+        begin_session((uint32_t)s_start.seed[0] << 24 | (uint32_t)s_start.seed[1] << 16 |
+                      (uint32_t)s_start.seed[2] << 8 | s_start.seed[3]);
+    }
+}
+
+int pc_xn_punch_poll(void) {
+    switch (s_phase) {
+    case PH_OFF:
+    case PH_FAILED:
+        return -1;
+    case PH_DONE:
+        return 1;
+    default:
+        break;
+    }
+    receive();
+    uint64_t t = now_ms();
+    switch (s_phase) {
+    case PH_STUN: {
+        bool all = true;
+        for (int i = 0; i < s_nstun; i++) {
+            all &= s_stun[i].got;
+        }
+        if (all || t - s_t0 > STUN_MS) {
+            stun_done();
+        } else if (t >= s_stun_next) {
+            stun_send();
+            s_stun_next = t + STUN_RESEND_MS;
+        }
+        break;
+    }
+    case PH_SERVICE: {
+        PcXnStatus st = pc_xn_status();
+        if (st == PC_XN_FAILED) {
+            const char* reason;
+            const char* err = pc_xn_error(&reason);
+            fail(err[0] ? err : "XeleeNet refused");
+            break;
+        }
+        char id[33], code[8];
+        if (st != PC_XN_IN || !pc_xn_lobby(id, code, &s_local)) {
+            break;
+        }
+        for (int i = 0; i < 8; i++) {
+            unsigned v = 0;
+            sscanf(id + 2 * i, "%2x", &v);
+            s_lobby[i] = (uint8_t)v;
+        }
+        s_in_ms = t;
+        s_phase = PH_PUNCH;
+        if (s_local == 0) {
+            pc_log_line("xeleenet: lobby code %s", code); /* tools/net_test_n.py reads it */
+        }
+        break;
+    }
+    case PH_PUNCH:
+        learn_members();
+        if (pc_xn_status() == PC_XN_FAILED) {
+            fail(pc_xn_error(NULL));
+            break;
+        }
+        punch_tick();
+        if (s_local == 0 && s_phase == PH_PUNCH && ready_to_start()) {
+            start_build();
+        }
+        break;
+    case PH_STARTING:
+        start_tick();
+        break;
+    default:
+        break;
+    }
+    return s_phase == PH_DONE ? 1 : s_phase == PH_FAILED ? -1 : 0;
+}
+
+bool pc_xn_punch_start(const char* url, const char* name, const char* code, int seats) {
+    if (s_phase != PH_OFF && s_phase != PH_DONE && s_phase != PH_FAILED) {
+        return false;
+    }
+    memset(s_who, 0, sizeof s_who);
+    s_phase = PH_STUN;
+    s_why[0] = '\0';
+    s_local = -1;
+    s_seats = seats;
+    snprintf(s_url, sizeof s_url, "%s", url);
+    snprintf(s_name, sizeof s_name, "%.12s", name);
+    snprintf(s_code, sizeof s_code, "%s", code != NULL ? code : "");
+    s_block = net_sim_block_mask();
+    /* MELEE_XN_IDENTITY: another key directory, so several instances on one
+     * machine are several players (tools/net_test_n.py --xn). */
+    const char* dir_env = getenv("MELEE_XN_IDENTITY");
+    char* pref = dir_env == NULL ? SDL_GetPrefPath(NULL, "melee-pc") : NULL;
+    char label[9] = "";
+    for (size_t i = 0, o = 0; s_name[i] != '\0' && o < 8; i++) {
+        char c = s_name[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            label[o++] = c;
+            label[o] = '\0';
+        }
+    }
+    /* The label only names the key's connect code; the key is the identity. */
+    bool ok = pc_identity_load(&s_id, dir_env != NULL ? dir_env : pref, label[0] ? label : "PLAYER");
+    SDL_free(pref);
+    if (!ok) {
+        fail("No identity key for XeleeNet");
+        return false;
+    }
+    do {
+        pc_identity_random(&s_nonce, sizeof s_nonce);
+    } while (s_nonce == 0);
+    sock_startup();
+    s_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    const char* lport = getenv("MELEE_NET_PORT");
+    a.sin_port = htons((uint16_t)(lport != NULL ? atoi(lport) : 0));
+    socklen_t len = sizeof a;
+    if (s_sock == SOCK_INVALID || bind(s_sock, (struct sockaddr*)&a, sizeof a) != 0 ||
+        !sock_nonblock(s_sock) || getsockname(s_sock, (struct sockaddr*)&a, &len) != 0)
+    {
+        fail("Couldn't open a UDP socket");
+        return false;
+    }
+    s_bound = ntohs(a.sin_port);
+    s_t0 = now_ms();
+    s_stun_next = 0;
+    s_tell_next = 0;
+    stun_begin();
+    pc_log_line("xeleenet: %s on UDP %u as %s", code != NULL ? "joining" : "hosting", s_bound,
+        s_id.code);
+    return true;
+}
+
+const char* pc_xn_punch_error(void) {
+    return s_why;
+}
+
+void pc_xn_punch_cancel(void) {
+    if (s_phase == PH_DONE || s_phase == PH_OFF) {
+        return;
+    }
+    fail("cancelled");
+}
+
+bool pc_xn_punch_from_env(void) {
+    const char* xn = getenv("MELEE_XN");
+    if (xn == NULL || xn[0] == '\0') {
+        return false;
+    }
+    const char* url = getenv("MELEE_XN_URL");
+    const char* name = getenv("MELEE_XN_NAME");
+    const char* seats = getenv("MELEE_XN_SEATS");
+    const char* wait = getenv("MELEE_XN_WAIT_S");
+    bool join = strncmp(xn, "join:", 5) == 0;
+    if (url == NULL || url[0] == '\0' || (!join && strcmp(xn, "host") != 0)) {
+        pc_log_line("xeleenet: MELEE_XN wants host or join:CODE, with MELEE_XN_URL");
+        return true;
+    }
+    if (name == NULL || name[0] == '\0') {
+        name = pc_get_net_name();
+    }
+    if (!pc_xn_punch_start(url, name != NULL && name[0] ? name : "PLAYER", join ? xn + 5 : NULL,
+            seats != NULL ? atoi(seats) : 2))
+    {
+        return true;
+    }
+    /* Boot waits here, as a MELEE_NET_PEERS session is up from boot. */
+    uint64_t until = now_ms() + (uint64_t)(wait != NULL ? atoi(wait) : 300) * 1000;
+    int r;
+    while ((r = pc_xn_punch_poll()) == 0 && now_ms() < until) {
+        SDL_Delay(5);
+    }
+    if (r != 1) {
+        pc_log_line("xeleenet: no session (%s)", r < 0 ? s_why : "timed out");
+        pc_xn_punch_cancel();
+    }
+    return true;
+}

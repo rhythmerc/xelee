@@ -76,6 +76,18 @@ void pc_net_poll(void);
  * transfers on success only; no new NAT mapping is created. */
 bool pc_net_connect_socket(
     intptr_t socket, const char* ip, uint16_t port, int player, uint32_t seed);
+/* One link of a session XeleeNet's punch set up (net_punch.c). */
+typedef struct PcNetLink {
+    uint32_t ip; /* network order */
+    uint16_t port;
+    int player;       /* its controller port */
+    uint8_t key[32];  /* this link's MAC key; the handshake does not rekey it */
+    bool via_host;    /* never punched: its input and messages come through the host */
+} PcNetLink;
+/* A session of n + 1 players on an already-punched IPv4 socket, this side on
+ * controller port `local`. Ownership of the socket moves on success only. */
+bool pc_net_connect_links(
+    intptr_t socket, const PcNetLink* links, int n, int local, uint32_t seed);
 /* Connect over the Slippi transport (MELEE_NET_STACK=slippi,
  * docs/slippi-migration-plan.md). Uses the Slippi ENet protocol; the game-side
  * rollback/barrier/ring machinery is unchanged. `local_udp_port` 0 lets ENet

@@ -156,18 +156,29 @@ void sim_env(uint16_t bind_port) {
     net.sim_rx_delay_ns = v ? (uint64_t)atoi(v) * 1000000ull : 0;
     net.sim_hold = net.sim_delay_ns || net.sim_jitter_ms || net.sim_reorder || net.sim_dup;
     s_sim_rng = (uint32_t)bind_port * 2654435761u | 1u;
-    s_sim_block = 0;
-    v = getenv("MELEE_NET_SIM_BLOCK");
+    s_sim_block = net_sim_block_mask();
+    for (int a = 0; a < 4; a++) {
+        for (int b = a + 1; b < 4; b++) {
+            if (s_sim_block & (1u << (a * 4 + b))) {
+                pc_log_line("net: sim block between P%d and P%d", a + 1, b + 1);
+            }
+        }
+    }
+}
+
+uint16_t net_sim_block_mask(void) {
+    uint16_t mask = 0;
+    const char* v = getenv("MELEE_NET_SIM_BLOCK");
     for (const char* q = v; q != NULL && *q != '\0';) {
         int a = q[0] - '0', b = q[1] == ':' ? q[2] - '0' : -1;
         if (a < 0 || a > 3 || b < 0 || b > 3) {
             pc_log_line("net: MELEE_NET_SIM_BLOCK wants a:b,c:d with ports 0-3, not %s", v);
             break;
         }
-        s_sim_block |= (uint16_t)(1u << (a * 4 + b) | 1u << (b * 4 + a));
-        pc_log_line("net: sim block between P%d and P%d", a + 1, b + 1);
+        mask |= (uint16_t)(1u << (a * 4 + b) | 1u << (b * 4 + a));
         q = q[3] == ',' ? q + 4 : q + 3;
     }
+    return mask;
 }
 
 /* Session start: empty held queue, no burst or swap pending (timer parked). */
