@@ -8,7 +8,8 @@ M2 and J1-J3): N instances on one machine and a local lobby service.
 
 Player 1 walks Online Mode > XeleeNet > Host, opens the lobby from the Host
 page (H1) and waits in the CSS, which is the lobby; its code comes off its
-log. The others walk to Join and type it on the keypad (J1), and each join
+log. The others walk to Join, which opens the lobby browser (B1): the first
+types the code on the keypad (J1), the rest pick the lobby off the list. Each join
 reloads everyone's CSS with a door more (the roster reload). Then every
 instance must agree one stage at the SSS and play a match with no DESYNC. Each screen on the way is captured into --shots (default
 <work>/shots) for the share.
@@ -159,17 +160,22 @@ def run(args):
         time.sleep(3)
         shot(host, shots, "4-host-css-alone")
         for k, g in enumerate(guests):
+            # Join opens the lobby browser (B1), which lists the host's lobby.
             walk(g, TO_ONLINE + [("X", 7), ("Down", 7), ("X", 7)])
+            time.sleep(2.5)
+            shot(g, shots, f"5-lobbies-{g.name}")
             if k == 0:
-                time.sleep(1.0)
-                shot(g, shots, "5-join-keypad")
-            type_code(g, code)
-            if k == 0:
-                shot(g, shots, "6-join-code-typed")
-            nt.press((g,), "Return", 9, 0.4)
-            if k == 0:
-                time.sleep(0.6)
-                shot(g, shots, "7-joining")
+                # The first guest types the code: Y opens the keypad (J1).
+                nt.press((g,), "V", 7, 1.0)
+                shot(g, shots, "6-join-keypad")
+                type_code(g, code)
+                shot(g, shots, "7-join-code-typed")
+                nt.press((g,), "Return", 9, 0.4)
+            else:
+                # The others pick the lobby off the list with A.
+                nt.press((g,), "X", 7, 0.4)
+            time.sleep(0.6)
+            shot(g, shots, f"8-joining-{g.name}")
             # Seated: this guest's own session agreed and its CSS entered.
             if not g.wait_log(r"lobby: entering CSS", 90):
                 print(f"[{g.name}] FAIL: never got into the lobby")
@@ -183,12 +189,12 @@ def run(args):
             print("FAIL: the CSS never loaded everywhere")
             return False
         time.sleep(4)
-        shot(host, shots, "8-css")
+        shot(host, shots, "9-css")
         if not drive_css(insts):
             print("FAIL: no CSS pick reached the SSS")
             return False
         time.sleep(2)
-        shot(host, shots, "9-sss")
+        shot(host, shots, "10-sss")
         if not nt.press_until(insts, "Return", 9, r"sss: resolved cell", tries=8, each=6.0):
             print("FAIL: the SSS never resolved a stage everywhere")
             return False
@@ -207,10 +213,10 @@ def run(args):
             print("FAIL: the match never loaded")
             return False
         time.sleep(12)
-        shot(host, shots, "10-match")
+        shot(host, shots, "11-match")
         time.sleep(args.seconds)
         drive.done()
-        shot(host, shots, "11-match-later")
+        shot(host, shots, "12-match-later")
         texts = [i.text() for i in insts]
         ok = not any(nt.re.search(r"net: DESYNC", t) for t in texts)
         for i, t in zip(insts, texts):

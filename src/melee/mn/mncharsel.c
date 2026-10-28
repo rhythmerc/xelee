@@ -3167,10 +3167,12 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                 }
 #ifdef TARGET_PC
                                 /* A Slippi match is 1v1 between two humans:
-                                 * no CPU fighters, no closing a slot. */
+                                 * no CPU fighters, no closing a slot. In
+                                 * XeleeNet the roster sets the doors: an
+                                 * empty seat waits for a joiner. */
                                 {
                                     int unused;
-                                    if (cssOnline(&unused)) {
+                                    if (cssOnline(&unused) || gmOnline_XnFlow()) {
                                         continue;
                                     }
                                 }
@@ -5603,6 +5605,17 @@ void mnCharSel_Scene_OnEnter(void* arg0)
         HSD_SisLib_803A62A0(0, "SdSlChr.usd", "SIS_SelCharData");
     }
     mnCharSel_804D6CF4 = 0;
+#ifdef TARGET_PC
+    if (gmOnline_XnFlow()) {
+        /* The doors keep their teams in their own state across visits:
+         * XeleeNet's come from the lobby's players (gmonlinemode.c gives a
+         * new door its team), the same on every peer. */
+        int k;
+        for (k = 0; k < 4; k++) {
+            mnCharSel_803F0DFC.doors[k].team = mnCharSel_804D6CB0->vs.start.players[k].team;
+        }
+    }
+#endif
     mnCharSel_802640A0();
 #ifdef TARGET_PC
     if (gmOnline_SlippiFlow()) {

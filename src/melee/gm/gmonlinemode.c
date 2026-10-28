@@ -82,6 +82,8 @@ static char slpcss_notice[48];
 /* XeleeNet: the CSS leaves for itself, the roster having changed (see
  * gmOnline_XnCssFrame). */
 static bool xn_reload;
+/* The player set the doors' teams were last dealt for (XeleeNet). */
+static int xn_team_ports;
 static void routeAfterFailure(void);
 #endif
 static bool awaiting_rank_result;
@@ -454,9 +456,19 @@ void onEnterCss(GameModeState* state)
             xn_reload = false;
         }
         for (int i = 0; i < GM_MAX_PLAYERS; ++i) {
-            online_vs.start.players[i].slot_type =
-                i < 4 && (ports & (1 << i)) ? Gm_PKind_Human : Gm_PKind_NA;
+            PlayerInitData* p = &online_vs.start.players[i];
+            bool in = i < 4 && (ports & (1 << i));
+            if (ports != xn_team_ports) {
+                /* A new player set deals the teams: red, blue, red, blue by
+                 * port, so three play 2v1 and four 2v2 without touching it
+                 * (all red, Melee's default, can't start). From the port
+                 * mask alone, so every peer deals the same, the newcomer
+                 * included; picks made in the CSS last until the next set. */
+                p->team = i % 2;
+            }
+            p->slot_type = in ? Gm_PKind_Human : Gm_PKind_NA;
         }
+        xn_team_ports = ports;
         online_vs.start.rules.is_teams = pc_net_rules_teams(); /* the host's H1, via RULES */
         pc_xn_banner_show(true); /* C1: the lobby's name, rules and code */
     }
@@ -1696,6 +1708,7 @@ void gm_Scene_OnlineLobby_OnEnter(UNUSED void* unused)
 #ifdef TARGET_PC
     if (online_kind == ONLINE_KIND_XN) {
         xn_joined = false;
+        xn_team_ports = 0; /* a new lobby deals its teams afresh */
         mnXeleeNet_Begin(xn_intent == XN_INTENT_JOIN ? PC_XN_MENU_JOIN :
                          xn_intent == XN_INTENT_NAME ? PC_XN_MENU_NAME :
                                                        PC_XN_MENU_HOST);

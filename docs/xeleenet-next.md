@@ -83,6 +83,8 @@ punched direct, Quest ↔ hotspot included.
   version deadlocked).
 - B1 against a real service with real lobbies; scrolling past five rows.
 - Every J3 failure on screen (seen only in the preview).
+- A desync in a menu isn't reported as one: the checksum runs in matches
+  only, so it shows as a scene hand-off timeout (`peer -1`).
 - Windows XeleeNet at all; the Quest with the new pages (Touch on them too).
 
 **Not built:** from XN3, ask-to-join, Stage pick, Placement time and
@@ -93,8 +95,9 @@ started.
 
 ## Next steps: a friends' test (Windows + Quest, 3-4 players)
 
-1. **Re-verify locally:** `tools/net_test_xn_menu.py --players 3` (the second
-   join), then 4 players.
+1. ~~**Re-verify locally**~~ (3 players passed 2026-10-28: the second join,
+   B1 against the service, a Doubles 2v1 with equal checksums). 4 players
+   next. Under KDE the test needs `XAUTHORITY=/run/user/1000/xauth_*`.
 2. **The service on a Tailscale Funnel** (authorized): `xn_trial.py serve`
    (wrangler dev, port 8790) behind `tailscale funnel`. It's HTTPS, so the
    Quest needs no cleartext build.
