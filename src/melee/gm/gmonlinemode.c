@@ -524,8 +524,12 @@ void onExitCss(GameModeState* state)
     if (online_kind == ONLINE_KIND_XN &&
         ((CSSData*) gm_GetGameModeStateExitData(state))->pending_scene_change == CSSPendingSceneChange_2)
     {
-        /* B leaves the lobby (a host closes it) for the XeleeNet menu. */
+        /* B leaves the lobby (a host closes it) for the XeleeNet menu. The
+         * session's end is ours, not a failure: no stale "opponent left"
+         * may greet the next lobby's CSS (it left at once, to the lobby,
+         * which ended the new punch). */
         pc_net_disconnect();
+        pc_net_peer_status_clear();
         pc_xn_punch_end();
         gm_ChangeGameModeAfterCurrentScene(GM_MENU);
         return;
@@ -1709,6 +1713,7 @@ void gm_Scene_OnlineLobby_OnEnter(UNUSED void* unused)
     if (online_kind == ONLINE_KIND_XN) {
         xn_joined = false;
         xn_team_ports = 0; /* a new lobby deals its teams afresh */
+        pc_net_peer_status_clear(); /* an earlier session's end is not this lobby's */
         mnXeleeNet_Begin(xn_intent == XN_INTENT_JOIN ? PC_XN_MENU_JOIN :
                          xn_intent == XN_INTENT_NAME ? PC_XN_MENU_NAME :
                                                        PC_XN_MENU_HOST);
