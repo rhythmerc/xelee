@@ -35,8 +35,8 @@
   </filter>
 </defs><path d="M255.0,140.0 L197.5,239.6 L82.5,239.6 L25.0,140.0 L82.5,40.4 L197.5,40.4 Z" fill="url(#disc)" stroke="#ffb31a" stroke-width="6.9" stroke-linejoin="round"/>
 <path d="M255.0,140.0 L197.5,239.6 L82.5,239.6 L25.0,140.0 L82.5,40.4 L197.5,40.4 Z" fill="none" stroke="#7a0610" stroke-width="2.3" stroke-linejoin="round" transform="translate(0,4.0)"/>
-<clipPath id="back140"><rect x="-90" y="-90" width="460" height="230" transform="rotate(-22 140 140)"/></clipPath>
-<clipPath id="front140"><rect x="-90" y="140" width="460" height="230" transform="rotate(-22 140 140)"/></clipPath>
+<clipPath id="back140"><rect x="-90" y="-90" width="460" height="230"/></clipPath>
+<clipPath id="front140"><rect x="-90" y="140" width="460" height="230"/></clipPath>
 <ellipse cx="140" cy="140" rx="124.2" ry="39.1" transform="rotate(-22 140 140)" fill="none" stroke="#c0101a" stroke-width="10.3" clip-path="url(#back140)" opacity="0.9"/>
 <g transform="skewX(-8) translate(19.6,0)">
 <path d="M84.5,79.6 L120.7,79.6 L140.0,110.8 L159.3,79.6 L195.5,79.6 L158.1,140.0 L195.5,200.4 L159.3,200.4 L140.0,169.2 L120.7,200.4 L84.5,200.4 L121.9,140.0 Z" fill="#0a0c14" stroke="#0a0c14" stroke-width="11.5" stroke-linejoin="round"/>

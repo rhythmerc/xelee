@@ -141,9 +141,13 @@ def badge_group(cx, cy, r):
     rot = f'rotate(-22 {cx} {cy})'
     g = [f'<path d="{path(hexp)}" fill="url(#disc)" stroke="#ffb31a" stroke-width="{r * 0.06:.1f}" stroke-linejoin="round"/>',
          f'<path d="{path(hexp)}" fill="none" stroke="#7a0610" stroke-width="{r * 0.02:.1f}" stroke-linejoin="round" transform="translate(0,{r * 0.035:.1f})"/>',
-         # back half of the ring
-         f'<clipPath id="back{int(cx)}"><rect x="{cx - 2 * r}" y="{cy - 2 * r}" width="{4 * r}" height="{2 * r}" transform="{rot}"/></clipPath>',
-         f'<clipPath id="front{int(cx)}"><rect x="{cx - 2 * r}" y="{cy}" width="{4 * r}" height="{2 * r}" transform="{rot}"/></clipPath>',
+         # The ring splits along its own long axis: the upper arc behind the
+         # X, the lower one in front. No rotate on the rects: a clip path is in
+         # the clipped ellipse's user space, which already carries `rot`, and
+         # rotating the rects too tilted the split 44 degrees, so the top-right
+         # of the swoop came out in front of the X.
+         f'<clipPath id="back{int(cx)}"><rect x="{cx - 2 * r}" y="{cy - 2 * r}" width="{4 * r}" height="{2 * r}"/></clipPath>',
+         f'<clipPath id="front{int(cx)}"><rect x="{cx - 2 * r}" y="{cy}" width="{4 * r}" height="{2 * r}"/></clipPath>',
          f'<ellipse {ring} transform="{rot}" fill="none" stroke="#c0101a" stroke-width="{r * 0.09:.1f}" clip-path="url(#back{int(cx)})" opacity="0.9"/>',
          f'<g transform="skewX(-8) translate({cy * 0.14:.1f},0)">',
          f'<path d="{xpath}" fill="#0a0c14" stroke="#0a0c14" stroke-width="{r * 0.1:.1f}" stroke-linejoin="round"/>',
