@@ -24,6 +24,7 @@ docs/*
 !docs/browser-mobile-findings.md
 !docs/adding-menu-pages.md
 !docs/xeleenet-plan.md
+!docs/xeleenet-next.md
 !docs/site/
 
 # Android build outputs (CI builds these from source).

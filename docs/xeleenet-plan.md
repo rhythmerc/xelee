@@ -7,6 +7,8 @@ Online menu. The first pillar is **lobbies**:
 - The host sets the lobby's settings before hosting.
 - The host can change those settings later from the character select screen.
 
+Where the work stands and what comes next: `docs/xeleenet-next.md`.
+
 This document has the requirements, the technical plan and the milestones.
 The UI wireframe is a separate page (`xeleenet-lobby-wireframe.html` on the
 tailnet share). Open questions are at the end.
