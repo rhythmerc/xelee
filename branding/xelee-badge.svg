@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320">
+<defs>
+  <linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#ffffff"/>
+    <stop offset="0.42" stop-color="#eef1f5"/>
+    <stop offset="0.5" stop-color="#8d97a3"/>
+    <stop offset="0.56" stop-color="#b9c1ca"/>
+    <stop offset="0.85" stop-color="#f4f6f8"/>
+    <stop offset="1" stop-color="#ffffff"/>
+  </linearGradient>
+  <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#fff3b0"/>
+    <stop offset="0.45" stop-color="#ffc62e"/>
+    <stop offset="0.5" stop-color="#e07a00"/>
+    <stop offset="1" stop-color="#ffb21f"/>
+  </linearGradient>
+  <linearGradient id="panel" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#7a0610"/>
+    <stop offset="0.45" stop-color="#d0141e"/>
+    <stop offset="0.8" stop-color="#ff5a0a"/>
+    <stop offset="1" stop-color="#ff9a1a"/>
+  </linearGradient>
+  <linearGradient id="panelshade" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+    <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    <stop offset="1" stop-color="#000000" stop-opacity="0.35"/>
+  </linearGradient>
+  <radialGradient id="disc" cx="0.4" cy="0.3" r="0.8">
+    <stop offset="0" stop-color="#2a3550"/>
+    <stop offset="1" stop-color="#0b0f1c"/>
+  </radialGradient>
+  <filter id="glow" x="-20%" y="-40%" width="140%" height="180%">
+    <feGaussianBlur stdDeviation="6" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs><path d="M290.0,160.0 L225.0,272.6 L95.0,272.6 L30.0,160.0 L95.0,47.4 L225.0,47.4 Z" fill="url(#disc)" stroke="#ffb31a" stroke-width="7.8" stroke-linejoin="round"/>
+<path d="M290.0,160.0 L225.0,272.6 L95.0,272.6 L30.0,160.0 L95.0,47.4 L225.0,47.4 Z" fill="none" stroke="#7a0610" stroke-width="2.6" stroke-linejoin="round" transform="translate(0,4.6)"/>
+<clipPath id="back160"><rect x="-100" y="-100" width="520" height="260" transform="rotate(-22 160 160)"/></clipPath>
+<clipPath id="front160"><rect x="-100" y="160" width="520" height="260" transform="rotate(-22 160 160)"/></clipPath>
+<ellipse cx="160" cy="160" rx="140.4" ry="44.2" transform="rotate(-22 160 160)" fill="none" stroke="#c0101a" stroke-width="11.7" clip-path="url(#back160)" opacity="0.9"/>
+<g transform="skewX(-8) translate(22.4,0)">
+<path d="M97.2,91.8 L138.2,91.8 L160.0,127.0 L181.8,91.8 L222.8,91.8 L180.5,160.0 L222.8,228.2 L181.8,228.2 L160.0,193.0 L138.2,228.2 L97.2,228.2 L139.5,160.0 Z" fill="#0a0c14" stroke="#0a0c14" stroke-width="13.0" stroke-linejoin="round"/>
+<path d="M97.2,91.8 L138.2,91.8 L160.0,127.0 L181.8,91.8 L222.8,91.8 L180.5,160.0 L222.8,228.2 L181.8,228.2 L160.0,193.0 L138.2,228.2 L97.2,228.2 L139.5,160.0 Z" fill="url(#gold)" stroke="#3a1a00" stroke-width="2.6" stroke-linejoin="round"/>
+</g>
+<ellipse cx="160" cy="160" rx="140.4" ry="44.2" transform="rotate(-22 160 160)" fill="none" stroke="#ff5a0a" stroke-width="11.7" clip-path="url(#front160)"/>
+<ellipse cx="160" cy="160" rx="140.4" ry="44.2" transform="rotate(-22 160 160)" fill="none" stroke="#ffd35a" stroke-width="3.2" clip-path="url(#front160)"/></svg>
