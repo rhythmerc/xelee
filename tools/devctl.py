@@ -44,11 +44,25 @@ def keysym_for(name):
 
 def find_window(dpy):
     root = dpy.screen().root
-    for wid in root.get_full_property(dpy.intern_atom("_NET_CLIENT_LIST"), X.AnyPropertyType).value:
-        w = dpy.create_resource_object("window", wid)
-        name = w.get_wm_name()
-        if name and WINDOW_NAME in name:
-            return w
+    clients = root.get_full_property(dpy.intern_atom("_NET_CLIENT_LIST"), X.AnyPropertyType)
+    if clients is not None:
+        for wid in clients.value:
+            w = dpy.create_resource_object("window", wid)
+            name = w.get_wm_name()
+            if name and WINDOW_NAME in name:
+                return w
+    else:
+        # No window manager's list (gamescope, Steam's Gaming Mode): walk the tree.
+        todo = [root]
+        while todo:
+            w = todo.pop()
+            try:
+                name = w.get_wm_name()
+                todo.extend(w.query_tree().children)
+            except Exception:
+                continue
+            if name and WINDOW_NAME in name:
+                return w
     sys.exit("game window not found")
 
 
