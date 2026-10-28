@@ -969,6 +969,8 @@ struct Screen : Rml::EventListener {
             r += at != nullptr && at->change
                      ? key("stick", "xeleenet.legend.change")
                      : key("a", id == "open" ? "xeleenet.legend.open" : "xeleenet.legend.select");
+            if (id == "preset")
+                r += key("a", "xeleenet.legend.confirm"); // on to the rules (activate)
             if (id != "open")
                 r += key("start", "xeleenet.legend.open");
             r += key("b", "xeleenet.legend.back");
@@ -1141,6 +1143,11 @@ struct Screen : Rml::EventListener {
             act();
             if (s_result == PC_XN_MENU_STAY)
                 refresh();
+        } else if (items[i].id == "preset") {
+            // A confirms the preset and goes on to its rules. Stepping to
+            // the next one, as A does on a value, turned a chosen Doubles
+            // into Free-for-all (Time, 2:00) just before Open lobby.
+            move(PC_SCREEN_DOWN);
         } else if (items[i].change) {
             items[i].change(1);
             sfx(SFX_MOVE);

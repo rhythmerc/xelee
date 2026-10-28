@@ -307,6 +307,7 @@ xeleenet:
   # What the buttons do, under the pages.
   legend:
     change: Change
+    confirm: OK                      # A on the preset bar: on to the rules
     select: Select
     open: Open lobby
     back: Back
