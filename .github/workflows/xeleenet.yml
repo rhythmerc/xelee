@@ -1,0 +1,100 @@
+name: XeleeNet
+
+# Tests tools/xeleenet (the lobby service) on every push that touches it, and
+# deploys it from main. Deploying uses the repository secrets
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (shared with the log drop),
+# and XELEENET_TOKEN_KEY and XELEENET_NAME_BLOCKLIST, which become the
+# Worker's TOKEN_KEY and NAME_BLOCKLIST (tools/xeleenet/README.md).
+on:
+  push:
+    paths: ['tools/xeleenet/**', 'tools/xn_cli.py', '.github/workflows/xeleenet.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xeleenet-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test the lobby service
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tools/xeleenet/package-lock.json
+      - name: Install wrangler
+        working-directory: tools/xeleenet
+        run: npm ci
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install cryptography
+        run: python -m pip install cryptography
+      - name: End-to-end test against wrangler dev
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+        run: python tools/xeleenet/test_service.py
+
+  deploy:
+    name: Deploy the lobby service
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+        working-directory: tools/xeleenet
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      # A fork without the Cloudflare secrets has nothing to deploy to.
+      - name: Check the secrets
+        id: check
+        working-directory: .
+        env:
+          TOKEN_KEY: ${{ secrets.XELEENET_TOKEN_KEY }}
+        run: |
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" || -z "${CLOUDFLARE_ACCOUNT_ID}" || -z "${TOKEN_KEY}" ]]; then
+            echo "::notice::no CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID / XELEENET_TOKEN_KEY secrets: not deploying"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ready == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.ready == 'true'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tools/xeleenet/package-lock.json
+
+      - name: Install wrangler
+        if: steps.check.outputs.ready == 'true'
+        run: npm ci
+
+      - name: Deploy
+        if: steps.check.outputs.ready == 'true'
+        run: npx wrangler deploy 2>&1 | sed -E 's#https://[A-Za-z0-9.-]+\.workers\.dev#https://<hidden>.workers.dev#g'
+
+      # Only the secrets set here are written; one that is unset keeps the
+      # Worker's value.
+      - name: Set the Worker's secrets
+        if: steps.check.outputs.ready == 'true'
+        env:
+          TOKEN_KEY: ${{ secrets.XELEENET_TOKEN_KEY }}
+          NAME_BLOCKLIST: ${{ secrets.XELEENET_NAME_BLOCKLIST }}
+        run: |
+          secrets=$(jq -n --arg t "${TOKEN_KEY}" --arg b "${NAME_BLOCKLIST}" \
+            '{TOKEN_KEY: $t, NAME_BLOCKLIST: $b} | map_values(gsub("^\\s+|\\s+$"; "")) | with_entries(select(.value != ""))')
+          npx wrangler secret bulk <<< "${secrets}"

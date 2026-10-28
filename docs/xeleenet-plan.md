@@ -11,7 +11,7 @@ This document has the requirements, the technical plan and the milestones.
 The UI wireframe is a separate page (`xeleenet-lobby-wireframe.html` on the
 tailnet share). Open questions are at the end.
 
-Status: design agreed 2026-10-27; nothing built yet.
+Status: design agreed 2026-10-27. XN0 (the service) built 2026-10-27.
 
 **User decisions (2026-10-27):**
 - **Four seats in v1.** The engine's multi-player work happens as part of this.
@@ -249,7 +249,7 @@ but not scheduled.
   ───────────────                 (CF Worker + DOs)           ─────────────────────
   STUN → public ip:port
   POST /lobbies ────────────────▶ LobbyDO(code) ◀──────────── GET /lobbies, POST …/join
-  long-poll /events ◀──────────── roster, candidates ───────▶ long-poll /events
+  heartbeat (2 s) ◀────────────── joins, candidates ───────▶ join reply: everyone's candidates
                         ┌────────── host ══ guest (always direct) ──────────┐
   P2P links:            │  guest ══ guest  (direct if punched, else via host) │
                         └────────────────────────────────────────────────────┘
@@ -259,48 +259,61 @@ but not scheduled.
 ### 3.1 Service
 
 **Cloudflare Worker + Durable Objects.** We already deploy a Worker (the log
-drop, `tools/log-drop`, `.github/workflows/log-drop.yml`). New code goes in
-`tools/xeleenet/`, deployed the same way.
+drop, `tools/log-drop`, `.github/workflows/log-drop.yml`). The lobby service
+is `tools/xeleenet/`, deployed the same way (`.github/workflows/xeleenet.yml`).
 
-- **`LobbyDO`**: one per lobby. It holds the record, the members and their
-  candidates, pending join requests and a short event log. An alarm expires it
-  30 s after the last host heartbeat.
-- **`DirectoryDO`**: one instance, with a summary row per public lobby. Each
-  LobbyDO pushes changes to it.
-- **Codes** map to their LobbyDO through KV.
+As built in XN0 (`tools/xeleenet`; its README has the details):
+
+- **`Lobby`** (Durable Object): one per lobby. It holds the record, the
+  members and their candidates, the "Ask before joining" queue and the ban
+  list, and it decides every join. An alarm closes it 30 s after the last host
+  heartbeat.
+- **`Directory`** (Durable Object): one instance. It hands out codes, resolves
+  them, keeps one open lobby per host (hosting again closes the old one), and
+  holds a summary row per lobby for the browser. Each `Lobby` pushes its row
+  when something the browser shows changes.
 
 Lobby record:
 
 ```
-id, code, name, visibility, ask_to_join, created, heartbeat,
-state (open | full | playing | closed)
-compat   { proto, rev, disc }
-host     { pubkey, name, tag, xr, region }
-members  [ { pubkey, name, tag, xr, port 0-3, candidates, joined } ]
-pending  [ { pubkey, name, tag, candidates } ]              ask-to-join queue
-settings { preset, seats 2-4, mode ffa|teams, rules{…}, items{…},
-           stages{mask, pick_rule, frozen}, set{format, n} }
-settings_rev, set_score [per port or team]                   host-written
+id, code, name, public, ask, compat {proto, rev, disc}, state (open | playing)
+host     { key, name, tag, xr, candidates, geo, port 0 }
+members  [ { key, name, tag, xr, port 1-3, candidates, country, joined } ]
+banned   [ key ]
+settings { preset, seats, mode, win, stocks, time_min, items, stage_list,
+           pick, format, first_to, place_secs }      the browser's summary only
+score    [ per port or team ]                        host-written
 ```
 
-**API** (JSON over HTTPS; every request is signed, §3.7):
+**API** (JSON over HTTPS; a signed session token on every call, §3.7):
 
 | Call | Who | What |
 |---|---|---|
-| `POST /session` | all | Nonce challenge, signed answer, short-lived token |
-| `GET /lobbies?rev=&disc=` | browser | Public summaries |
-| `POST /lobbies` | host | Create. Returns `{id, code}` |
-| `POST /lobbies/{id}/heartbeat` | host | Keep alive. Carries the state, roster ports and set score |
-| `PUT /lobbies/{id}/settings` | host | Mirror the settings for the browser summary |
-| `POST /lobbies/{code}/join` | guest | Candidates in. Returns every member's candidates and a port, or "pending", or a refusal |
-| `POST /lobbies/{id}/admit` | host | Accept or decline a pending join (H-11) |
-| `GET /lobbies/{id}/events?since=` | members | Long-poll (≤ 25 s): joins, candidates, admits, kicks, close |
-| `POST /lobbies/{id}/kick` | host | Ban a key from this lobby |
-| `DELETE /lobbies/{id}`, `…/leave` | host, guest | Close, leave |
+| `POST /v1/session`, `/v1/session/verify` | all | Nonce challenge, signed answer, a 1-hour token and the tag |
+| `GET /v1/lobbies?proto&rev&disc[&full=1]` | browser | Public summaries on the same build, nearest first; other builds counted |
+| `POST /v1/lobbies` | host | Create. Returns `{id, code}` |
+| `POST /v1/lobbies/{id}/heartbeat` | host | Keep alive, every 2 s at the CSS and 10 s in a game. Sends the state, the guests the host's game reaches, the score. Returns members with candidates, and pending joins |
+| `PUT /v1/lobbies/{id}/settings` | host | Mirror the settings summary for the browser |
+| `POST /v1/join` | guest | By code. Candidates in; returns a port and every member's candidates, or "pending", or a refusal |
+| `GET /v1/lobbies/{id}/join` | guest | Ask again after "pending" (waits ≤ 20 s for the host's answer) |
+| `POST /v1/lobbies/{id}/admit` | host | Accept or decline a pending join (H-11) |
+| `POST /v1/lobbies/{id}/kick` | host | Remove and ban a key for this lobby |
+| `DELETE /v1/lobbies/{id}`, `POST …/leave` | host, guest | Close, leave |
+
+**Only the host polls** (changed from a long-poll by every member, 2026-10-27).
+Durable Objects bill wall-clock time while a request is open, so members
+long-polling would keep every lobby running all the time. Instead:
+- a joiner gets everyone's candidates in its join reply;
+- the host learns about the joiner from its next heartbeat;
+- the host's game tells the other members over the peer links, as it already
+  leads every other roster change (§3.5).
+
+The free plan covers roughly 50-100 lobby-hours a day; the $5 plan, far more.
+Hibernating WebSockets for the host are the next step if it grows.
 
 The service never carries match traffic and never decides game state. The
-host owns the roster and the settings over P2P (§3.4). The service only
-mirrors them so it can list and route.
+host owns the roster and the full settings over P2P (§3.4). The service only
+mirrors a summary so it can list and route.
 
 ### 3.2 The engine goes N-peer
 
@@ -510,7 +523,7 @@ A void game (§3.5) doesn't count.
 | Where | What |
 |---|---|
 | `src/pc/net.c`, `net_internal.h`, `net_wire.c`, `net_reliable.c`, `net_handshake.c`, `net_sync.c` | The N-peer engine (§3.2): `Peer[]`, per-port rings, per-origin `'M'`, host-led agreements, forwarding |
-| `src/pc/xeleenet.c/.h` | Service client: token, create, list, join, admit, heartbeat, long-poll thread. Uses `pc_slippi_http_*` / `pc_http_android`; rename them `pc_http_*` here. |
+| `src/pc/xeleenet.c/.h` | Service client: token, create, list, join, admit, heartbeat thread. Uses `pc_slippi_http_*` / `pc_http_android`; rename them `pc_http_*` here. |
 | `src/pc/net_stun.c` | STUN binding and a NAT type hint |
 | `src/pc/net_punch.c` | Candidates → simultaneous open per link → route decision. Factor it out of the DHT path before M6 deletes that. |
 | `src/pc/xeleenet_lobby.c/.h` | `XnLobbySettings`, presets, RULES extension, timed apply, roster reload, set score |
@@ -532,7 +545,7 @@ Every milestone is checked on desktop first: N instances, `wrangler dev`, and
 
 | M | Scope | Done when |
 |---|---|---|
-| **XN0** Service | Worker + DOs, auth, lobbies, directory, events, admit, expiry, rate limits; `xn_cli.py`; CI deploy | `xn_cli.py` hosts, lists, joins (with and without ask-to-join) and closes against `wrangler dev` |
+| **XN0** Service ✅ | Worker + DOs, auth, lobbies, directory, host heartbeat, admit, expiry, rate limits; `xn_cli.py`; CI test + deploy | `tools/xeleenet/test_service.py` hosts, lists, joins (with and without ask-to-join), removes and closes against `wrangler dev`: 42 checks pass (2026-10-27). Rate limits only enforced deployed |
 | **XN1** N-peer engine | §3.2 over direct addresses (env-configured, like `MELEE_NET` today): `Peer[]`, rings, v12 wire, host-led agreements, worst-peer sync, forwarding, void-on-drop | `net_test.py` with 3 and 4 instances, 40-140 ms per link, loss and jitter: 20 FFA and 10 Teams games with equal checksums. One pair forced through the host. The 1v1 regression suite still passes. |
 | **XN2** Connect | `net_stun.c`, `net_punch.c`, candidates through the service, per-link routes | 4 desktop instances join by code. Then a real test: home + phone hotspot + a second network |
 | **XN3** Menus | XeleeNet rows, name, Host page, stage grid, Browse, Join with Code, join steps and errors, ask-to-join prompt | Host → browse → join → CSS on desktop with a gamepad; every J-5 failure seen on screen |

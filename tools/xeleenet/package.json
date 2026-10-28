@@ -1,0 +1,12 @@
+{
+  "name": "xeleenet",
+  "private": true,
+  "description": "The XeleeNet lobby service (README.md)",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.148.0"
+  }
+}
