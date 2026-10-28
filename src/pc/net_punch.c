@@ -878,7 +878,8 @@ bool pc_xn_punch_from_env(void) {
     /* Boot waits here, as a MELEE_NET_PEERS session is up from boot. */
     uint64_t until = now_ms() + (uint64_t)(wait != NULL ? atoi(wait) : 300) * 1000;
     int r;
-    while ((r = pc_xn_punch_poll()) == 0 && now_ms() < until) {
+    /* pc_exit_requested: Ctrl-C or SIGTERM, which only set the flag. */
+    while ((r = pc_xn_punch_poll()) == 0 && now_ms() < until && !pc_exit_requested) {
         SDL_Delay(5);
     }
     if (r != 1) {
