@@ -32,7 +32,11 @@
  * Sequence arithmetic is modulo 128: the next expected seq is processed
  * and acked, one of the 8 before it is re-acked (the ack was lost), any
  * other is dropped. Transmit side under tx_lock, receive side game thread
- * only. */
+ * only.
+ *
+ * Every link has its own pair of lanes and sequence spaces. A message from
+ * pc_net_send_reliable goes to every peer: it is queued on all of their
+ * lanes or, when any of them is full, on none. */
 #include "compat.h"
 #include "pc/net_internal.h"
 #include "pc/net_chat.h"
@@ -62,10 +66,10 @@ typedef struct RelTx {
     int resends;
 } RelTx;
 
-static RelTx s_rel_tx[REL_LANES];  /* under tx_lock */
-static RelMsg s_rel_rx[REL_QUEUE]; /* lane 1 messages waiting for the caller */
+static RelTx s_rel_tx[MAX_PEERS][REL_LANES]; /* under tx_lock */
+static RelMsg s_rel_rx[REL_QUEUE];           /* lane 1 messages waiting for the caller */
 static int s_rel_rx_head, s_rel_rx_n;
-static uint8_t s_rel_expect[REL_LANES]; /* next lane seq accepted */
+static uint8_t s_rel_expect[MAX_PEERS][REL_LANES]; /* next lane seq accepted */
 static bool s_rel_unexpected_logged;
 
 static int lane_of(uint8_t type) {
@@ -104,14 +108,19 @@ static bool log_resend(unsigned n) {
     return (n & (n - 1)) == 0 && (n & 0x55555555u) != 0;
 }
 
-/* Send or resend each lane's message in flight (caller holds tx_lock). */
+/* Send or resend each lane's message in flight on every link (caller holds
+ * tx_lock). */
 void rel_service(void) {
-    if (s_rel_tx[0].n == 0 && s_rel_tx[1].n == 0) {
-        return;
-    }
-    uint64_t now = SDL_GetTicksNS();
+    uint64_t now = 0;
+    for (int peer = 0; peer < net.npeers; peer++) {
     for (int lane = 0; lane < REL_LANES; lane++) {
-        RelTx* t = &s_rel_tx[lane];
+        RelTx* t = &s_rel_tx[peer][lane];
+        if (t->n == 0) {
+            continue;
+        }
+        if (now == 0) {
+            now = SDL_GetTicksNS();
+        }
         if (t->n == 0 || (t->sent_ns != 0 && now - t->sent_ns < REL_RESEND_NS)) {
             continue;
         }
@@ -119,15 +128,16 @@ void rel_service(void) {
         Rel r = {hdr('R'), (uint8_t)(lane << 7 | t->seq), m->type, m->len, {0}};
         memcpy(r.payload, m->payload, m->len);
         wire_rel(&r);
-        tx(&r, offsetof(Rel, payload) + m->len);
+        tx(peer, &r, offsetof(Rel, payload) + m->len);
         if (t->sent_ns != 0) {
             t->resends++;
             if (log_resend((unsigned)t->resends)) {
-                pc_log_line("net: reliable seq %u type %02x len %u resend #%d", r.seq, m->type,
-                    m->len, t->resends);
+                pc_log_line("net: reliable seq %u type %02x len %u to peer %d resend #%d", r.seq,
+                    m->type, m->len, peer, t->resends);
             }
         }
         t->sent_ns = now;
+    }
     }
 }
 
@@ -146,15 +156,21 @@ bool pc_net_send_reliable(uint8_t type, const void* payload, int len) {
         }
         return pc_net_slippi_send_rel(type, payload, len);
     }
-    RelTx* t = &s_rel_tx[lane_of(type)];
     SDL_LockMutex(net.tx_lock);
-    bool ok = t->n < REL_QUEUE && (!rel_low_priority(type) || low_queued(t) < REL_LOW_QUEUE);
+    bool ok = net.npeers > 0;
+    for (int peer = 0; peer < net.npeers; peer++) {
+        const RelTx* t = &s_rel_tx[peer][lane_of(type)];
+        ok = ok && t->n < REL_QUEUE && (!rel_low_priority(type) || low_queued(t) < REL_LOW_QUEUE);
+    }
     if (ok) {
-        RelMsg* m = &t->q[(t->head + t->n++) % REL_QUEUE];
-        m->type = type;
-        m->len = (uint16_t)len;
-        if (len > 0) {
-            memcpy(m->payload, payload, (size_t)len);
+        for (int peer = 0; peer < net.npeers; peer++) {
+            RelTx* t = &s_rel_tx[peer][lane_of(type)];
+            RelMsg* m = &t->q[(t->head + t->n++) % REL_QUEUE];
+            m->type = type;
+            m->len = (uint16_t)len;
+            if (len > 0) {
+                memcpy(m->payload, payload, (size_t)len);
+            }
         }
         rel_service();
     }
@@ -175,16 +191,19 @@ int pc_net_recv_reliable(uint8_t* type, void* payload, int max) {
     return n;
 }
 
-void on_rel(const Rel* r, int n) {
-    if (r->len > REL_MAX || n < (int)(offsetof(Rel, payload) + r->len)) {
+void on_rel(int peer, const Rel* r, int n) {
+    if (r->len > REL_MAX || n < (int)(offsetof(Rel, payload) + r->len) || peer < 0 ||
+        peer >= net.npeers)
+    {
         return;
     }
     int lane = r->seq >> 7;
-    int d = seq_diff(r->seq & REL_SEQ_MASK, s_rel_expect[lane]);
+    uint8_t* expect = &s_rel_expect[peer][lane];
+    int d = seq_diff(r->seq & REL_SEQ_MASK, *expect);
     if (d == 0) {
         if (lane == 0) {
-            handshake_msg(r->type, r->payload, r->len);
-            s_rel_expect[lane] = (s_rel_expect[lane] + 1) & REL_SEQ_MASK;
+            handshake_msg(peer, r->type, r->payload, r->len);
+            *expect = (*expect + 1) & REL_SEQ_MASK;
         } else {
             /* Lane 1 is the engine's own reliable traffic. The Slippi transport
              * carries it directly on ENet's reliable channel and calls
@@ -193,19 +212,19 @@ void on_rel(const Rel* r, int n) {
             if (!rel_dispatch(r->type, r->payload, r->len)) {
                 return; /* caller not draining: no ack, the peer resends later */
             }
-            s_rel_expect[lane] = (s_rel_expect[lane] + 1) & REL_SEQ_MASK;
+            *expect = (*expect + 1) & REL_SEQ_MASK;
         }
     } else if (d < -REL_REACK || d > 0) {
         if (!s_rel_unexpected_logged) {
             s_rel_unexpected_logged = true;
-            pc_log_line("net: reliable seq %u unexpected (expect %u)", r->seq,
-                lane << 7 | s_rel_expect[lane]);
+            pc_log_line("net: reliable seq %u from peer %d unexpected (expect %u)", r->seq, peer,
+                lane << 7 | *expect);
         }
         return;
     }
     RelAck k = {hdr('K'), r->seq};
     SDL_LockMutex(net.tx_lock);
-    tx(&k, sizeof k);
+    tx(peer, &k, sizeof k);
     SDL_UnlockMutex(net.tx_lock);
 }
 
@@ -237,8 +256,11 @@ bool rel_dispatch(uint8_t type, const void* payload, int len) {
     return true;
 }
 
-void on_rel_ack(const RelAck* k) {
-    RelTx* t = &s_rel_tx[k->seq >> 7];
+void on_rel_ack(int peer, const RelAck* k) {
+    if (peer < 0 || peer >= net.npeers) {
+        return;
+    }
+    RelTx* t = &s_rel_tx[peer][k->seq >> 7];
     SDL_LockMutex(net.tx_lock);
     if (t->n > 0 && (k->seq & REL_SEQ_MASK) == t->seq) {
         t->head = (t->head + 1) % REL_QUEUE;
@@ -254,10 +276,13 @@ void on_rel_ack(const RelAck* k) {
 /* Session start: every queue empty, sequence numbers from 0 (timer parked). */
 void rel_reset(void) {
     pc_net_chat_reset();
-    for (int lane = 0; lane < REL_LANES; lane++) {
-        s_rel_tx[lane].head = s_rel_tx[lane].n = s_rel_tx[lane].resends = 0;
-        s_rel_tx[lane].seq = s_rel_expect[lane] = 0;
-        s_rel_tx[lane].sent_ns = 0;
+    for (int peer = 0; peer < MAX_PEERS; peer++) {
+        for (int lane = 0; lane < REL_LANES; lane++) {
+            RelTx* t = &s_rel_tx[peer][lane];
+            t->head = t->n = t->resends = 0;
+            t->seq = s_rel_expect[peer][lane] = 0;
+            t->sent_ns = 0;
+        }
     }
     s_rel_rx_head = s_rel_rx_n = 0;
     s_rel_unexpected_logged = false;

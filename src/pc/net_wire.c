@@ -209,9 +209,9 @@ uint32_t ready_hash(Ready rd, uint32_t session) {
  * repeats, and a recording of one session verifies under no other key. */
 static const char KEY_LABEL[] = "melee-pc netplay session key v1";
 static const char KEY_LABEL_DIRECT[] = "melee-pc netplay direct key v1";
-static uint8_t s_key[32];
-static bool s_key_on;     /* s_key holds a key for the session in progress */
-static bool s_key_pinned; /* from MELEE_NET_KEY: the handshake must not rekey */
+static uint8_t s_key[MAX_PEERS][32]; /* one per link */
+static bool s_key_on[MAX_PEERS];      /* s_key[peer] holds a key for the session in progress */
+static bool s_key_pinned; /* from MELEE_NET_KEY: every link's, and the handshake must not rekey */
 
 static void put32(uint8_t* p, uint32_t v) {
     p[0] = (uint8_t)(v >> 24);
@@ -225,8 +225,8 @@ static void put64(uint8_t* p, uint64_t v) {
     put32(p + 4, (uint32_t)v);
 }
 
-void net_key_session(uint64_t host_nonce, uint64_t guest_nonce) {
-    if (s_key_pinned) {
+void net_key_session(int peer, uint64_t host_nonce, uint64_t guest_nonce) {
+    if (s_key_pinned || peer < 0 || peer >= MAX_PEERS) {
         return;
     }
     /* Host first, guest second whichever side is deriving: the two peers
@@ -237,49 +237,54 @@ void net_key_session(uint64_t host_nonce, uint64_t guest_nonce) {
     put32(p, net.session);
     put64(p + 4, host_nonce);
     put64(p + 12, guest_nonce);
-    crypto_blake2b(s_key, sizeof s_key, m, sizeof m);
+    crypto_blake2b(s_key[peer], sizeof s_key[peer], m, sizeof m);
     crypto_wipe(m, sizeof m);
-    s_key_on = true;
+    s_key_on[peer] = true;
 }
 
 void net_key_direct(const char* secret) {
     crypto_blake2b_ctx ctx;
-    crypto_blake2b_init(&ctx, sizeof s_key);
+    crypto_blake2b_init(&ctx, sizeof s_key[0]);
     crypto_blake2b_update(&ctx, (const uint8_t*)KEY_LABEL_DIRECT, sizeof KEY_LABEL_DIRECT - 1);
     crypto_blake2b_update(&ctx, (const uint8_t*)secret, strlen(secret));
-    crypto_blake2b_final(&ctx, s_key);
+    crypto_blake2b_final(&ctx, s_key[0]);
     crypto_wipe(&ctx, sizeof ctx);
-    s_key_on = s_key_pinned = true;
+    for (int p = 0; p < MAX_PEERS; p++) {
+        memcpy(s_key[p], s_key[0], sizeof s_key[p]);
+        s_key_on[p] = true;
+    }
+    s_key_pinned = true;
 }
 
 void net_key_clear(void) {
     crypto_wipe(s_key, sizeof s_key);
-    s_key_on = s_key_pinned = false;
+    memset(s_key_on, 0, sizeof s_key_on);
+    s_key_pinned = false;
 }
 
-bool net_key_ready(void) {
-    return s_key_on;
+bool net_key_ready(int peer) {
+    return peer >= 0 && peer < MAX_PEERS && s_key_on[peer];
 }
 
 bool net_key_pinned(void) {
     return s_key_pinned;
 }
 
-void net_mac_stamp(void* buf, size_t len) {
+void net_mac_stamp(int peer, void* buf, size_t len) {
     uint8_t* mac = (uint8_t*)buf + len;
-    if (!s_key_on) {
+    if (!net_key_ready(peer)) {
         memset(mac, 0, NET_MAC_LEN);
         return;
     }
-    crypto_blake2b_keyed(mac, NET_MAC_LEN, s_key, sizeof s_key, buf, len);
+    crypto_blake2b_keyed(mac, NET_MAC_LEN, s_key[peer], sizeof s_key[peer], buf, len);
 }
 
-bool net_mac_ok(const void* buf, size_t len) {
-    if (!s_key_on) {
+bool net_mac_ok(int peer, const void* buf, size_t len) {
+    if (!net_key_ready(peer)) {
         return false;
     }
     uint8_t want[NET_MAC_LEN];
-    crypto_blake2b_keyed(want, NET_MAC_LEN, s_key, sizeof s_key, buf, len);
+    crypto_blake2b_keyed(want, NET_MAC_LEN, s_key[peer], sizeof s_key[peer], buf, len);
     const uint8_t* got = (const uint8_t*)buf + len;
     /* Compared without an early exit: a tag is rejected in the same time
      * whichever byte of it is wrong, so resends cannot be timed into a

@@ -440,7 +440,7 @@ static uint64_t nonce_local(void) {
     return s_nonce_local;
 }
 
-static void on_rules(const uint8_t* payload, int len) {
+static void on_rules(int peer, const uint8_t* payload, int len) {
     if (net.hs_host) {
         hs_drop(LOG_RULES_HOST, "RULES", "we host");
         return;
@@ -511,7 +511,7 @@ static void on_rules(const uint8_t* payload, int len) {
      * does verify (recv_inputs). Under tx_lock because the 4 ms timer stamps
      * its resends with this key on its own thread. */
     SDL_LockMutex(net.tx_lock);
-    net_key_session(ru.nonce, rd.nonce);
+    net_key_session(peer, ru.nonce, rd.nonce);
     SDL_UnlockMutex(net.tx_lock);
     rules_apply(&ru, true);
     wire_ready(&rd);
@@ -521,7 +521,7 @@ static void on_rules(const uint8_t* payload, int len) {
     hs_done();
 }
 
-static void on_ready(const uint8_t* payload, int len) {
+static void on_ready(int peer, const uint8_t* payload, int len) {
     if (!net.hs_host) {
         hs_drop(LOG_READY_GUEST, "READY", "we are the guest");
         return;
@@ -581,17 +581,17 @@ static void on_ready(const uint8_t* payload, int len) {
      * derive the same key without another message. Under tx_lock, like the
      * guest's install above. */
     SDL_LockMutex(net.tx_lock);
-    net_key_session(s_nonce_local, rd.nonce);
+    net_key_session(peer, s_nonce_local, rd.nonce);
     SDL_UnlockMutex(net.tx_lock);
     hs_done();
 }
 
-/* Reliable types below 0x10: the match handshake. */
-void handshake_msg(uint8_t type, const uint8_t* payload, int len) {
+/* Reliable types below 0x10: the match handshake, from peer `peer`. */
+void handshake_msg(int peer, uint8_t type, const uint8_t* payload, int len) {
     if (type == REL_RULES) {
-        on_rules(payload, len);
+        on_rules(peer, payload, len);
     } else if (type == REL_READY) {
-        on_ready(payload, len);
+        on_ready(peer, payload, len);
     }
 }
 

@@ -42,11 +42,13 @@ Hdr hdr(uint8_t magic) {
 void wire_rel(Rel* r) {
     (void)r;
 }
-void tx(const void* buf, size_t len) {
+void tx(int peer, const void* buf, size_t len) {
+    (void)peer;
     memcpy(s_out, buf, len);
     s_out_len = len;
 }
-void handshake_msg(uint8_t type, const uint8_t* p, int len) {
+void handshake_msg(int peer, uint8_t type, const uint8_t* p, int len) {
+    (void)peer;
     (void)type;
     (void)p;
     (void)len;
@@ -85,7 +87,7 @@ static bool deliver(void) {
     memcpy(&s_last, s_out, s_out_len);
     s_last_len = s_out_len;
     s_out[0] = 0;
-    on_rel(&s_last, (int)s_last_len);
+    on_rel(0, &s_last, (int)s_last_len);
     return s_out[0] == 'K';
 }
 
@@ -95,7 +97,7 @@ static void ack(void) {
     RelAck k;
     memcpy(&k, s_out, sizeof k);
     s_out[0] = 0;
-    on_rel_ack(&k);
+    on_rel_ack(0, &k);
 }
 
 static int recv_user(void) {
@@ -118,6 +120,7 @@ static void round_trip(uint8_t type, int i) {
 }
 
 int main(void) {
+    net.npeers = 1;
     net.active = true;
     rel_reset();
 
@@ -126,31 +129,31 @@ int main(void) {
         round_trip(0x10, i);
         round_trip(0x01, i);
     }
-    assert(s_hs_msgs == 300 && s_rel_expect[0] == 300 % 128 && s_rel_expect[1] == 300 % 128);
-    assert(s_rel_tx[0].n == 0 && s_rel_tx[1].n == 0 && recv_user() < 0);
+    assert(s_hs_msgs == 300 && s_rel_expect[0][0] == 300 % 128 && s_rel_expect[0][1] == 300 % 128);
+    assert(s_rel_tx[0][0].n == 0 && s_rel_tx[0][1].n == 0 && recv_user() < 0);
 
     /* duplicate of the last one (its 'K' was lost): re-acked, not re-processed */
     Rel dup = s_last;
-    on_rel(&dup, (int)s_last_len);
+    on_rel(0, &dup, (int)s_last_len);
     assert(s_out[0] == 'K' && s_out[offsetof(RelAck, seq)] == dup.seq && s_hs_msgs == 300);
     s_out[0] = 0;
-    dup.seq = (uint8_t)((s_rel_expect[0] - REL_REACK) & REL_SEQ_MASK); /* oldest re-acked */
-    on_rel(&dup, (int)s_last_len);
+    dup.seq = (uint8_t)((s_rel_expect[0][0] - REL_REACK) & REL_SEQ_MASK); /* oldest re-acked */
+    on_rel(0, &dup, (int)s_last_len);
     assert(s_out[0] == 'K' && s_hs_msgs == 300 && s_unexpected == 0);
     s_out[0] = 0;
 
     /* out of window: 9 back and 1 ahead are dropped, logged once per session */
-    dup.seq = (uint8_t)((s_rel_expect[0] - REL_REACK - 1) & REL_SEQ_MASK);
-    on_rel(&dup, (int)s_last_len);
-    dup.seq = (uint8_t)((s_rel_expect[0] + 1) & REL_SEQ_MASK);
-    on_rel(&dup, (int)s_last_len);
-    dup.seq = (uint8_t)(0x80 | ((s_rel_expect[1] + 1) & REL_SEQ_MASK));
-    on_rel(&dup, (int)s_last_len);
+    dup.seq = (uint8_t)((s_rel_expect[0][0] - REL_REACK - 1) & REL_SEQ_MASK);
+    on_rel(0, &dup, (int)s_last_len);
+    dup.seq = (uint8_t)((s_rel_expect[0][0] + 1) & REL_SEQ_MASK);
+    on_rel(0, &dup, (int)s_last_len);
+    dup.seq = (uint8_t)(0x80 | ((s_rel_expect[0][1] + 1) & REL_SEQ_MASK));
+    on_rel(0, &dup, (int)s_last_len);
     assert(s_out[0] == 0 && s_hs_msgs == 300 && recv_user() < 0 && s_unexpected == 1);
     rel_reset();
-    assert(s_rel_expect[0] == 0 && s_rel_tx[1].seq == 0 && s_rel_tx[1].sent_ns == 0);
+    assert(s_rel_expect[0][0] == 0 && s_rel_tx[0][1].seq == 0 && s_rel_tx[0][1].sent_ns == 0);
     dup.seq = 0x85;
-    on_rel(&dup, (int)s_last_len);
+    on_rel(0, &dup, (int)s_last_len);
     assert(s_unexpected == 2); /* the once-flag was cleared */
 
     /* receive side: the caller stops draining, RULES/READY still flow */
@@ -185,7 +188,7 @@ int main(void) {
     assert(pc_net_send_reliable(0x11, NULL, 0));        /* the lobby's ready barrier: uncapped */
     assert(pc_net_send_reliable(REL_SCENE, "sc", 2));   /* and so is a scene hand-off */
     assert(!pc_net_send_reliable(REL_RESUME, "rs", 2)); /* only now is the lane full */
-    assert(s_rel_tx[1].n == REL_QUEUE);
+    assert(s_rel_tx[0][1].n == REL_QUEUE);
     assert(pc_net_send_reliable(0x02, NULL, 0) && out_seq() == 1 && deliver());
     assert(s_hs_msgs == 302);
     ack(); /* clear the handshake lane so only the user lane resends below */
@@ -195,7 +198,7 @@ int main(void) {
         s_now += REL_RESEND_NS;
         rel_service();
     }
-    assert(s_rel_tx[1].resends == 70 && s_resend_logs == 1 + 4);
+    assert(s_rel_tx[0][1].resends == 70 && s_resend_logs == 1 + 4);
 
     /* REL_RESUME is net.c's own lane-1 type: dispatched inline and acked,
      * never queued for the caller, and the lane's sequence keeps running so

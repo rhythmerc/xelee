@@ -29,15 +29,16 @@
  *     sends on a closed socket, and pc_net_disconnect removes the timer and
  *     joins the receive thread before taking the lock, so neither outlives
  *     the socket;
- *   - the frozen packet copy (s_last_pkt, net.c), the held queue (s_held,
- *     net_sim.c) and the sim knobs tx() reads, net.tx_pkts/tx_inputs;
- *   - the reliable transmit queue (s_rel_tx, net_reliable.c):
- *     s_rel_tx[s_rel_tx_head] is the message in flight, resent until its
- *     'K' arrives. The reliable receive queue is game thread only;
- *   - the session key (net_wire.c), the RTT ring, and net.session and
- *     net.peer, which the receive thread alone changes once a session is up
- *     (the guest learning its id, a dual-stack peer answering from another
- *     address).
+ *   - each link's frozen packet copy (Peer.last_pkt, net.c), the held queue
+ *     (s_held, net_sim.c) and the sim knobs tx() reads, net.tx_pkts/
+ *     tx_inputs;
+ *   - each link's reliable transmit queues (s_rel_tx, net_reliable.c): the
+ *     head of a lane is the message in flight, resent until its 'K' arrives.
+ *     The reliable receive queue is game thread only;
+ *   - the link keys (net_wire.c), each link's RTT ring, and net.session and
+ *     each Peer.addr, which the receive thread alone changes once a session
+ *     is up (the guest learning its id, a dual-stack peer answering from
+ *     another address).
  * All simulation state (frames, input rings, snapshots, rollback, time
  * sync, handshake, record/replay) is game thread only; pc_net_note_io
  * ignores other threads for that reason.
@@ -141,6 +142,11 @@ static inline void sock_startup(void) {}
  * continuous play, and the peers part cleanly with a reason when it lands
  * instead of overflowing into undefined behaviour. */
 #define SESSION_MAX_FRAMES 100000000
+/* Remote players a session links to: up to three, one per other controller
+ * port (docs/xeleenet-plan.md §3.2). A 1v1 has one. Everything about one link
+ * -- its address, key, sequence spaces, reliable lanes -- is indexed by its
+ * peer number, 0..net.npeers-1, in every module. */
+#define MAX_PEERS 3
 
 /* ---- wire format ------------------------------------------------------ */
 
@@ -302,6 +308,7 @@ _Static_assert(sizeof(SceneMsg) == 8, "wire layout");
 typedef struct Held {
     uint64_t release_ns;
     uint16_t len;
+    uint8_t peer; /* the link it goes out on (or came in on) */
     uint8_t buf[HELD_BYTES + NET_MAC_LEN];
 } Held;
 #define HELD_MAX 128
@@ -346,9 +353,9 @@ struct NetSession {
     /* session (net.c); active and sock flip under tx_lock */
     bool active;
     sock_t sock;
-    struct sockaddr_storage peer;
-    socklen_t peer_len;
-    int local, remote, delay;
+    int npeers;               /* links in this session, 1..MAX_PEERS */
+    int peer_port[MAX_PEERS]; /* the controller port each peer drives */
+    int local, remote, delay; /* remote: peer 0's port (the only one in a 1v1) */
     uint32_t session; /* 0 on the guest until the host's first packet */
     /* How long to wait for the peer's first datagram, ms. CONNECT_TIMEOUT_MS
      * for a session the user dialled by hand (the other end may simply be
@@ -425,7 +432,7 @@ void net_resume_rel(const void* payload, int len);
 /* One sendto with errno/WSA translation and the sock_err counter; used by
  * the senders here and the link simulator's flush (net_sim.c). Caller holds
  * tx_lock. Returns bytes sent, or -1 on any error (transient or logged). */
-int net_sendto(const void* buf, size_t len);
+int net_sendto(int peer, const void* buf, size_t len);
 
 /* ---- net_wire.c ------------------------------------------------------- */
 
@@ -458,21 +465,21 @@ uint32_t ready_hash(Ready rd, uint32_t session);
  * secret instead, for the direct MELEE_NET sessions that run no handshake;
  * a pinned key is never replaced by a derived one, so a session cannot rekey
  * mid-flight and lose the datagrams that straddle the change. */
-void net_key_session(uint64_t host_nonce, uint64_t guest_nonce);
+void net_key_session(int peer, uint64_t host_nonce, uint64_t guest_nonce);
 void net_key_direct(const char* secret);
 void net_key_clear(void);
-bool net_key_ready(void);
+bool net_key_ready(int peer);
 /* True when the key came from MELEE_NET_KEY rather than the handshake. Both
  * peers then hold it from connect, so there is no leg of a handshake to wait
  * out and an unauthenticated datagram is a forgery from the first one. */
 bool net_key_pinned(void);
 /* Write the tag for the len bytes at buf into buf[len..len+NET_MAC_LEN); the
  * caller owns that room. Zeros while no key exists. */
-void net_mac_stamp(void* buf, size_t len);
+void net_mac_stamp(int peer, void* buf, size_t len);
 /* True when the tag after the len bytes at buf is this session's. False
  * whenever no key exists: the caller decides what an unauthenticated
  * datagram means at that point in the session. */
-bool net_mac_ok(const void* buf, size_t len);
+bool net_mac_ok(int peer, const void* buf, size_t len);
 Hdr hdr(uint8_t magic);
 bool addr_eq(const struct sockaddr_storage* a, const struct sockaddr_storage* b);
 /* net_lan.c; text form of a datagram source, for logs and getaddrinfo(). */
@@ -482,16 +489,16 @@ void net_addr_text(const struct sockaddr* sa, char* out, size_t cap);
 
 int held_put(Held* held, const void* buf, size_t len, uint64_t release_ns);
 Held* held_due(Held* held, uint64_t now);
-void tx(const void* buf, size_t len); /* caller holds tx_lock */
+void tx(int peer, const void* buf, size_t len); /* caller holds tx_lock */
 void tx_flush(void);                  /* caller holds tx_lock */
 void sim_env(uint16_t bind_port);     /* MELEE_NET_SIM_* into net.sim_* */
 void sim_reset(void);
 
 /* ---- net_reliable.c --------------------------------------------------- */
 
-void rel_service(void); /* caller holds tx_lock */
-void on_rel(const Rel* r, int n);
-void on_rel_ack(const RelAck* k);
+void rel_service(void); /* every peer's lanes; caller holds tx_lock */
+void on_rel(int peer, const Rel* r, int n);
+void on_rel_ack(int peer, const RelAck* k);
 /* Deliver one lane-1 reliable message to its consumer (REL_RESUME, REL_DELAY,
  * REL_SCENE, REL_CHAT, or a caller-queued type). Shared by the custom
  * transport's on_rel and the Slippi receive path. False when a caller-queued
@@ -501,7 +508,7 @@ void rel_reset(void);
 
 /* ---- net_handshake.c -------------------------------------------------- */
 
-void handshake_msg(uint8_t type, const uint8_t* payload, int len);
+void handshake_msg(int peer, uint8_t type, const uint8_t* payload, int len);
 void rules_restore(void);
 int32_t pc_net_slippi_time_offset_us(void);
 void handshake_direct(void);

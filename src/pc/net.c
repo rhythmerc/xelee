@@ -77,8 +77,59 @@ static int32_t s_remote_have = -1;                      /* lowest s_port_have of
 static int32_t s_remote_newest = -1;                    /* lowest s_port_newest of them */
 static int32_t s_end_frame = -1; /* game_over_note: first tick with a result */
 static bool s_game_over;         /* the match end can no longer be rolled back */
-static int32_t s_last_acked = -1;    /* newest local frame the peer holds */
+
+/* One link per remote player (net.npeers of them, net.peer_port[i] its
+ * controller port): everything this file keeps about talking to one peer.
+ * Each group's comment says which thread owns it; the locks are the ones the
+ * whole-session versions of these fields had. */
+typedef struct Peer {
+    int port; /* the controller port it drives */
+    /* Its address: the receive thread follows a dual-stack peer to the address
+     * it answers from (rx_datagram), under tx_lock. */
+    struct sockaddr_storage addr;
+    socklen_t addr_len;
+    /* Receive gate (receive thread, s_rx_lock). */
+    bool heard;          /* any datagram from it yet */
+    uint64_t last_rx_ns; /* when its last accepted datagram arrived */
+    /* One authenticated datagram has arrived, so the peer holds the link's
+     * key and nothing unauthenticated is accepted from it from here on. Until
+     * then mac_quiet counts what was let through for want of one, so a pair
+     * that never agrees on a key says so instead of looking protected. */
+    bool mac_seen;
+    int mac_quiet;
+    bool seq_init;
+    uint16_t seq_top;  /* highest seq seen */
+    uint64_t seq_bits; /* bit k: (top-k) received; bit 0 = top */
+    int32_t rx_have;   /* newest contiguous frame of its input queued (acked) */
+    /* Transmit (tx_lock). */
+    uint16_t tx_seq; /* next tx seq */
+    struct {
+        uint16_t seq;
+        uint64_t send_ns;
+    } rtt_ring[64];  /* last 64 sends */
+    Packet last_pkt; /* the newest input packet, for tx_timer's resend */
+    bool last_valid;
+    uint64_t last_send_ns;
+    /* Game thread. */
+    int32_t last_acked; /* newest local frame it holds */
+    uint32_t ping_us;   /* smoothed RTT of this link */
+    /* Its checksums by frame. Each input packet reports one frame, the newest
+     * it has confirmed, and that is often ahead of ours; a single slot
+     * overwritten by every packet meant those frames were never compared from
+     * this side. Kept by frame instead, each is compared once we confirm it
+     * too (GGRS's pending-checksum map, bounded here by the ring). */
+    struct {
+        int32_t frame; /* -1: empty */
+        uint32_t ck;
+    } rck[RING];
+    int32_t ck_checked; /* newest frame compared against its */
+} Peer;
+static Peer s_peer[MAX_PEERS];
 static int32_t s_rb_frame = -1;      /* oldest mispredicted frame not rolled back yet */
+
+static int peer_index(const Peer* p) {
+    return (int)(p - s_peer);
+}
 
 static void remote_marks_update(void) {
     int32_t have = INT32_MAX, newest = INT32_MAX;
@@ -120,24 +171,12 @@ static uint64_t s_slippi_now_us(void);
 static void s_slippi_send_inputs(void);
 static bool s_slippi_recv(void);
 static bool s_slippi_wait_remote(int32_t need);
-/* The peer's checksums by frame. Each input packet reports one frame, the
- * newest it has confirmed, and that is often ahead of ours; a single slot
- * overwritten by every packet meant those frames were never compared from
- * this side. Kept by frame instead, each is compared once we confirm it too
- * (GGRS's pending-checksum map, bounded here by the ring). */
-static struct {
-    int32_t frame; /* -1: empty */
-    uint32_t ck;
-} s_rck[RING];
-static int32_t s_ck_checked = -1; /* newest frame compared against the peer's */
 static bool s_slippi_ck_checked_once;
 static uint32_t s_ck_ring[RING];  /* our checksum entering each frame */
 /* Per-frame Slippi wire checksum, computed the same place s_ck_ring is. The
  * wire carries Slippi's formula, not our FNV one, so the desync check under
  * Slippi compares against this ring (see check_desync). */
 static uint32_t s_wire_ck_ring[RING];
-static bool s_heard;              /* any packet from the peer yet */
-static uint64_t s_last_rx_ns;     /* when the last accepted datagram arrived */
 /* When the contiguous remote mark last moved, 0 before the first time. The
  * no-progress bound is measured from here, not from the start of a wait:
  * wait_remote's own clock restarts on every call, so a peer that advanced one
@@ -152,12 +191,6 @@ static PADStatus s_raw_last; /* newest physical sample (port 0) */
 static int s_status;         /* pc_net_peer_status(); kept until the next connect */
 static bool s_peer_left;     /* BYE received or version mismatch: stop waiting */
 static bool s_warn_src, s_warn_sess, s_warn_bad, s_warn_mac; /* one reject line each per session */
-/* One authenticated datagram has arrived, so the peer holds the session key
- * and nothing unauthenticated is accepted from here on (recv_inputs). Until
- * then s_mac_quiet counts what was let through for want of one, so a pair
- * that never agrees on a key says so instead of looking protected. */
-static bool s_mac_seen;
-static int s_mac_quiet;
 #define MAC_QUIET_MAX 120 /* ~2 s of a peer's traffic at 60 Hz */
 
 static unsigned s_stalls, s_advances, s_rollbacks, s_rb_lost;
@@ -196,16 +229,13 @@ static SDL_ThreadID s_game_thread;
  * net.tx_lock. net.active flips under it too, so the timer never sends on
  * a closed socket. */
 static SDL_TimerID s_timer;
-static Packet s_last_pkt;
-static bool s_last_valid;
-static uint64_t s_last_send_ns;
 
 /* Receive side: rx_main, a thread of its own, drains the socket, runs the
  * authentication gate, acks every input packet and times the round trip of
  * every ack the moment the datagram lands; recv_inputs applies what it
  * queued on the game thread (the "receive" section says why). s_rx_lock
- * guards the queue and everything the gate owns: s_heard, s_last_rx_ns, the
- * MAC grace state, the seq window, s_rx_have, s_rx_held, the sticky
+ * guards the queue and everything the gate owns: each Peer's receive group
+ * (heard, MAC grace state, seq window, rx_have), s_rx_held, the sticky
  * "peer gone" pair and the rx counters. It is taken before net.tx_lock,
  * never while holding it. */
 static SDL_Thread* s_rx_thread; /* NULL: recv_inputs drains the socket itself */
@@ -218,24 +248,15 @@ static atomic_int s_frame_pub; /* net.frame as the receive thread may read it */
 static atomic_bool s_want_resend;
 /* send_inputs' adv, recomputed every tick (tx_timer stamps it on resends) */
 static atomic_int s_adv_pub;
-static int32_t s_rx_have = -1;   /* newest contiguous remote frame queued (acked) */
 static bool s_rx_left;           /* BYE or protocol mismatch seen: s_peer_left to be */
 static int s_rx_why;             /* the s_status that goes with it */
 static unsigned s_rx_full;       /* datagrams dropped on a full queue, this window */
 static Held s_rx_held[HELD_MAX]; /* incoming, receive thread */
 
-/* Sequence numbers (proto 3): every outgoing datagram carries s_tx_seq++,
- * assigned in send_packet under tx_lock. The receiver dedups exact copies
- * (RTP-style anti-replay: a 64-bit window behind the highest seq) and counts
- * reorders but still processes them (their pads may fill a gap). */
-static uint16_t s_tx_seq; /* next tx seq (tx_lock) */
-static struct {
-    uint16_t seq;
-    uint64_t send_ns;
-} s_rtt_ring[64]; /* last 64 sends (tx_lock) */
-static bool s_rx_seq_init;
-static uint16_t s_rx_seq_top;             /* highest seq seen */
-static uint64_t s_rx_seq_bits;            /* bit k: (top-k) received; bit 0 = top */
+/* Sequence numbers (proto 3): every input packet carries its link's
+ * tx_seq++, assigned in send_packet under tx_lock. The receiver dedups exact
+ * copies (RTP-style anti-replay: a 64-bit window behind the highest seq) and
+ * counts reorders but still processes them (their pads may fill a gap). */
 static unsigned s_rx_dups, s_rx_reorders; /* this stats window */
 
 /* Socket errors: transient ones (EAGAIN/EINTR/ICMP unreachable) are ignored,
@@ -429,9 +450,10 @@ static void sock_err_note(const char* what, int e) {
 }
 
 /* One sendto with error translation (caller holds tx_lock). */
-int net_sendto(const void* buf, size_t len) {
-    int r =
-        (int)sendto(net.sock, (const char*)buf, len, 0, (struct sockaddr*)&net.peer, net.peer_len);
+int net_sendto(int peer, const void* buf, size_t len) {
+    const Peer* p = &s_peer[peer];
+    int r = (int)sendto(
+        net.sock, (const char*)buf, len, 0, (const struct sockaddr*)&p->addr, p->addr_len);
     if (r < 0) {
         int e = sock_last_err();
         if (sock_would_block(e)) {
@@ -446,17 +468,17 @@ int net_sendto(const void* buf, size_t len) {
 /* Wire copy of a host-order input packet out (caller holds tx_lock). Stamps
  * the next tx seq and remembers when it went out, so the matching ack yields
  * a clean RTT sample regardless of resends or delayed acks. */
-static void send_packet(Packet* pk) {
-    pk->seq = s_tx_seq++;
+static void send_packet(Peer* p, Packet* pk) {
+    pk->seq = p->tx_seq++;
     int slot = pk->seq & 63;
-    s_rtt_ring[slot].seq = pk->seq;
-    s_rtt_ring[slot].send_ns = SDL_GetTicksNS();
+    p->rtt_ring[slot].seq = pk->seq;
+    p->rtt_ring[slot].send_ns = SDL_GetTicksNS();
     Packet w = *pk;
     wire_packet(&w);
     uint8_t out[PACKET_WIRE_MAX];
     memcpy(out, &w, offsetof(Packet, pads));
     size_t n = offsetof(Packet, pads) + pads_encode(w.pads, w.count, out + offsetof(Packet, pads));
-    tx(out, n);
+    tx(peer_index(p), out, n);
 }
 
 /* Slippi's second send: the newest input packet goes out again mid-frame,
@@ -479,18 +501,23 @@ static Uint32 SDLCALL tx_timer(void* ud, SDL_TimerID id, Uint32 interval) {
      * On clean links (low loss, low jitter, low rollback depth), disable redundant
      * mid-frame retransmissions to prevent bufferbloat and network congestion.
      * Re-enable immediately when packet loss, jitter spikes, or rollbacks occur.
-     * If the game thread is stalled in an asset load or DVD read (now - s_last_send_ns >= 16 ms),
+     * If the game thread is stalled in an asset load or DVD read (now - last_send_ns >= 16 ms),
      * keep sending keepalives every 7 ms so neither peer times out. */
-    bool game_thread_quiet = (now - s_last_send_ns >= 16000000ull);
     bool need_resend = atomic_load_explicit(&s_want_resend, memory_order_relaxed);
-    if (s_last_valid && (now - s_last_send_ns >= 7000000ull) && (game_thread_quiet || need_resend))
-    {
-        /* The pads are frozen, but the advantage is not: a resend carrying
-         * the adv from when the packet was built would feed the peer's phase
-         * ring a sample up to a frame old (longer across a load). */
-        s_last_pkt.adv = (int8_t)atomic_load_explicit(&s_adv_pub, memory_order_relaxed);
-        send_packet(&s_last_pkt);
-        s_last_send_ns = now;
+    for (int i = 0; i < net.npeers; i++) {
+        Peer* p = &s_peer[i];
+        bool game_thread_quiet = (now - p->last_send_ns >= 16000000ull);
+        if (p->last_valid && (now - p->last_send_ns >= 7000000ull) &&
+            (game_thread_quiet || need_resend))
+        {
+            /* The pads are frozen, but the advantage is not: a resend
+             * carrying the adv from when the packet was built would feed the
+             * peer's phase ring a sample up to a frame old (longer across a
+             * load). */
+            p->last_pkt.adv = (int8_t)atomic_load_explicit(&s_adv_pub, memory_order_relaxed);
+            send_packet(p, &p->last_pkt);
+            p->last_send_ns = now;
+        }
     }
     int32_t seen = atomic_load_explicit(&s_frame_pub, memory_order_relaxed);
     SDL_UnlockMutex(net.tx_lock);
@@ -510,89 +537,97 @@ static void send_inputs(void) {
     if (newest < 0) {
         return; /* do not send input packets until the first local frame exists */
     }
-    Packet pk;
-    memset(&pk, 0, sizeof pk);
-    pk.h = hdr('M');
-    /* Everything the peer has not acked yet, oldest first so its contiguous
-     * mark can always advance; the cap only bites when acks are starved.
-     *
-     * Computed in 64 bits. The values are all frame numbers, and while a
-     * session is bounded well below the point where a frame number could
-     * overflow (see SESSION_MAX_FRAMES), `s_last_acked + 1` and
-     * `newest - first + 1` are the expressions that would do it first, and
-     * signed overflow is undefined rather than merely wrong. Widening costs
-     * nothing here and removes the class. */
-    int64_t newest64 = newest;
-    int64_t first = (int64_t)s_last_acked + 1;
-    if (first < 0) {
-        first = 0;
-    }
-    if (first <= newest64 - RING) {
-        first = newest64 - RING + 1;
-    }
-    /* Every unacked frame, up to the packet's REDUNDANCY slots. The peer
-     * keeps contiguous data only, so a packet moves its mark at most `count`
-     * frames past what it had acked a round trip ago: delivery is count
-     * frames per round trip, and 60 Hz needs 60 * RTT of them. This used to
-     * ship only as many as loss and rollback depth asked for (4 on a clean
-     * link), which starved every link over ~66 ms of round trip: the remote
-     * fell behind, the window filled, the rollbacks deepened, and the depth
-     * was the one thing that widened the packet again -- the session held 60
-     * Hz only by rolling back 8 frames deep. GGPO, GGRS and Slippi all send
-     * the whole unacked span; loss costs nothing extra because every packet
-     * already repeats everything unacked, and a reconnect's refill (a whole
-     * ring's gap) goes out at the full width with no special case. */
-    int64_t count = newest64 - first + 1;
-    if (count > REDUNDANCY) {
-        count = REDUNDANCY;
-    }
-    if (count < 1) {
-        count = 0;
-        first = newest64;
-    }
-    s_red_target = (int)count;
-    for (int32_t i = 0; i < count; i++) {
-        pk.pads[i] = s_local_ring[(first + i) & (RING - 1)];
-    }
-    pk.count = (uint8_t)count;
-    pk.first = (int32_t)first;
-    pk.newest = newest;
-    pk.ck_frame = confirmed_frame();
-    pk.ck = pk.ck_frame >= 0 ? s_ck_ring[pk.ck_frame & (RING - 1)] : 0;
-    /* How far this simulation has run past the newest input the peer has
-     * given us. The peer compares it with its own and only the side that is
+    /* How far this simulation has run past the newest input the peers have
+     * given us. Each peer compares it with its own and only the side that is
      * further ahead gives a frame back (net_sync.c time_sync). */
     int32_t adv = net.frame - 1 - s_remote_have;
-    pk.adv = (int8_t)(adv < -127 ? -127 : adv > 127 ? 127 : adv);
-    atomic_store_explicit(&s_adv_pub, pk.adv, memory_order_relaxed);
+    int8_t adv8 = (int8_t)(adv < -127 ? -127 : adv > 127 ? 127 : adv);
+    atomic_store_explicit(&s_adv_pub, adv8, memory_order_relaxed);
     atomic_store_explicit(&s_want_resend,
         s_loss_pct >= 2 || jitter_us() >= 4000 || s_rb_depth_recent >= 2, memory_order_relaxed);
     uint64_t now = SDL_GetTicksNS();
+    int red = 0;
     SDL_LockMutex(net.tx_lock);
     tx_flush();
     rel_service();
-    send_packet(&pk);
-    s_last_pkt = pk;
-    s_last_valid = true;
-    s_last_send_ns = now;
+    for (int i = 0; i < net.npeers; i++) {
+        Peer* p = &s_peer[i];
+        Packet pk;
+        memset(&pk, 0, sizeof pk);
+        pk.h = hdr('M');
+        /* Everything this peer has not acked yet, oldest first so its
+         * contiguous mark can always advance; the cap only bites when acks
+         * are starved.
+         *
+         * Computed in 64 bits. The values are all frame numbers, and while a
+         * session is bounded well below the point where a frame number could
+         * overflow (see SESSION_MAX_FRAMES), `last_acked + 1` and
+         * `newest - first + 1` are the expressions that would do it first,
+         * and signed overflow is undefined rather than merely wrong.
+         * Widening costs nothing here and removes the class. */
+        int64_t newest64 = newest;
+        int64_t first = (int64_t)p->last_acked + 1;
+        if (first < 0) {
+            first = 0;
+        }
+        if (first <= newest64 - RING) {
+            first = newest64 - RING + 1;
+        }
+        /* Every unacked frame, up to the packet's REDUNDANCY slots. The peer
+         * keeps contiguous data only, so a packet moves its mark at most
+         * `count` frames past what it had acked a round trip ago: delivery is
+         * count frames per round trip, and 60 Hz needs 60 * RTT of them. This
+         * used to ship only as many as loss and rollback depth asked for (4
+         * on a clean link), which starved every link over ~66 ms of round
+         * trip: the remote fell behind, the window filled, the rollbacks
+         * deepened, and the depth was the one thing that widened the packet
+         * again -- the session held 60 Hz only by rolling back 8 frames deep.
+         * GGPO, GGRS and Slippi all send the whole unacked span; loss costs
+         * nothing extra because every packet already repeats everything
+         * unacked, and a reconnect's refill (a whole ring's gap) goes out at
+         * the full width with no special case. */
+        int64_t count = newest64 - first + 1;
+        if (count > REDUNDANCY) {
+            count = REDUNDANCY;
+        }
+        if (count < 1) {
+            count = 0;
+            first = newest64;
+        }
+        red = (int)count > red ? (int)count : red;
+        for (int32_t f = 0; f < count; f++) {
+            pk.pads[f] = s_local_ring[(first + f) & (RING - 1)];
+        }
+        pk.count = (uint8_t)count;
+        pk.first = (int32_t)first;
+        pk.newest = newest;
+        pk.ck_frame = confirmed_frame();
+        pk.ck = pk.ck_frame >= 0 ? s_ck_ring[pk.ck_frame & (RING - 1)] : 0;
+        pk.adv = adv8;
+        send_packet(p, &pk);
+        p->last_pkt = pk;
+        p->last_valid = true;
+        p->last_send_ns = now;
+    }
     SDL_UnlockMutex(net.tx_lock);
+    s_red_target = red;
     if (newest != s_send_frame) {
         s_send_frame = newest;
         s_send_ns = now;
     }
 }
 
-static void send_ack(int32_t frame, uint16_t seq) {
+static void send_ack(const Peer* p, int32_t frame, uint16_t seq) {
     Ack a = {hdr('A'), seq, frame};
     wire_ack(&a);
     SDL_LockMutex(net.tx_lock);
-    tx(&a, sizeof a);
+    tx(peer_index(p), &a, sizeof a);
     SDL_UnlockMutex(net.tx_lock);
 }
 
-static void send_bye(uint8_t reason) {
+static void send_bye(int peer, uint8_t reason) {
     Bye b = {hdr('B'), reason};
-    tx(&b, sizeof b);
+    tx(peer, &b, sizeof b);
 }
 
 /* ---- receive -----------------------------------------------------------
@@ -611,7 +646,7 @@ static void send_bye(uint8_t reason) {
  * datagram lands: drain the socket, authenticate, ack every input packet
  * and time every ack of ours. What is about the game goes through a queue
  * (rx_push) that recv_inputs applies on the game thread: the input rings,
- * s_remote_have, frame advantage, s_last_acked, the RTT statistics, the
+ * s_remote_have, frame advantage, each link's last_acked, the RTT statistics, the
  * reliable lanes and through them the handshake, resume, delay and scene
  * hand-off. A BYE or a protocol mismatch is a sticky flag instead, so a full
  * queue cannot lose it.
@@ -622,11 +657,11 @@ static void send_bye(uint8_t reason) {
  * steady ping went from 40-47 ms to 23-24 ms too, because the old figure also
  * carried most of a frame of drain delay on each end.
  *
- * The ack carries s_rx_have, the receive thread's contiguous mark over what
+ * The ack carries the link's rx_have, the receive thread's contiguous mark over what
  * it has queued. on_inputs applies the same packets in the same order under
  * the same rule, so the next drain brings s_remote_have to that mark or past
  * it: an ack never claims a frame the game thread will not get, and the peer
- * drops a frame from its redundancy window (which starts at s_last_acked + 1)
+ * drops a frame from its redundancy window (which starts at last_acked + 1)
  * only once it is queued here. A packet the full queue refuses is still
  * acked, with the unchanged mark, so the peer's RTT and loss stay honest.
  *
@@ -637,6 +672,7 @@ static void send_bye(uint8_t reason) {
 
 /* One datagram's worth of game-thread work, host order. */
 typedef struct RxMsg {
+    int peer;   /* the link it came in on */
     int len;    /* message bytes */
     int rtt_us; /* 'A': round trip timed as it landed, -1 for none;
                  * 'M': RX_REORDERED if it arrived behind a later seq */
@@ -662,12 +698,13 @@ static RxMsg s_rxq[RXQ]; /* under s_rx_lock */
 static int s_rxq_head, s_rxq_n;
 
 /* Queue a message for the game thread (receive thread, s_rx_lock held). */
-static bool rx_push(const void* body, int len, int rtt_us) {
+static bool rx_push(const Peer* p, const void* body, int len, int rtt_us) {
     if (s_rxq_n == RXQ) {
         s_rx_full++;
         return false;
     }
     RxMsg* m = &s_rxq[(s_rxq_head + s_rxq_n++) % RXQ];
+    m->peer = peer_index(p);
     m->len = len;
     m->rtt_us = rtt_us;
     memcpy(&m->u, body, (size_t)len);
@@ -678,18 +715,18 @@ static bool rx_push(const void* body, int len, int rtt_us) {
  * copy already seen (drop it), SEQ_REORDER is older but not a duplicate
  * (process it, its pads may fill a gap), SEQ_NEW advances the window. */
 enum { SEQ_NEW, SEQ_DUP, SEQ_REORDER };
-static int seq_check(uint16_t seq) {
-    if (!s_rx_seq_init) {
-        s_rx_seq_init = true;
-        s_rx_seq_top = seq;
-        s_rx_seq_bits = 1; /* bit 0 marks the top as received */
+static int seq_check(Peer* p, uint16_t seq) {
+    if (!p->seq_init) {
+        p->seq_init = true;
+        p->seq_top = seq;
+        p->seq_bits = 1; /* bit 0 marks the top as received */
         return SEQ_NEW;
     }
-    int16_t d = (int16_t)(seq - s_rx_seq_top);
+    int16_t d = (int16_t)(seq - p->seq_top);
     if (d > 0) {
-        s_rx_seq_bits = d >= 64 ? 0 : s_rx_seq_bits << d;
-        s_rx_seq_bits |= 1;
-        s_rx_seq_top = seq;
+        p->seq_bits = d >= 64 ? 0 : p->seq_bits << d;
+        p->seq_bits |= 1;
+        p->seq_top = seq;
         return SEQ_NEW;
     }
     uint32_t back = (uint32_t)(-d);
@@ -697,19 +734,19 @@ static int seq_check(uint16_t seq) {
         return SEQ_REORDER; /* too old to remember: process, cannot dedup */
     }
     uint64_t bit = 1ull << back;
-    if (s_rx_seq_bits & bit) {
+    if (p->seq_bits & bit) {
         return SEQ_DUP;
     }
-    s_rx_seq_bits |= bit;
+    p->seq_bits |= bit;
     return SEQ_REORDER;
 }
 
 /* An input packet off the wire (receive thread, s_rx_lock held): checked,
  * queued for on_inputs and acked. The ack goes out here rather than after
  * the game thread applies the packet because its seq is what the peer times
- * its round trip by; its frame is s_rx_have, final once the packet is queued
+ * its round trip by; its frame is rx_have, final once the packet is queued
  * (see the top of this section). */
-static void rx_input(const Packet* pk, int n, bool reordered) {
+static void rx_input(Peer* p, const Packet* pk, int n, bool reordered) {
     int32_t frame = atomic_load(&s_frame_pub);
     int count = pk->count > REDUNDANCY ? REDUNDANCY : pk->count;
     /* A peer can be at most window + delays ahead of us; anything else is
@@ -740,21 +777,21 @@ static void rx_input(const Packet* pk, int n, bool reordered) {
     }
     /* Only contiguous data is taken; the ack below tells the peer what to
      * resend, so a gap never has to be tracked. */
-    int64_t have = s_rx_have;
+    int64_t have = p->rx_have;
     if (count > 0 && first <= have + 1 && last > have && last < (int64_t)frame + RING / 2) {
         have = last;
     }
-    if (rx_push(pk, n, reordered ? RX_REORDERED : -1)) {
-        s_rx_have = (int32_t)have;
+    if (rx_push(p, pk, n, reordered ? RX_REORDERED : -1)) {
+        p->rx_have = (int32_t)have;
     }
-    send_ack(s_rx_have, pk->seq);
+    send_ack(p, p->rx_have, pk->seq);
 }
 
 /* The game thread's half of a packet rx_input queued. rx_input's rule over
  * the same packets in the same order, against a net.frame never behind the
- * one it checked, so a drain leaves s_remote_have at or above s_rx_have. */
-static void on_inputs(const Packet* pk, bool reordered) {
-    const int port = net.remote;
+ * one it checked, so a drain leaves the port's mark at or above rx_have. */
+static void on_inputs(Peer* p, const Packet* pk, bool reordered) {
+    const int port = p->port;
     int count = pk->count > REDUNDANCY ? REDUNDANCY : pk->count;
     int64_t last = (int64_t)pk->first + count - 1;
     if (count > 0 && pk->first <= s_port_have[port] + 1 && last > s_port_have[port] &&
@@ -777,8 +814,8 @@ static void on_inputs(const Packet* pk, bool reordered) {
         s_progress_ns = SDL_GetTicksNS();
     }
     if (pk->ck_frame >= 0) {
-        s_rck[pk->ck_frame & (RING - 1)].frame = pk->ck_frame;
-        s_rck[pk->ck_frame & (RING - 1)].ck = pk->ck;
+        p->rck[pk->ck_frame & (RING - 1)].frame = pk->ck_frame;
+        p->rck[pk->ck_frame & (RING - 1)].ck = pk->ck;
     }
     /* The peer's frame advantage against ours. Both are measured the same
      * way against data that actually arrived, so their DIFFERENCE is the
@@ -849,9 +886,10 @@ static void slp_frame_cb(void* user, int remote_slot, int32_t frame,
     uint32_t ckv = 0;
     if (pc_slippi_adapter_remote_checksum(&s_slippi, remote_slot, &ckf, &ckv) && ckf >= 0) {
         int i = ckf & (RING - 1);
-        if (s_rck[i].frame < ckf) { /* never let an older report overwrite */
-            s_rck[i].frame = ckf;
-            s_rck[i].ck = ckv;
+        Peer* p = &s_peer[0];
+        if (p->rck[i].frame < ckf) { /* never let an older report overwrite */
+            p->rck[i].frame = ckf;
+            p->rck[i].ck = ckv;
         }
     }
 }
@@ -956,8 +994,8 @@ static bool s_slippi_recv(void) {
     }
     if (st == PC_SLIPPI_NET_CONNECTED || s_slippi_ever_heard) {
         s_slippi_ever_heard = true;
-        s_heard = true;
-        s_last_rx_ns = SDL_GetTicksNS();
+        s_peer[0].heard = true;
+        s_peer[0].last_rx_ns = SDL_GetTicksNS();
         uint32_t ping = 0;
         PcSlippiNetStats stats;
         pc_slippi_net_stats(s_slippi.net, &stats);
@@ -1053,31 +1091,38 @@ static bool s_slippi_wait_remote(int32_t need) {
  * thread); -1 unless the ack echoes a seq we actually sent and have not
  * sampled yet. Consumed, so a delayed duplicate ack cannot skew the
  * estimate. The ring is written by both senders under tx_lock. */
-static int rtt_sample(uint16_t seq) {
+static int rtt_sample(Peer* p, uint16_t seq) {
     int rtt = -1;
     SDL_LockMutex(net.tx_lock);
     int slot = seq & 63;
-    if (s_rtt_ring[slot].seq == seq && s_rtt_ring[slot].send_ns != 0) {
+    if (p->rtt_ring[slot].seq == seq && p->rtt_ring[slot].send_ns != 0) {
         uint64_t now = SDL_GetTicksNS();
-        if (now > s_rtt_ring[slot].send_ns && now - s_rtt_ring[slot].send_ns < 5000000000ull) {
-            rtt = (int)((now - s_rtt_ring[slot].send_ns) / 1000);
+        if (now > p->rtt_ring[slot].send_ns && now - p->rtt_ring[slot].send_ns < 5000000000ull) {
+            rtt = (int)((now - p->rtt_ring[slot].send_ns) / 1000);
         }
-        s_rtt_ring[slot].send_ns = 0;
+        p->rtt_ring[slot].send_ns = 0;
     }
     SDL_UnlockMutex(net.tx_lock);
     return rtt;
 }
 
 /* The game thread's half of an ack: rtt is rtt_sample()'s. */
-static void on_ack(const Ack* a, int rtt) {
+static void on_ack(Peer* p, const Ack* a, int rtt) {
     /* The peer cannot hold a frame we never sent: a bogus ack above s_wrote
      * would leave send_inputs() with first > newest, i.e. shipping no pads at
      * all for the rest of the session (and INT32_MAX overflows first). */
-    if (a->frame > s_last_acked && a->frame <= s_wrote) {
-        s_last_acked = a->frame;
+    if (a->frame > p->last_acked && a->frame <= s_wrote) {
+        p->last_acked = a->frame;
     }
     if (rtt >= 0) {
-        net.ping_us = net.ping_us == 0 ? (uint32_t)rtt : (uint32_t)((net.ping_us * 3 + rtt) / 4);
+        p->ping_us = p->ping_us == 0 ? (uint32_t)rtt : (uint32_t)((p->ping_us * 3 + rtt) / 4);
+        /* The session's ping is its slowest link's: that link sets the delay
+         * and the time sync's slack. */
+        uint32_t worst = 0;
+        for (int i = 0; i < net.npeers; i++) {
+            worst = s_peer[i].ping_us > worst ? s_peer[i].ping_us : worst;
+        }
+        net.ping_us = worst;
         s_ping_sum += (uint64_t)rtt;
         s_ping_n++;
         if (s_rtt_min == 0 || (uint32_t)rtt < s_rtt_min) {
@@ -1092,7 +1137,7 @@ static void on_ack(const Ack* a, int rtt) {
 
 /* One datagram from the peer, header already in host order and checked
  * (receive thread, s_rx_lock held). */
-static void rx_dispatch(void* buf, int n) {
+static void rx_dispatch(Peer* p, void* buf, int n) {
     union {
         Hdr h;
         Packet pk;
@@ -1118,7 +1163,7 @@ static void rx_dispatch(void* buf, int n) {
         }
         wire_packet(&pk);
         n = (int)packet_len(&pk);
-        switch (seq_check(pk.seq)) {
+        switch (seq_check(p, pk.seq)) {
         case SEQ_DUP:
             /* An exact copy means the peer has not seen an ack for it. The
              * original was processed, but the ack itself may be what went
@@ -1127,14 +1172,14 @@ static void rx_dispatch(void* buf, int n) {
              * cover the gap. Re-ack it: the ack carries our contiguous mark,
              * so it is correct whenever it arrives and costs one datagram. */
             s_rx_dups++;
-            send_ack(s_rx_have, pk.seq);
+            send_ack(p, p->rx_have, pk.seq);
             break;
         case SEQ_REORDER:
             s_rx_reorders++; /* older but new: still process, its pads may fill a gap */
-            rx_input(&pk, n, true);
+            rx_input(p, &pk, n, true);
             break;
         default:
-            rx_input(&pk, n, false);
+            rx_input(p, &pk, n, false);
             break;
         }
         break;
@@ -1145,20 +1190,20 @@ static void rx_dispatch(void* buf, int n) {
         }
         wire_ack(&u->ack);
         s_rx_acks++;
-        rx_push(&u->ack, n, rtt_sample(u->ack.seq));
+        rx_push(p, &u->ack, n, rtt_sample(p, u->ack.seq));
         break;
     case 'R':
         if (n < (int)offsetof(Rel, payload)) {
             return;
         }
         wire_rel(&u->rel);
-        rx_push(&u->rel, n, -1);
+        rx_push(p, &u->rel, n, -1);
         break;
     case 'K':
         if (n != (int)sizeof(RelAck)) {
             return;
         }
-        rx_push(&u->rack, n, -1);
+        rx_push(p, &u->rack, n, -1);
         break;
     case 'B':
         /* Only a peer we have already heard from can end the session. Before
@@ -1166,7 +1211,7 @@ static void rx_dispatch(void* buf, int n) {
          * peer answers from either family), so without this any host that
          * knows the published port could kill a connecting session with one
          * forged 8-byte datagram. */
-        if (n != (int)sizeof(Bye) || s_rx_left || !s_heard) {
+        if (n != (int)sizeof(Bye) || s_rx_left || !p->heard) {
             return;
         }
         s_rx_left = true;
@@ -1176,8 +1221,8 @@ static void rx_dispatch(void* buf, int n) {
     default:
         return;
     }
-    s_heard = true;
-    s_last_rx_ns = SDL_GetTicksNS();
+    p->heard = true;
+    p->last_rx_ns = SDL_GetTicksNS();
 }
 
 /* Reject unknown/truncated datagrams before they can select a peer or fail
@@ -1252,11 +1297,27 @@ bool pc_net_send_datagram(const void* data, size_t size, uint32_t address, uint1
  * queued for the next call. */
 #define RX_BUDGET 128
 
+/* The link a datagram belongs to: once a peer has been heard, its address
+ * picks it; before that, the player the header names (still in wire order,
+ * but it is one byte). NULL when neither matches. */
+static Peer* rx_peer(const Hdr* h, const struct sockaddr_storage* from) {
+    for (int i = 0; i < net.npeers; i++) {
+        if (s_peer[i].heard && addr_eq(from, &s_peer[i].addr)) {
+            return &s_peer[i];
+        }
+    }
+    for (int i = 0; i < net.npeers; i++) {
+        if (s_peer[i].port == h->player) {
+            return &s_peer[i];
+        }
+    }
+    return NULL;
+}
+
 /* One datagram off the socket (receive thread, s_rx_lock held). It is
  * dropped, with one log line per session and reason, unless it comes from
- * the peer's address, carries our protocol version and session id (the
- * guest learns the id from the host's first packet) and names the remote
- * player. */
+ * a peer's address, carries our protocol version and session id (the guest
+ * learns the id from the host's first packet) and names that peer's player. */
 static void rx_datagram(void* buf, int n, const struct sockaddr_storage* from, socklen_t from_len) {
     Hdr* h = buf;
     if (s_datagram_handler && from->ss_family == AF_INET) {
@@ -1277,6 +1338,12 @@ static void rx_datagram(void* buf, int n, const struct sockaddr_storage* from, s
         s_rx_malformed++;
         return;
     }
+    Peer* p = rx_peer(h, from);
+    if (p == NULL) {
+        s_rx_bad_player++;
+        return;
+    }
+    const int pi = peer_index(p);
     /* The authentication gate, ahead of every other check: a datagram
      * that cannot prove it belongs to this session must not pin the peer
      * address, teach us the session id, fail our protocol version or
@@ -1302,13 +1369,13 @@ static void rx_datagram(void* buf, int n, const struct sockaddr_storage* from, s
      * The key is read under tx_lock: the handshake installs it on the
      * game thread while this runs on the receive thread. */
     SDL_LockMutex(net.tx_lock);
-    bool keyed = net_key_ready();
-    bool mac_ok = keyed && net_mac_ok(buf, (size_t)body);
+    bool keyed = net_key_ready(pi);
+    bool mac_ok = keyed && net_mac_ok(pi, buf, (size_t)body);
     bool pinned = net_key_pinned();
     SDL_UnlockMutex(net.tx_lock);
     if (mac_ok) {
-        s_mac_seen = true;
-    } else if (s_mac_seen || pinned) {
+        p->mac_seen = true;
+    } else if (p->mac_seen || pinned) {
         s_rx_bad_mac++;
         if (!s_warn_mac) {
             s_warn_mac = true;
@@ -1316,7 +1383,7 @@ static void rx_datagram(void* buf, int n, const struct sockaddr_storage* from, s
                 h->magic >= 32 && h->magic < 127 ? h->magic : '?', n, atomic_load(&s_frame_pub));
         }
         return;
-    } else if (keyed && ++s_mac_quiet == MAC_QUIET_MAX) {
+    } else if (keyed && ++p->mac_quiet == MAC_QUIET_MAX) {
         /* We hold a key and two seconds of the peer's traffic has gone by
          * without one tag of it verifying. That is not the handshake leg
          * the upgrade above allows for; it is two peers holding different
@@ -1329,7 +1396,7 @@ static void rx_datagram(void* buf, int n, const struct sockaddr_storage* from, s
             MAC_QUIET_MAX);
     }
     wire_hdr(h);
-    bool same_addr = addr_eq(from, &net.peer);
+    bool same_addr = addr_eq(from, &p->addr);
     /* Once pinned, unrelated traffic cannot change any session state.
      *
      * Before pinning, the address is NOT a usable filter: the two sides
@@ -1341,18 +1408,18 @@ static void rx_datagram(void* buf, int n, const struct sockaddr_storage* from, s
      * needs no session state to do damage -- see the BYE in rx_dispatch:
      * before pinning, a forged one from anywhere would otherwise end the
      * session on its own. */
-    if (s_heard && !same_addr) {
+    if (p->heard && !same_addr) {
         s_rx_bad_src++;
         if (!s_warn_src) {
             char got[80] = "?", want[80] = "?";
             net_addr_text((const struct sockaddr*)from, got, sizeof got);
-            net_addr_text((const struct sockaddr*)&net.peer, want, sizeof want);
+            net_addr_text((const struct sockaddr*)&p->addr, want, sizeof want);
             s_warn_src = true;
             pc_log_line("net: dropped a datagram from %s (the peer is %s)", got, want);
         }
         return;
     }
-    if (h->player != net.remote) {
+    if (h->player != p->port) {
         s_rx_bad_player++;
         return;
     }
@@ -1380,13 +1447,13 @@ static void rx_datagram(void* buf, int n, const struct sockaddr_storage* from, s
         is_rules = h->magic == 'R' && rel->type == REL_RULES && ntohs(rel->len) == sizeof(Rules);
     }
     bool learn_session = net.session == 0 && net.local == 1 && h->session != 0 && is_rules;
-    bool guest_preamble = !s_heard && net.local == 0 && h->session == 0;
+    bool guest_preamble = !p->heard && net.local == 0 && h->session == 0;
     if (h->session != net.session && !learn_session && !guest_preamble) {
         s_rx_bad_sess++;
         if (!s_warn_sess) {
             s_warn_sess = true;
             pc_log_line("net: dropped a datagram for session %08x player %u (ours %08x, peer %d)",
-                h->session, h->player, net.session, net.remote);
+                h->session, h->player, net.session, p->port);
         }
         return;
     }
@@ -1403,21 +1470,24 @@ static void rx_datagram(void* buf, int n, const struct sockaddr_storage* from, s
         net.session = h->session;
         SDL_UnlockMutex(net.tx_lock);
     }
-    if (!s_heard && !same_addr) {
+    if (!p->heard && !same_addr) {
         char got[80] = "?", want[80] = "?";
         net_addr_text((const struct sockaddr*)from, got, sizeof got);
-        net_addr_text((const struct sockaddr*)&net.peer, want, sizeof want);
-        pc_log_line("net: peer answers from %s, not %s; following it", got, want);
+        net_addr_text((const struct sockaddr*)&p->addr, want, sizeof want);
+        pc_log_line("net: peer %d answers from %s, not %s; following it", pi, got, want);
         SDL_LockMutex(net.tx_lock);
-        memcpy(&net.peer, from, sizeof net.peer);
-        net.peer_len = from_len;
+        memcpy(&p->addr, from, sizeof p->addr);
+        p->addr_len = from_len;
         SDL_UnlockMutex(net.tx_lock);
     }
     if (net.sim_rx_delay_ns == 0) {
-        rx_dispatch(buf, body);
+        rx_dispatch(p, buf, body);
     } else {
         /* A full simulator queue is one more loss. */
-        held_put(s_rx_held, buf, (size_t)body, SDL_GetTicksNS() + net.sim_rx_delay_ns);
+        int slot = held_put(s_rx_held, buf, (size_t)body, SDL_GetTicksNS() + net.sim_rx_delay_ns);
+        if (slot >= 0) {
+            s_rx_held[slot].peer = (uint8_t)pi;
+        }
     }
 }
 
@@ -1457,7 +1527,7 @@ static bool rx_pump(void) {
         uint64_t now = SDL_GetTicksNS();
         for (Held* h; (h = held_due(s_rx_held, now)) != NULL;) {
             h->release_ns = 0;
-            rx_dispatch(h->buf, h->len);
+            rx_dispatch(&s_peer[h->peer], h->buf, h->len);
         }
         SDL_UnlockMutex(s_rx_lock);
     }
@@ -1486,7 +1556,15 @@ static int SDLCALL rx_main(void* ud) {
  * receive thread's clock, read under its lock (game thread). */
 static uint64_t rx_heard_ns(void) {
     SDL_LockMutex(s_rx_lock);
-    uint64_t t = s_heard ? s_last_rx_ns : 0;
+    /* The quietest link's: one peer gone silent stalls the frame loop as
+     * surely as all of them, and before every peer has been heard there is no
+     * rx clock to go by. */
+    uint64_t t = UINT64_MAX;
+    for (int i = 0; i < net.npeers; i++) {
+        uint64_t heard = s_peer[i].heard ? s_peer[i].last_rx_ns : 0;
+        t = heard < t ? heard : t;
+    }
+    t = t == UINT64_MAX ? 0 : t;
     SDL_UnlockMutex(s_rx_lock);
     return t;
 }
@@ -1518,18 +1596,19 @@ void recv_inputs(void) {
         if (!got) {
             break;
         }
+        Peer* p = &s_peer[m.peer];
         switch (m.u.h.magic) {
         case 'M':
-            on_inputs(&m.u.pk, m.rtt_us == RX_REORDERED);
+            on_inputs(p, &m.u.pk, m.rtt_us == RX_REORDERED);
             break;
         case 'A':
-            on_ack(&m.u.ack, m.rtt_us);
+            on_ack(p, &m.u.ack, m.rtt_us);
             break;
         case 'R':
-            on_rel(&m.u.rel, m.len);
+            on_rel(m.peer, &m.u.rel, m.len);
             break;
         default: /* 'K' */
-            on_rel_ack(&m.u.rack);
+            on_rel_ack(m.peer, &m.u.rack);
             break;
         }
     }
@@ -1609,16 +1688,18 @@ static void check_desync(void) {
     if (s_game_over && upto > s_end_frame) {
         upto = s_end_frame; /* the GAME! frames after it ran on predictions */
     }
-    int32_t from = s_ck_checked + 1 > net.ck_from ? s_ck_checked + 1 : net.ck_from;
+    for (int pi = 0; pi < net.npeers; pi++) {
+    Peer* p = &s_peer[pi];
+    int32_t from = p->ck_checked + 1 > net.ck_from ? p->ck_checked + 1 : net.ck_from;
     if (from <= net.frame - RING) {
         from = net.frame - RING + 1; /* aged out of s_ck_ring */
     }
     for (int32_t f = from; f <= upto; f++) {
         int i = f & (RING - 1);
-        if (s_rck[i].frame != f) {
+        if (p->rck[i].frame != f) {
             continue;
         }
-        s_ck_checked = f;
+        p->ck_checked = f;
         /* Under Slippi the wire carries Slippi's checksum formula (Dolphin's),
          * not our FNV frame_checksum, so compare that ring instead; using
          * s_ck_ring here would flag every frame. The Slippi hard check has a
@@ -1627,29 +1708,30 @@ static void check_desync(void) {
         uint32_t local;
         if (pc_net_slippi_active()) {
             local = s_wire_ck_ring[i];
-            bad = pc_slippi_checksum_is_hard_desync(local, s_rck[i].ck);
+            bad = pc_slippi_checksum_is_hard_desync(local, p->rck[i].ck);
             /* One-shot proof the gate is live and comparing real values, not
              * two zeros (an all-absent checksum set is also 0, and frame 0
              * before the fight is exactly that). Fire on the first frame the
              * fight makes both nonzero. */
-            if (!s_slippi_ck_checked_once && (local != 0 || s_rck[i].ck != 0)) {
+            if (!s_slippi_ck_checked_once && (local != 0 || p->rck[i].ck != 0)) {
                 s_slippi_ck_checked_once = true;
                 pc_log_line(
                     "net: first Slippi desync check at frame %d (local %08x remote %08x)", f, local,
-                    s_rck[i].ck);
+                    p->rck[i].ck);
             }
         } else {
             local = s_ck_ring[i];
-            bad = local != s_rck[i].ck;
+            bad = local != p->rck[i].ck;
         }
         if (bad) {
             net.desync_reported = true;
-            pc_log_line(
-                "net: DESYNC at frame %d (local %08x remote %08x)", f, local, s_rck[i].ck);
+            pc_log_line("net: DESYNC at frame %d with peer %d (P%d) (local %08x remote %08x)", f,
+                pi, p->port + 1, local, p->rck[i].ck);
             dump_rings_around(f);
             dump_states_around(f);
             return;
         }
+    }
     }
 }
 
@@ -1789,8 +1871,8 @@ void net_resume_rel(const void* payload, int len) {
     /* The peer may hold frames whose acks died with the link: starting the
      * refill above them saves a round trip. Same guard as on_ack, it cannot
      * hold a frame we never sent. */
-    if (r.have > s_last_acked && r.have <= s_wrote) {
-        s_last_acked = r.have;
+    if (r.have > s_peer[0].last_acked && r.have <= s_wrote) {
+        s_peer[0].last_acked = r.have;
     }
     if (r.newest > s_port_newest[net.remote]) {
         s_port_newest[net.remote] = r.newest;
@@ -2160,22 +2242,29 @@ static void session_reset(void) {
     net.tick_frame = -1;
     net.resim = false;
     remote_ports_set(s_remote_mask);
-    s_last_acked = s_rb_frame = s_ck_checked = -1;
+    s_rb_frame = -1;
     s_end_frame = -1;
     s_game_over = false;
-    for (int i = 0; i < RING; i++) {
-        s_rck[i].frame = -1;
+    /* Every link starts over; its port and address are what connect set. */
+    for (int i = 0; i < MAX_PEERS; i++) {
+        Peer* p = &s_peer[i];
+        Peer keep = *p;
+        memset(p, 0, sizeof *p);
+        p->port = keep.port;
+        p->addr = keep.addr;
+        p->addr_len = keep.addr_len;
+        p->rx_have = p->last_acked = p->ck_checked = -1;
+        for (int f = 0; f < RING; f++) {
+            p->rck[f].frame = -1;
+        }
     }
-    net.desync_reported = s_heard = s_peer_left = s_no_progress = false;
+    net.desync_reported = s_peer_left = s_no_progress = false;
     s_slippi_ck_checked_once = false;
-    s_last_rx_ns = 0;
     s_progress_ns = 0;
     s_warn_src = s_warn_sess = s_warn_bad = s_warn_mac = false;
     /* A fresh session starts with no key and trusting nothing it has not
      * yet authenticated; the key arrives with the handshake. */
     net_key_clear();
-    s_mac_seen = false;
-    s_mac_quiet = 0;
     s_status = PC_NET_PEER_OK;
     s_rc = RSM_NONE;
     s_rc_sent = false;
@@ -2188,17 +2277,11 @@ static void session_reset(void) {
     s_ping_n = 0;
     s_rtt_min = s_rtt_max = 0;
     net.tx_pkts = s_rx_pkts = net.tx_inputs = s_rx_acks = 0;
-    s_tx_seq = 0;
-    memset(s_rtt_ring, 0, sizeof s_rtt_ring);
-    s_rx_seq_init = false;
-    s_rx_seq_top = 0;
-    s_rx_seq_bits = 0;
     s_rx_dups = s_rx_reorders = 0;
     s_sock_err = 0;
     s_warn_sock = false;
     s_rx_malformed = s_rx_bad_src = s_rx_bad_sess = s_rx_bad_player = s_tx_would_block = 0;
     s_rx_bad_mac = s_rx_full = 0;
-    s_rx_have = -1;
     s_rx_left = false;
     s_rx_why = 0;
     s_rxq_head = s_rxq_n = 0;
@@ -2223,7 +2306,6 @@ static void session_reset(void) {
     net.rb_barrier = -1;
     s_scene_last = -1;
     s_rb_lost_logged = false;
-    s_last_valid = false;
     rel_reset();
     net.hs = HS_IDLE;
     net.hs_host = false;
@@ -2281,7 +2363,9 @@ void pc_net_disconnect(void) {
         net.sim_hold = false; /* straight out: the held queue dies with the socket */
         for (int i = 0; i < 5; i++) {
             SDL_LockMutex(net.tx_lock);
-            send_bye(why);
+            for (int peer = 0; peer < net.npeers; peer++) {
+                send_bye(peer, why);
+            }
             SDL_UnlockMutex(net.tx_lock);
             SDL_Delay(4);
         }
@@ -2299,7 +2383,9 @@ void pc_net_disconnect(void) {
      * the nonces it was derived from are dead with the session, so the key
      * does not outlive it in this process's memory either. */
     net_key_clear();
-    s_mac_seen = false;
+    for (int i = 0; i < MAX_PEERS; i++) {
+        s_peer[i].mac_seen = false;
+    }
     rules_restore();
     HSD_PadLibData.qtype = 0;
     SDL_UnlockMutex(net.tx_lock);
@@ -2410,8 +2496,10 @@ static bool connect_impl(
         freeaddrinfo(res);
         return false;
     }
-    memcpy(&net.peer, res->ai_addr, res->ai_addrlen);
-    net.peer_len = (socklen_t)res->ai_addrlen;
+    struct sockaddr_storage peer_addr;
+    memset(&peer_addr, 0, sizeof peer_addr);
+    memcpy(&peer_addr, res->ai_addr, res->ai_addrlen);
+    socklen_t peer_len = (socklen_t)res->ai_addrlen;
     int family = res->ai_family;
     freeaddrinfo(res);
 
@@ -2484,6 +2572,10 @@ static bool connect_impl(
     net.local = player ? 1 : 0;
     net.remote = 1 - net.local;
     remote_ports_set((uint8_t)(1u << net.remote));
+    net.npeers = 1;
+    net.peer_port[0] = s_peer[0].port = net.remote;
+    s_peer[0].addr = peer_addr;
+    s_peer[0].addr_len = peer_len;
     /* A hand-typed address may be a peer the user has not started yet, so it
      * keeps the long wait. One handed over from matchmaking (pc_net_connect_
      * socket, the only caller that passes a socket) belongs to a peer that
@@ -2613,6 +2705,8 @@ bool pc_net_connect_slippi(
     net.local = player ? 1 : 0;
     net.remote = 1 - net.local;
     remote_ports_set((uint8_t)(1u << net.remote));
+    net.npeers = 1;
+    net.peer_port[0] = s_peer[0].port = net.remote;
     /* Default: P1 sends the setup. A matchmaking session overrides this from
      * the ticket's decider flag (pc_net_slippi_set_setup_host). */
     s_slippi_setup_host = net.local == 0;
@@ -2772,6 +2866,8 @@ bool pc_net_slippi_adopt(int local_player, uint32_t rng_offset) {
     net.local = local_player ? 1 : 0;
     net.remote = 1 - net.local;
     remote_ports_set((uint8_t)(1u << net.remote));
+    net.npeers = 1;
+    net.peer_port[0] = s_peer[0].port = net.remote;
     net.connect_timeout_ms = MATCH_CONNECT_TIMEOUT_MS;
     const char* delay = getenv("MELEE_NET_DELAY");
     /* Each Slippi client picks its own input delay (2 by default) and labels

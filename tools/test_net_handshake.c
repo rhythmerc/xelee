@@ -285,6 +285,7 @@ static void forge_ready(
 }
 
 int main(void) {
+    net.npeers = 1;
     const uint32_t sess_a = 0xa1b2c3d4, sess_b = 0x0badf00d, sess_c = 0x77c0ffee;
     uint8_t rules_a[sizeof(Rules)], ready_a[sizeof(Ready)], key_guest[32];
     uint64_t host_nonce, guest_nonce;
@@ -328,7 +329,7 @@ int main(void) {
     s_fresh_unlock = 0x000000ff00000000ull; /* the guest's differs: the regression */
     load_fresh(sess_a, 1);
     s_out_len = -1;
-    handshake_msg(REL_RULES, rules_a, (int)sizeof rules_a);
+    handshake_msg(0, REL_RULES, rules_a, (int)sizeof rules_a);
     assert(net.hs == HS_DONE);
     assert(net.seed == 1234 && net.start_frame == 300 + HS_LEAD_FRAMES);
     assert(s_out_type == REL_READY && s_out_len == (int)sizeof(Ready));
@@ -346,18 +347,18 @@ int main(void) {
     }
     /* The guest has both nonces now, so it has the datagram key (net_wire.c)
      * before the READY it just built has even gone out. */
-    assert(net_key_ready());
+    assert(net_key_ready(0));
     memcpy(key_guest, s_key, sizeof key_guest);
     /* both peers now hold the same unlock state, each with its own saved */
     assert(s_unlock_live == s_unlock_all && s_unlock_orig == 0x000000ff00000000ull);
     side_save(&guest);
 
     side_load(&host);
-    handshake_msg(REL_READY, ready_a, (int)sizeof ready_a);
+    handshake_msg(0, REL_READY, ready_a, (int)sizeof ready_a);
     assert(net.hs == HS_DONE && s_nonce_peer == guest_nonce);
     /* ...and the host derives the same 32 bytes from the same session id and
      * the same two nonces, with nothing sent for the key itself. */
-    assert(net_key_ready() && memcmp(s_key, key_guest, sizeof key_guest) == 0);
+    assert(net_key_ready(0) && memcmp(s_key, key_guest, sizeof key_guest) == 0);
     {
         /* A datagram tagged under it verifies, one bit of the tag or of the
          * body does not, and a key for another session id does not either --
@@ -365,21 +366,21 @@ int main(void) {
          * nonces differ anyway. */
         uint8_t dg[40 + NET_MAC_LEN];
         memset(dg, 0x5A, sizeof dg);
-        net_mac_stamp(dg, 40);
-        assert(net_mac_ok(dg, 40));
+        net_mac_stamp(0, dg, 40);
+        assert(net_mac_ok(0, dg, 40));
         dg[40] ^= 1;
-        assert(!net_mac_ok(dg, 40));
+        assert(!net_mac_ok(0, dg, 40));
         dg[40] ^= 1;
         dg[7] ^= 1;
-        assert(!net_mac_ok(dg, 40));
+        assert(!net_mac_ok(0, dg, 40));
         dg[7] ^= 1;
         net.session = sess_c;
         net_key_clear();
-        net_key_session(host_nonce, guest_nonce);
-        assert(memcmp(s_key, key_guest, sizeof key_guest) != 0 && !net_mac_ok(dg, 40));
+        net_key_session(0, host_nonce, guest_nonce);
+        assert(memcmp(s_key, key_guest, sizeof key_guest) != 0 && !net_mac_ok(0, dg, 40));
         net.session = sess_a;
         net_key_clear();
-        net_key_session(host_nonce, guest_nonce);
+        net_key_session(0, host_nonce, guest_nonce);
         assert(memcmp(s_key, key_guest, sizeof key_guest) == 0);
     }
     side_save(&host);
@@ -393,7 +394,7 @@ int main(void) {
     load_fresh(sess_b, 1);
     s_logn = 0;
     s_out_len = -1;
-    handshake_msg(REL_RULES, rules_a, (int)sizeof rules_a);
+    handshake_msg(0, REL_RULES, rules_a, (int)sizeof rules_a);
     assert(net.hs == HS_IDLE);
     assert(log_count("net: RULES ignored (hash mismatch)") == 1);
     assert(net.seed == 0 && net.start_frame == -1 && s_out_len == -1);
@@ -408,7 +409,7 @@ int main(void) {
         s_logn = 0;
         s_out_len = -1;
         net.tick_frame = 300;
-        handshake_msg(REL_RULES, rules_b, (int)sizeof rules_b);
+        handshake_msg(0, REL_RULES, rules_b, (int)sizeof rules_b);
         assert(net.hs == HS_DONE && net.seed == 777 && net.start_frame == 310);
         assert(s_out_type == REL_READY && s_out_len == (int)sizeof(Ready));
         assert(s_nonce_peer == 0x0123456789abcdefull);
@@ -419,9 +420,9 @@ int main(void) {
         forge_rules(rules_c, rules_a, sess_b, 0xfedcba9876543210ull, 4321, 500);
         s_logn = 0;
         s_out_len = -1;
-        handshake_msg(REL_RULES, rules_c, (int)sizeof rules_c);
-        handshake_msg(REL_RULES, rules_c, (int)sizeof rules_c);
-        handshake_msg(REL_RULES, rules_c, (int)sizeof rules_c);
+        handshake_msg(0, REL_RULES, rules_c, (int)sizeof rules_c);
+        handshake_msg(0, REL_RULES, rules_c, (int)sizeof rules_c);
+        handshake_msg(0, REL_RULES, rules_c, (int)sizeof rules_c);
         assert(net.hs == HS_DONE && net.seed == 777 && net.start_frame == 310);
         assert(s_nonce_peer == 0x0123456789abcdefull && s_out_len == -1);
         assert(log_count("net: RULES ignored (conflicting nonce after done)") == 1);
@@ -430,7 +431,7 @@ int main(void) {
 
         /* the accepted set arriving again is the benign duplicate class */
         s_logn = 0;
-        handshake_msg(REL_RULES, rules_b, (int)sizeof rules_b);
+        handshake_msg(0, REL_RULES, rules_b, (int)sizeof rules_b);
         assert(net.hs == HS_DONE && net.seed == 777);
         assert(log_count("net: RULES ignored (already applied)") == 1 && s_logn == 1);
         printf("ok 5: re-arrival of the applied RULES logged as a duplicate, not a conflict\n");
@@ -442,7 +443,7 @@ int main(void) {
         load_fresh(sess_b, 1);
         s_logn = 0;
         s_out_len = -1;
-        handshake_msg(REL_RULES, bad, (int)sizeof bad);
+        handshake_msg(0, REL_RULES, bad, (int)sizeof bad);
         assert(net.hs == HS_IDLE && net.seed == 0 && s_out_len == -1);
         assert(log_count("net: RULES ignored (hash mismatch)") == 1);
 
@@ -451,14 +452,14 @@ int main(void) {
         bad[offsetof(Rules, nonce)] ^= 0x80u;
         load_fresh(sess_b, 1);
         s_logn = 0;
-        handshake_msg(REL_RULES, bad, (int)sizeof bad);
+        handshake_msg(0, REL_RULES, bad, (int)sizeof bad);
         assert(net.hs == HS_IDLE && log_count("net: RULES ignored (hash mismatch)") == 1);
 
         /* a zero nonce never validates: an old peer or a stripped field */
         forge_rules(bad, rules_a, sess_b, 0, 777, 310);
         load_fresh(sess_b, 1);
         s_logn = 0;
-        handshake_msg(REL_RULES, bad, (int)sizeof bad);
+        handshake_msg(0, REL_RULES, bad, (int)sizeof bad);
         assert(net.hs == HS_IDLE && log_count("net: RULES ignored (no nonce)") == 1);
         printf("ok 6: tampered hash, tampered nonce and a zero nonce all dropped\n");
     }
@@ -476,32 +477,32 @@ int main(void) {
 
         /* right hash for this session, wrong echo: an off-path forgery */
         forge_ready(k, sess_c, 0x1111111111111111ull, hn ^ 1u, unlock_hash_now());
-        handshake_msg(REL_READY, k, (int)sizeof k);
+        handshake_msg(0, REL_READY, k, (int)sizeof k);
         assert(net.hs == HS_PENDING && s_nonce_peer == 0);
         assert(log_count("net: READY ignored (echoed nonce mismatch)") == 1);
 
         /* session 1's captured READY: right echo for *that* host nonce, but
          * it hashes under sess_a, so it dies before the nonce check */
-        handshake_msg(REL_READY, ready_a, (int)sizeof ready_a);
+        handshake_msg(0, REL_READY, ready_a, (int)sizeof ready_a);
         assert(net.hs == HS_PENDING && s_nonce_peer == 0);
         assert(log_count("net: READY ignored (hash mismatch)") == 1);
 
         /* and repeats of both stay at one line per class */
-        handshake_msg(REL_READY, k, (int)sizeof k);
-        handshake_msg(REL_READY, ready_a, (int)sizeof ready_a);
+        handshake_msg(0, REL_READY, k, (int)sizeof k);
+        handshake_msg(0, REL_READY, ready_a, (int)sizeof ready_a);
         assert(s_logn == 2);
 
         /* the genuine one still completes the handshake afterwards */
         forge_ready(k, sess_c, 0x2222222222222222ull, hn, unlock_hash_now());
-        handshake_msg(REL_READY, k, (int)sizeof k);
+        handshake_msg(0, REL_READY, k, (int)sizeof k);
         assert(net.hs == HS_DONE && s_nonce_peer == 0x2222222222222222ull);
         printf("ok 7: forged and replayed READY dropped (handshake stays PENDING), real one "
                "completes\n");
 
         /* a further READY after done is dropped and logged once */
         s_logn = 0;
-        handshake_msg(REL_READY, k, (int)sizeof k);
-        handshake_msg(REL_READY, k, (int)sizeof k);
+        handshake_msg(0, REL_READY, k, (int)sizeof k);
+        handshake_msg(0, REL_READY, k, (int)sizeof k);
         assert(net.hs == HS_DONE);
         assert(log_count("net: READY ignored (already done)") == 1 && s_logn == 1);
 
@@ -512,7 +513,7 @@ int main(void) {
     load_fresh(sess_b, 1);
     s_logn = 0;
     s_out_len = -1;
-    handshake_msg(REL_RULES, rules_a, (int)sizeof rules_a - 1);
+    handshake_msg(0, REL_RULES, rules_a, (int)sizeof rules_a - 1);
     assert(net.hs == HS_IDLE && net.seed == 0 && s_out_len == -1);
     assert(log_count("net: RULES ignored (wrong length)") == 1 && s_logn == 1);
     printf("ok 9: short RULES refused on length, handshake untouched\n");
@@ -521,7 +522,7 @@ int main(void) {
         load_fresh(sess_b, 0);
         net.hs_host = true;
         s_logn = 0;
-        handshake_msg(REL_RULES, rules_a, (int)sizeof rules_a);
+        handshake_msg(0, REL_RULES, rules_a, (int)sizeof rules_a);
         assert(net.hs == HS_IDLE && log_count("net: RULES ignored (we host)") == 1);
         printf("ok 10: RULES arriving at the host refused\n");
     }
@@ -544,7 +545,7 @@ int main(void) {
         reforge_unlock(ru_bad, sess_b, hash_of_all() ^ 0x1u);
         s_logn = 0;
         s_out_len = -1;
-        handshake_msg(REL_RULES, ru_bad, (int)sizeof ru_bad);
+        handshake_msg(0, REL_RULES, ru_bad, (int)sizeof ru_bad);
         assert(net.hs == HS_IDLE);
         assert(log_count("net: RULES ignored (unlock state mismatch)") == 1);
         assert(s_out_len == -1); /* no READY: nothing agreed */
@@ -560,7 +561,7 @@ int main(void) {
         load_fresh(sess_b, 1);
         s_logn = 0;
         s_out_len = -1;
-        handshake_msg(REL_RULES, ru_bad, (int)sizeof ru_bad);
+        handshake_msg(0, REL_RULES, ru_bad, (int)sizeof ru_bad);
         assert(net.hs == HS_DONE && net.seed == 777);
         assert(s_out_type == REL_READY && s_unlock_live == s_unlock_all);
         printf("ok 12: same RULES with the matching unlock state accepted\n");
@@ -574,7 +575,7 @@ int main(void) {
             uint8_t k[sizeof(Ready)];
             forge_ready(k, sess_c, 0x3333333333333333ull, s_nonce_local, peer_hash);
             s_logn = 0;
-            handshake_msg(REL_READY, k, (int)sizeof k);
+            handshake_msg(0, REL_READY, k, (int)sizeof k);
             assert(net.hs == HS_FAILED);
             assert(log_count("net: READY rejected: unlock state mismatch") == 1);
             assert(s_logn == 1);
@@ -596,7 +597,7 @@ int main(void) {
         load_fresh(sess_a, 1);
         s_send_full = true;
         s_out_len = -1;
-        handshake_msg(REL_RULES, rules_a, (int)sizeof rules_a);
+        handshake_msg(0, REL_RULES, rules_a, (int)sizeof rules_a);
         assert(net.hs != HS_DONE && s_out_len == -1);
         assert(s_hs_tx.len == sizeof(Ready)); /* held for the retry */
         assert(!pc_net_guest_wait_match(&seed_out, &sf) && net.hs == HS_PENDING);
@@ -672,7 +673,7 @@ int main(void) {
     load_fresh(sess_a, 1);
     net.tick_frame = 300 + HS_LEAD_FRAMES;
     s_out_len = -1;
-    handshake_msg(REL_RULES, rules_a, sizeof rules_a);
+    handshake_msg(0, REL_RULES, rules_a, sizeof rules_a);
     assert(net.hs == HS_IDLE);
     assert(s_out_len == -1);
     assert(!s_unlock_saved);
@@ -711,17 +712,17 @@ int main(void) {
         load_fresh(sess_e, 1);
         net.tick_frame = 300 + HS_LEAD_FRAMES + 5;
         s_logn = 0;
-        handshake_msg(REL_RULES, stale, sizeof stale);
+        handshake_msg(0, REL_RULES, stale, sizeof stale);
         assert(net.hs == HS_IDLE &&
                log_count("net: RULES ignored (start_frame already reached)") == 1);
-        handshake_msg(REL_RULES, fresh, sizeof fresh);
+        handshake_msg(0, REL_RULES, fresh, sizeof fresh);
         assert(net.hs == HS_DONE && net.seed == 55 && net.start_frame == 300 + 2 * HS_LEAD_FRAMES);
         memcpy(k, s_out, sizeof k);
         rules_restore();
 
         /* and its READY names that frame, which the host agrees to */
         side_load(&host);
-        handshake_msg(REL_READY, k, sizeof k);
+        handshake_msg(0, REL_READY, k, sizeof k);
         assert(net.hs == HS_DONE && net.start_frame == 300 + 2 * HS_LEAD_FRAMES);
         side_save(&host);
 
@@ -731,12 +732,12 @@ int main(void) {
         net.hs = HS_PENDING;
         forge_ready_at(k, sess_e, 0x4444444444444444ull, hn, unlock_hash_now(), 12345);
         s_logn = 0;
-        handshake_msg(REL_READY, k, sizeof k);
+        handshake_msg(0, REL_READY, k, sizeof k);
         assert(net.hs == HS_PENDING &&
                log_count("net: READY ignored (start_frame we never sent)") == 1);
         forge_ready_at(
             k, sess_e, 0x4444444444444444ull, hn, unlock_hash_now(), 300 + HS_LEAD_FRAMES);
-        handshake_msg(REL_READY, k, sizeof k);
+        handshake_msg(0, REL_READY, k, sizeof k);
         assert(net.hs == HS_DONE && net.start_frame == 300 + HS_LEAD_FRAMES);
         rules_restore();
         printf("ok 16: a stale RULES is re-issued for a later frame, READY names the one taken\n");

@@ -53,13 +53,13 @@ Held* held_due(Held* held, uint64_t now) {
  * where it gets its authentication tag: one choke point covers the input
  * packets, the acks, the reliable lane and the BYE, and the copy that makes
  * room for the tag is the same copy the held queue would make anyway. */
-void tx(const void* body, size_t body_len) {
+void tx(int peer, const void* body, size_t body_len) {
     uint8_t stamped[HELD_BYTES + NET_MAC_LEN];
-    if (body_len > HELD_BYTES) {
+    if (body_len > HELD_BYTES || peer < 0 || peer >= net.npeers) {
         return; /* no sender builds one: a truncated datagram would be worse */
     }
     memcpy(stamped, body, body_len);
-    net_mac_stamp(stamped, body_len);
+    net_mac_stamp(peer, stamped, body_len);
     const void* buf = stamped;
     size_t len = body_len + NET_MAC_LEN;
     uint64_t now = SDL_GetTicksNS();
@@ -80,7 +80,7 @@ void tx(const void* body, size_t body_len) {
         return;
     }
     if (!net.sim_hold) {
-        net_sendto(buf, len);
+        net_sendto(peer, buf, len);
         return;
     }
     int copies = net.sim_dup > 0 && (int)sim_rand(100) < net.sim_dup ? 2 : 1;
@@ -96,6 +96,7 @@ void tx(const void* body, size_t body_len) {
         if (slot < 0) {
             return;
         }
+        s_held[slot].peer = (uint8_t)peer;
         if (s_sim_swap >= 0) {
             s_held[s_sim_swap].release_ns = (uint64_t)release + 1; /* right behind this one */
             s_sim_swap = -1;
@@ -119,7 +120,7 @@ void tx_flush(void) {
         if (s_sim_swap >= 0 && h == &s_held[s_sim_swap]) {
             s_sim_swap = -1; /* its deadline won; the slot is about to be free for reuse */
         }
-        net_sendto(h->buf, h->len);
+        net_sendto(h->peer, h->buf, h->len);
         h->release_ns = 0;
     }
 }
