@@ -141,6 +141,45 @@ void rel_service(void) {
     }
 }
 
+static bool lane_has_room(int peer, uint8_t type) {
+    const RelTx* t = &s_rel_tx[peer][lane_of(type)];
+    return t->n < REL_QUEUE && (!rel_low_priority(type) || low_queued(t) < REL_LOW_QUEUE);
+}
+
+/* Queue on one link, or on every link when `only` is -1 (all or none). */
+static bool rel_queue(int only, uint8_t type, const void* payload, int len) {
+    int from = only < 0 ? 0 : only;
+    int to = only < 0 ? net.npeers : only + 1;
+    SDL_LockMutex(net.tx_lock);
+    bool ok = from < to && to <= net.npeers;
+    for (int peer = from; ok && peer < to; peer++) {
+        ok = lane_has_room(peer, type);
+    }
+    if (ok) {
+        for (int peer = from; peer < to; peer++) {
+            RelTx* t = &s_rel_tx[peer][lane_of(type)];
+            RelMsg* m = &t->q[(t->head + t->n++) % REL_QUEUE];
+            m->type = type;
+            m->len = (uint16_t)len;
+            if (len > 0) {
+                memcpy(m->payload, payload, (size_t)len);
+            }
+        }
+        rel_service();
+    }
+    SDL_UnlockMutex(net.tx_lock);
+    return ok;
+}
+
+bool rel_send_to(int peer, uint8_t type, const void* payload, int len) {
+    if (!net.active || peer < 0 || len < 0 || len > REL_MAX || (len > 0 && payload == NULL) ||
+        pc_net_slippi_active())
+    {
+        return false;
+    }
+    return rel_queue(peer, type, payload, len);
+}
+
 bool pc_net_send_reliable(uint8_t type, const void* payload, int len) {
     if (!net.active || len < 0 || len > REL_MAX || (len > 0 && payload == NULL)) {
         return false;
@@ -156,26 +195,7 @@ bool pc_net_send_reliable(uint8_t type, const void* payload, int len) {
         }
         return pc_net_slippi_send_rel(type, payload, len);
     }
-    SDL_LockMutex(net.tx_lock);
-    bool ok = net.npeers > 0;
-    for (int peer = 0; peer < net.npeers; peer++) {
-        const RelTx* t = &s_rel_tx[peer][lane_of(type)];
-        ok = ok && t->n < REL_QUEUE && (!rel_low_priority(type) || low_queued(t) < REL_LOW_QUEUE);
-    }
-    if (ok) {
-        for (int peer = 0; peer < net.npeers; peer++) {
-            RelTx* t = &s_rel_tx[peer][lane_of(type)];
-            RelMsg* m = &t->q[(t->head + t->n++) % REL_QUEUE];
-            m->type = type;
-            m->len = (uint16_t)len;
-            if (len > 0) {
-                memcpy(m->payload, payload, (size_t)len);
-            }
-        }
-        rel_service();
-    }
-    SDL_UnlockMutex(net.tx_lock);
-    return ok;
+    return rel_queue(-1, type, payload, len);
 }
 
 int pc_net_recv_reliable(uint8_t* type, void* payload, int max) {
@@ -209,7 +229,7 @@ void on_rel(int peer, const Rel* r, int n) {
              * carries it directly on ENet's reliable channel and calls
              * rel_dispatch itself, so this path only runs for the custom
              * transport (which has already done the seq/ack bookkeeping). */
-            if (!rel_dispatch(r->type, r->payload, r->len)) {
+            if (!rel_dispatch(peer, r->type, r->payload, r->len)) {
                 return; /* caller not draining: no ack, the peer resends later */
             }
             *expect = (*expect + 1) & REL_SEQ_MASK;
@@ -233,13 +253,13 @@ void on_rel(int peer, const Rel* r, int n) {
  * false when a caller-queued message had no room (the custom path then
  * withholds the ack so the peer resends; Slippi has already delivered it, so
  * the message is simply dropped there). */
-bool rel_dispatch(uint8_t type, const void* payload, int len) {
+bool rel_dispatch(int peer, uint8_t type, const void* payload, int len) {
     if (type == REL_RESUME) {
-        net_resume_rel(payload, len);
+        net_resume_rel(peer, payload, len);
     } else if (type == REL_DELAY) {
-        net_delay_rel(payload, len);
+        net_delay_rel(peer, payload, len);
     } else if (type == REL_SCENE) {
-        net_scene_rel(payload, len);
+        net_scene_rel(peer, payload, len);
     } else if (type == REL_CHAT) {
         pc_net_chat_receive(payload, len);
     } else {

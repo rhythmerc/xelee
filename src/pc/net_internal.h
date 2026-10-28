@@ -207,6 +207,7 @@ typedef struct Ack {
 #define REL_MAX 256
 #define REL_RULES 0x01  /* host -> guest {seed, start_frame, nonce} (net_handshake.c) */
 #define REL_READY 0x02  /* guest -> host {nonce, echo} (net_handshake.c) */
+#define REL_NONCES 0x03 /* host -> guests, 3+ players: every nonce (net_handshake.c) */
 #define REL_RESUME 0x12 /* net.c's resume exchange, dispatched by on_rel */
 #define REL_DELAY 0x13  /* the host's input-delay pick, dispatched by on_rel */
 #define REL_CHAT 0x15   /* fixed quick-chat phrase, consumed before caller queue */
@@ -255,6 +256,16 @@ typedef struct Ready {
     uint32_t hash;        /* ready_hash() of the wire image above */
 } __attribute__((packed)) Ready;
 
+/* Payload of REL_NONCES (net_handshake.c): every player's handshake nonce by
+ * controller port (0 for a seat nobody holds), from the host to each guest
+ * once every guest is ready. Two guests never exchange RULES/READY, so this
+ * is how each pair of them learns the two values its link key is derived
+ * from. Only sessions of three or more players send it. */
+typedef struct Nonces {
+    uint64_t nonce[4];
+    uint32_t hash; /* nonces_hash() of the wire image above */
+} __attribute__((packed)) Nonces;
+
 /* Payload of the RESUME message (reliable REL_RESUME, net.c): what the
  * sender still holds after an interruption. Every field is 32-bit, so the
  * big-endian conversion is one loop over the image. */
@@ -291,6 +302,7 @@ _Static_assert(sizeof(Rel) == 11 + REL_MAX, "wire layout");
 _Static_assert(sizeof(RelAck) == 8 && sizeof(Bye) == 8, "wire layout");
 _Static_assert(sizeof(Rules) == 16 + sizeof(GameRules) + 22, "wire layout");
 _Static_assert(sizeof(Ready) == 28, "wire layout");
+_Static_assert(sizeof(Nonces) == 36, "wire layout");
 _Static_assert(sizeof(Resume) == 20 && sizeof(Resume) % 4 == 0, "wire layout");
 _Static_assert(sizeof(DelayMsg) == 8, "wire layout");
 _Static_assert(sizeof(SceneMsg) == 8, "wire layout");
@@ -427,7 +439,10 @@ bool in_fight(void);
 /* A REL_RESUME payload from the peer (on_rel dispatches it here instead of
  * queueing it for the caller); game thread, like everything recv_inputs
  * applies. */
-void net_resume_rel(const void* payload, int len);
+void net_resume_rel(int peer, const void* payload, int len);
+
+/* The link to the host (the peer on port 0), or -1 on the host itself. */
+int net_host_peer(void);
 
 /* One sendto with errno/WSA translation and the sock_err counter; used by
  * the senders here and the link simulator's flush (net_sim.c). Caller holds
@@ -448,6 +463,7 @@ void wire_ack(Ack* a);
 void wire_rel(Rel* r);
 void wire_rules(Rules* ru);
 void wire_ready(Ready* rd);
+void wire_nonces(Nonces* nc);
 /* Handshake hashes: FNV over the payload's wire image with the session id
  * folded in, so a payload captured from one session cannot validate in
  * another. Rules' image carries the host nonce and Ready's carries both, so
@@ -455,6 +471,7 @@ void wire_ready(Ready* rd);
  * the guest's nonce because it does not exist yet when RULES is sent. */
 uint32_t rules_hash(Rules ru, uint32_t session);
 uint32_t ready_hash(Ready rd, uint32_t session);
+uint32_t nonces_hash(Nonces nc, uint32_t session);
 
 /* Per-session datagram authentication. The key is BLAKE2b over the session
  * id and both handshake nonces, which is the one thing in the session an
@@ -503,8 +520,11 @@ void on_rel_ack(int peer, const RelAck* k);
  * REL_SCENE, REL_CHAT, or a caller-queued type). Shared by the custom
  * transport's on_rel and the Slippi receive path. False when a caller-queued
  * message had no room. */
-bool rel_dispatch(uint8_t type, const void* payload, int len);
+bool rel_dispatch(int peer, uint8_t type, const void* payload, int len);
 void rel_reset(void);
+/* Queue a reliable message for one link only (the handshake's answers, a
+ * resume's numbers, which differ per link). False when that lane is full. */
+bool rel_send_to(int peer, uint8_t type, const void* payload, int len);
 
 /* ---- net_handshake.c -------------------------------------------------- */
 
@@ -516,17 +536,17 @@ void handshake_direct(void);
 /* ---- net_sync.c ------------------------------------------------------- */
 
 /* One phase sample: the peer's frame advantage and ours (net.c on_inputs). */
-void adv_note(int remote_adv, int local_adv);
+void adv_note(int peer, int remote_adv, int local_adv);
 void jitter_note(uint32_t rtt); /* one RTT sample, for the |dRTT| mean */
 uint32_t jitter_us(void);
 void time_sync(void);
 /* The host's REL_DELAY announcement (on_rel dispatches it here, like
  * REL_RESUME); game thread. */
-void net_delay_rel(const void* payload, int len);
+void net_delay_rel(int peer, const void* payload, int len);
 
 /* A REL_SCENE payload from the peer (on_rel dispatches it here, like
  * REL_DELAY): the frame its scene asked to end on. */
-void net_scene_rel(const void* payload, int len);
+void net_scene_rel(int peer, const void* payload, int len);
 
 /* A silent freeze: the transmit timer notices the game thread has stopped
  * ticking and asks it for a stack (src/pc/net_watchdog.c). */

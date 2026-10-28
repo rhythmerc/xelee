@@ -263,6 +263,17 @@ static void fillDebugVs(GameModeState* state, UNUSED bool dummy)
             start->players[i].slot_type = Gm_PKind_Cpu;
         }
     }
+    /* MELEE_DEBUG_VS=human3|human4: that many human ports, for a netplay
+     * session of three or four players (tools/net_test_n.py). */
+    if (getenv("MELEE_DEBUG_VS") != NULL && strncmp(getenv("MELEE_DEBUG_VS"), "human", 5) == 0) {
+        static const CharacterKind kinds[4] = {CKind_Link, CKind_Mario, CKind_Fox, CKind_Donkey};
+        int n = atoi(getenv("MELEE_DEBUG_VS") + 5);
+        n = n < 2 ? 2 : n > 4 ? 4 : n;
+        for (i = 0; i < n; i++) {
+            start->players[i].ckind = kinds[i];
+            start->players[i].slot_type = Gm_PKind_Human;
+        }
+    }
     /* MELEE_DEBUG_VS_CPU_LEVEL=<1-9>: the CPUs' level (strong CPUs end a
      * stock match quickly, for runs that need its results screen). */
     /* MELEE_DEBUG_VS_TIME=<1-99>: the time match's length in minutes (a

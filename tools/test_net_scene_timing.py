@@ -64,8 +64,11 @@ static int run_case(int advance, int mode) {
     net.tick_frame = 198;
     net.advance_left = advance;
     net.sync_mode = SYNC_ON;
-    s_remote_have = 210;
-    s_remote_newest = 210;
+    net.npeers = 1;
+    net.peer_port[0] = s_peer[0].port = net.remote;
+    remote_ports_set((uint8_t)(1u << net.remote));
+    s_port_have[net.remote] = s_port_newest[net.remote] = 210;
+    remote_marks_update();
     net.hs = HS_DONE;
     net.start_frame = 120;
     s_wrote = 201;
@@ -75,7 +78,7 @@ static int run_case(int advance, int mode) {
     /* Both peers already asked at 180, agreeing exit boundary 200. */
     s_scene_exit_local = mode == 0 ? 180 : -1;
     SceneMsg peer = {htonl(0), htonl(180)};
-    net_scene_rel(&peer, sizeof peer);
+    net_scene_rel(0, &peer, sizeof peer);
     s_scene_end_held = mode == 0;
     shipping_dispatch(count_frame);
     if (mode == 0) {

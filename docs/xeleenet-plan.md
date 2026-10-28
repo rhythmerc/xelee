@@ -553,7 +553,8 @@ Every milestone is checked on desktop first: N instances, `wrangler dev`, and
 | **XN5** Quest + hardening | Touch lasers everywhere, XR placement, logs, version gate, Windows build | A 4-player lobby with at least one Quest and two NATs |
 | **XN6** Relay | TURN or our own relay for guest ↔ host failures, chosen from the XN2-XN5 logs | A guest on a carrier-NAT hotspot joins |
 
-**XN1 steps** (each keeps the 1v1 suite green before the next starts):
+**XN1 steps** (each keeps the 1v1 suite green before the next starts; steps 1-4
+built 2026-10-28, see the commits on `feat/xelee-net`):
 
 1. **Per-port remote input.** One input ring and contiguous mark per remote
    port. `s_remote_have` becomes the lowest of them; `predict`, `write_head`
@@ -564,14 +565,23 @@ Every milestone is checked on desktop first: N instances, `wrangler dev`, and
    - the last packet, reliable lanes, resume, received checksums and the
      advantage ring.
    Still one peer.
-3. **N direct peers.** `MELEE_NET=addr,addr,…` with `MELEE_NET_PLAYER=0-3`;
-   every link sends its own packets. Wire v12: the header's player must match
-   that link's peer.
-4. **Host-led agreements:**
-   - RULES/READY to every guest, with one start frame;
-   - the scene exit and READY_BARRIER collected by the host;
-   - delay from the worst link, time sync on the worst peer;
-   - a desync check against every peer.
+3. **N direct peers.** `MELEE_NET_PEERS=0=host:port,1=host:port,…` with
+   `MELEE_NET_PLAYER=0-3`; every link sends its own packets, and the header's
+   player must match that link's peer. Nothing a 1v1 sends changes, so the
+   wire stays v11 until step 6.
+4. **Agreements across N:**
+   - RULES/READY to every guest, with one start frame; READY back to the host
+     only. With 3+ players the host then sends `REL_NONCES` (every nonce by
+     port) and each guest pair keys its own link, lower port first;
+   - the scene exit is all-to-all: every peer announces, everyone leaves on
+     the latest frame + SCENE_HANDOFF (simpler than host-collected, and the
+     same answer on a full mesh);
+   - delay from the host's worst link; a delay message only counts from the
+     host; time sync per link, acting on the peer we are least ahead of
+     (Slippi's rule);
+   - resume per link; a desync check against every peer.
+   - Still open: READY_BARRIER (LAN's lobby, P-4), guest links' stats feeding
+     the host's delay pick.
 5. **The harness.** `net_test.py --players 3|4` boots N instances, one delay
    relay per link, and a 4-port `MELEE_DEBUG_VS`.
 6. **Forwarding.** `'M'` carries per-origin pad blocks, and a guest pair that

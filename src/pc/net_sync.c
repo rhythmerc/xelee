@@ -57,8 +57,9 @@
 #define NUDGE_MAX_NS 1000000 /* 1 ms: ~6% of a frame, one dropped frame in 16 */
 #define FAST_GAP 2           /* frames of phase from which whole frames are paid */
 
-static int32_t s_offset[OFFSET_SAMPLES];
-static int s_offset_n, s_offset_i;
+/* One phase ring per link: each peer is ahead or behind on its own. */
+static int32_t s_offset[MAX_PEERS][OFFSET_SAMPLES];
+static int s_offset_n[MAX_PEERS], s_offset_i[MAX_PEERS];
 static int s_skip_left;
 static int32_t s_skip_asked = -1;      /* frame the pending skip was raised on */
 static bool s_skip_wait;               /* prefer an idle frame to take it on */
@@ -79,28 +80,27 @@ static bool s_delay_fight;    /* in_fight() when that announcement was made */
  * against ours, in frames. Positive means we are the one running ahead.
  * Stored in microseconds so the rest of the controller keeps its units and
  * pc_net_quality/the report keep reading one number. */
-void adv_note(int remote_adv, int local_adv) {
-    s_offset[s_offset_i] = (int32_t)((local_adv - remote_adv) * (int64_t)FRAME_US / 2);
-    s_offset_i = (s_offset_i + 1) % OFFSET_SAMPLES;
-    if (s_offset_n < OFFSET_SAMPLES) {
-        s_offset_n++;
+void adv_note(int peer, int remote_adv, int local_adv) {
+    if (peer < 0 || peer >= MAX_PEERS) {
+        return;
+    }
+    s_offset[peer][s_offset_i[peer]] =
+        (int32_t)((local_adv - remote_adv) * (int64_t)FRAME_US / 2);
+    s_offset_i[peer] = (s_offset_i[peer] + 1) % OFFSET_SAMPLES;
+    if (s_offset_n[peer] < OFFSET_SAMPLES) {
+        s_offset_n[peer]++;
     }
 }
 
-/* Trimmed mean of the phase ring: drop the top and bottom third. Each sample
- * is a difference of two integer frame counts, so the ring is here to ride
- * out the frame either side that loss and reordering move it by, not to
+/* Trimmed mean of one link's phase ring: drop the top and bottom third. Each
+ * sample is a difference of two integer frame counts, so the ring is here to
+ * ride out the frame either side that loss and reordering move it by, not to
  * average out a noisy estimator. */
-static int32_t offset_us(void) {
-    if (net.slippi) {
-        return pc_net_slippi_time_offset_us();
-    }
-    if (s_offset_n == 0) {
-        return 0;
-    }
+static int32_t offset_peer_us(int peer) {
+    int n = s_offset_n[peer];
     int32_t b[OFFSET_SAMPLES];
-    memcpy(b, s_offset, s_offset_n * sizeof b[0]);
-    for (int i = 1; i < s_offset_n; i++) {
+    memcpy(b, s_offset[peer], n * sizeof b[0]);
+    for (int i = 1; i < n; i++) {
         int32_t v = b[i];
         int j = i;
         while (j > 0 && b[j - 1] > v) {
@@ -109,12 +109,35 @@ static int32_t offset_us(void) {
         }
         b[j] = v;
     }
-    int drop = s_offset_n / 3;
+    int drop = n / 3;
     int64_t sum = 0;
-    for (int i = drop; i < s_offset_n - drop; i++) {
+    for (int i = drop; i < n - drop; i++) {
         sum += b[i];
     }
-    return (int32_t)(sum / (s_offset_n - 2 * drop));
+    return (int32_t)(sum / (n - 2 * drop));
+}
+
+/* The session's phase: the lowest of the links', i.e. the peer we are least
+ * ahead of (Slippi's rule, slp_session.c pc_slippi_session_time_offset_us).
+ * Behind any one peer, we catch up; ahead of every one of them, we give a
+ * frame back. In a 1v1 it is the one link's. */
+static int32_t offset_us(void) {
+    if (net.slippi) {
+        return pc_net_slippi_time_offset_us();
+    }
+    bool have = false;
+    int32_t best = 0;
+    for (int peer = 0; peer < net.npeers && peer < MAX_PEERS; peer++) {
+        if (s_offset_n[peer] == 0) {
+            continue;
+        }
+        int32_t off = offset_peer_us(peer);
+        if (!have || off < best) {
+            best = off;
+            have = true;
+        }
+    }
+    return best;
 }
 
 /* 30-sample mean of |dRTT|: what the delay has to cover on top of the trip. */
@@ -240,7 +263,7 @@ static void delay_auto(void) {
 
 /* The host's announcement (REL_DELAY, reliable lane 1). The guest never
  * decides: whatever it measures, it switches where and when it is told. */
-void net_delay_rel(const void* payload, int len) {
+void net_delay_rel(int peer, const void* payload, int len) {
     DelayMsg m;
     if (len != (int)sizeof m) {
         pc_log_line("net: REL_DELAY of %d bytes ignored", len);
@@ -251,8 +274,8 @@ void net_delay_rel(const void* payload, int len) {
      * arriving here at the host is either a peer that has the roles confused
      * or one that has decided its own latency should be the host's -- either
      * way it must not retune this side. */
-    if (net.local == 0) {
-        pc_log_line("net: REL_DELAY from the guest ignored (the host announces)");
+    if (net.local == 0 || peer != net_host_peer()) {
+        pc_log_line("net: REL_DELAY from a guest ignored (the host announces)");
         return;
     }
     int d = (int)ntohl(m.delay);
@@ -488,7 +511,8 @@ void sync_reset(void) {
             net.sync_mode == SYNC_OFF ? "off: offset measured, never acted on" :
                                         "legacy: skips discard a queued pad sample");
     }
-    s_offset_n = s_offset_i = 0;
+    memset(s_offset_n, 0, sizeof s_offset_n);
+    memset(s_offset_i, 0, sizeof s_offset_i);
     net.offset_last = 0;
     s_skip_left = net.advance_left = s_drop_left = s_sync_over = 0;
     s_skip_asked = -1;

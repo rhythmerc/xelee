@@ -55,18 +55,21 @@ void handshake_msg(int peer, uint8_t type, const uint8_t* p, int len) {
     s_hs_msgs++;
 }
 static int s_resume_msgs, s_resume_len;
-void net_resume_rel(const void* payload, int len) {
+void net_resume_rel(int peer, const void* payload, int len) {
+    (void)peer;
     s_resume_msgs++;
     s_resume_len = len;
     (void)payload;
 }
 static int s_delay_msgs;
 /* Dispatched like REL_DELAY; this harness only exercises the channel. */
-void net_scene_rel(const void* payload, int len) {
+void net_scene_rel(int peer, const void* payload, int len) {
+    (void)peer;
     (void)payload;
     (void)len;
 }
-void net_delay_rel(const void* payload, int len) {
+void net_delay_rel(int peer, const void* payload, int len) {
+    (void)peer;
     s_delay_msgs++;
     (void)payload;
     (void)len;

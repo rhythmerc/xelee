@@ -271,6 +271,11 @@ bool pc_net_send_reliable(uint8_t type, const void* payload, int len) {
     s_resume_sends++;
     return true;
 }
+/* resume_send() states each link's numbers on that link alone. */
+bool rel_send_to(int peer, uint8_t type, const void* payload, int len) {
+    assert(peer == 0);
+    return pc_net_send_reliable(type, payload, len);
+}
 int pc_net_recv_reliable(uint8_t* type, void* payload, int max) {
     (void)type;
     (void)payload;
@@ -289,7 +294,8 @@ void on_rel_ack(int peer, const RelAck* k) {
 }
 /* net.c's Slippi receive path calls rel_dispatch (net_reliable.c). This test
  * drives the legacy transport, so a stub is enough. */
-bool rel_dispatch(uint8_t type, const void* payload, int len) {
+bool rel_dispatch(int peer, uint8_t type, const void* payload, int len) {
+    (void)peer;
     (void)type;
     (void)payload;
     (void)len;
@@ -300,7 +306,8 @@ void rel_reset(void) {}
 /* net_handshake.c / net_sync.c */
 void rules_restore(void) {}
 void handshake_direct(void) {}
-void adv_note(int remote_adv, int local_adv) {
+void adv_note(int peer, int remote_adv, int local_adv) {
+    (void)peer;
     (void)remote_adv;
     (void)local_adv;
 }
@@ -565,7 +572,7 @@ static void peer_resume(uint32_t session, uint32_t seed, int32_t newest, int32_t
     Resume r = {session, seed, newest, have, newest - 2};
     wire_resume(&r);
     peer_heard();
-    net_resume_rel(&r, (int)sizeof r);
+    net_resume_rel(0, &r, (int)sizeof r);
 }
 
 /* The peer's pads for first..last, buttons 0x2000 + frame so the refill can
@@ -681,14 +688,14 @@ static void case_one_way_while_running(void) {
     assert(s_status == PC_NET_PEER_OK);
     assert(s_peer[0].last_acked == 195); /* its numbers are still adopted */
     assert(s_remote_newest == 203);
-    assert(logged_count("peer resumes from frame") == 1);
+    assert(logged_count("resumes from frame") == 1);
     /* Ten more arrivals: ten lines, still not one send. A reply would make
      * this unbounded on a real link. */
     for (int i = 0; i < 10; i++) {
         peer_resume(SESSION, SEED, 203, 195);
     }
     assert(s_resume_sends == 0);
-    assert(logged_count("peer resumes from frame") == 11);
+    assert(logged_count("resumes from frame") == 11);
 }
 
 /* A gap the rings cannot cover must end the session, not resume into a

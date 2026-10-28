@@ -133,7 +133,11 @@ static bool s_rules_saved; /* guest: s_rules_orig holds its own values */
 static Rules s_rules_orig;
 static uint64_t s_nonce_local;   /* ours this session; 0: not drawn yet */
 static uint32_t s_nonce_session; /* net.session s_nonce_local was drawn for */
-static uint64_t s_nonce_peer;    /* theirs, from RULES (guest) or READY (host) */
+static uint64_t s_nonce_peer;    /* the host's (guest), or the last READY's (host) */
+/* Host: each guest's READY, by link. The handshake is done once every guest
+ * has answered; a 1v1 has one. */
+static bool s_ready[MAX_PEERS];
+static uint64_t s_ready_nonce[MAX_PEERS];
 static bool s_unlock_saved;      /* s_unlock_orig holds what the player had */
 static uint64_t s_unlock_orig;
 /* One log line per refusal class per session (the log-line rule): a peer, or
@@ -162,9 +166,10 @@ static uint32_t s_hs_logged; /* LOG_* classes already logged this session */
  * own (types < 0x10), so only an unacked predecessor can fill it. */
 static struct {
     uint32_t session; /* the net.session it was built for */
+    int to;           /* its link, or -1 for every guest */
     uint8_t type;
     uint8_t len; /* 0: nothing pending */
-    uint8_t wire[sizeof(Rules)];
+    uint8_t wire[sizeof(Rules) > sizeof(Nonces) ? sizeof(Rules) : sizeof(Nonces)];
 } s_hs_tx;
 
 uint32_t pc_net_seed(void) {
@@ -196,17 +201,26 @@ static void hs_done(void) {
  * host never heard about: it waited out its 15 s timeout while this side
  * believed the match was agreed. Same pattern as resume_send()/resume_poll()
  * in net.c -- the poll the caller already runs every frame is the retry. */
-static bool hs_send(uint8_t type, const void* wire, int len) {
-    if (pc_net_send_reliable(type, wire, len)) {
+static bool hs_queue(int to, uint8_t type, const void* wire, int len) {
+    return to < 0 ? pc_net_send_reliable(type, wire, len) : rel_send_to(to, type, wire, len);
+}
+
+static const char* hs_name(uint8_t type) {
+    return type == REL_RULES ? "RULES" : type == REL_READY ? "READY" : "NONCES";
+}
+
+/* `to`: the link, or -1 for every one (the host's RULES and NONCES). */
+static bool hs_send(int to, uint8_t type, const void* wire, int len) {
+    if (hs_queue(to, type, wire, len)) {
         s_hs_tx.len = 0;
         return true;
     }
     s_hs_tx.session = net.session;
+    s_hs_tx.to = to;
     s_hs_tx.type = type;
     s_hs_tx.len = (uint8_t)len;
     memcpy(s_hs_tx.wire, wire, (size_t)len);
-    pc_log_line("net: %s not queued (reliable queue full), retrying",
-        type == REL_RULES ? "RULES" : "READY");
+    pc_log_line("net: %s not queued (reliable queue full), retrying", hs_name(type));
     return false;
 }
 
@@ -222,13 +236,13 @@ static void hs_flush(void) {
         s_hs_tx.len = 0; /* built for a session that has since been torn down */
         return;
     }
-    if (!pc_net_send_reliable(s_hs_tx.type, s_hs_tx.wire, s_hs_tx.len)) {
+    if (!hs_queue(s_hs_tx.to, s_hs_tx.type, s_hs_tx.wire, s_hs_tx.len)) {
         return;
     }
     uint8_t type = s_hs_tx.type;
     s_hs_tx.len = 0;
-    pc_log_line("net: %s queued on retry", type == REL_RULES ? "RULES" : "READY");
-    if (type == REL_READY) {
+    pc_log_line("net: %s queued on retry", hs_name(type));
+    if (type == REL_READY || type == REL_NONCES) {
         hs_done();
     }
 }
@@ -347,6 +361,8 @@ void rules_restore(void) {
      * still had to send dies with it, and the next one gets a fresh log
      * budget for each refusal class. */
     s_nonce_local = s_nonce_peer = 0;
+    memset(s_ready, 0, sizeof s_ready);
+    memset(s_ready_nonce, 0, sizeof s_ready_nonce);
     s_hs_tx.len = 0;
     s_hs_logged = 0;
     s_direct_idle_ns = 0;
@@ -441,8 +457,8 @@ static uint64_t nonce_local(void) {
 }
 
 static void on_rules(int peer, const uint8_t* payload, int len) {
-    if (net.hs_host) {
-        hs_drop(LOG_RULES_HOST, "RULES", "we host");
+    if (net.hs_host || peer != net_host_peer()) {
+        hs_drop(LOG_RULES_HOST, "RULES", net.hs_host ? "we host" : "not from the host");
         return;
     }
     if (len != (int)sizeof(Rules)) {
@@ -515,7 +531,7 @@ static void on_rules(int peer, const uint8_t* payload, int len) {
     SDL_UnlockMutex(net.tx_lock);
     rules_apply(&ru, true);
     wire_ready(&rd);
-    if (!hs_send(REL_READY, &rd, sizeof rd)) {
+    if (!hs_send(peer, REL_READY, &rd, sizeof rd)) {
         return; /* hs_poll() retries it, and finishes the handshake when it goes out */
     }
     hs_done();
@@ -526,7 +542,7 @@ static void on_ready(int peer, const uint8_t* payload, int len) {
         hs_drop(LOG_READY_GUEST, "READY", "we are the guest");
         return;
     }
-    if (net.hs == HS_DONE) {
+    if (net.hs == HS_DONE || (peer >= 0 && peer < MAX_PEERS && s_ready[peer])) {
         hs_drop(LOG_READY_DONE, "READY", "already done");
         return;
     }
@@ -572,10 +588,21 @@ static void on_ready(int peer, const uint8_t* payload, int len) {
             hs_drop(LOG_READY_START, "READY", "start_frame we never sent");
             return;
         }
+        /* With several guests the frame is only movable while nobody has
+         * taken the other one; a guest on each is a split no message can
+         * undo (each has applied its own and will drop a third RULES). */
+        for (int i = 0; i < net.npeers; i++) {
+            if (s_ready[i]) {
+                pc_log_line("net: READY took start_frame=%d, another guest took %d; the "
+                            "guests cannot agree, handshake failed",
+                    rd.start_frame, net.start_frame);
+                net.hs = HS_FAILED;
+                return;
+            }
+        }
         pc_log_line("net: READY took the earlier start_frame=%d", rd.start_frame);
         net.start_frame = rd.start_frame;
     }
-    s_nonce_peer = rd.nonce;
     /* This side's turn: the READY just authenticated is what carries the
      * guest's nonce, so from here both peers hold the same three values and
      * derive the same key without another message. Under tx_lock, like the
@@ -583,7 +610,64 @@ static void on_ready(int peer, const uint8_t* payload, int len) {
     SDL_LockMutex(net.tx_lock);
     net_key_session(peer, s_nonce_local, rd.nonce);
     SDL_UnlockMutex(net.tx_lock);
-    hs_done();
+    s_ready[peer] = true;
+    s_ready_nonce[peer] = rd.nonce;
+    s_nonce_peer = rd.nonce;
+    for (int i = 0; i < net.npeers; i++) {
+        if (!s_ready[i]) {
+            pc_log_line("net: READY from P%d, waiting on more guests", net.peer_port[peer] + 1);
+            return;
+        }
+    }
+    if (net.npeers == 1) {
+        hs_done();
+        return;
+    }
+    /* Every guest is ready. Tell each of them every nonce, so each pair of
+     * guests can key its own link (on_nonces); the handshake is done once
+     * that is on its way, as a guest's is once its READY is. */
+    Nonces nc;
+    memset(&nc, 0, sizeof nc);
+    nc.nonce[net.local] = s_nonce_local;
+    for (int i = 0; i < net.npeers; i++) {
+        nc.nonce[net.peer_port[i]] = s_ready_nonce[i];
+    }
+    nc.hash = nonces_hash(nc, net.session);
+    wire_nonces(&nc);
+    if (hs_send(-1, REL_NONCES, &nc, sizeof nc)) {
+        hs_done();
+    }
+}
+
+/* Guest, three or more players: the host's list of every nonce. Each link to
+ * another guest is keyed from that guest's nonce and ours, lower port first,
+ * which is also the order the host's link was keyed in (the host is port 0). */
+static void on_nonces(int peer, const uint8_t* payload, int len) {
+    if (net.hs_host || peer != net_host_peer() || len != (int)sizeof(Nonces)) {
+        hs_drop(LOG_READY_GUEST, "NONCES", "not from the host");
+        return;
+    }
+    Nonces nc;
+    memcpy(&nc, payload, sizeof nc);
+    wire_nonces(&nc);
+    if (nc.hash != nonces_hash(nc, net.session) || nc.nonce[net.local] != s_nonce_local ||
+        s_nonce_local == 0)
+    {
+        hs_drop(LOG_READY_NONCE, "NONCES", "hash or our own nonce mismatch");
+        return;
+    }
+    SDL_LockMutex(net.tx_lock);
+    for (int i = 0; i < net.npeers; i++) {
+        int port = net.peer_port[i];
+        if (i == peer || nc.nonce[port] == 0) {
+            continue;
+        }
+        int lo = port < net.local ? port : net.local;
+        int hi = port < net.local ? net.local : port;
+        net_key_session(i, nc.nonce[lo], nc.nonce[hi]);
+    }
+    SDL_UnlockMutex(net.tx_lock);
+    pc_log_line("net: every guest's nonce from the host; %d guest links keyed", net.npeers - 1);
 }
 
 /* Reliable types below 0x10: the match handshake, from peer `peer`. */
@@ -592,6 +676,8 @@ void handshake_msg(int peer, uint8_t type, const uint8_t* payload, int len) {
         on_rules(peer, payload, len);
     } else if (type == REL_READY) {
         on_ready(peer, payload, len);
+    } else if (type == REL_NONCES) {
+        on_nonces(peer, payload, len);
     }
 }
 
@@ -612,7 +698,7 @@ static bool hs_send_rules(void) {
     s_hs_rules.hash = rules_hash(s_hs_rules, net.session);
     Rules w = s_hs_rules;
     wire_rules(&w);
-    return hs_send(REL_RULES, &w, sizeof w);
+    return hs_send(-1, REL_RULES, &w, sizeof w);
 }
 
 /* Host: the start went by with no READY, so the RULES out there can only be
@@ -636,7 +722,20 @@ static bool hs_poll(int32_t* start_frame) {
         recv_inputs();
         hs_flush(); /* after recv_inputs: a 'K' just read may be what freed the slot */
         if (net.hs == HS_PENDING && net.hs_host && net.tick_frame >= net.start_frame) {
-            hs_reissue();
+            bool any = false;
+            for (int i = 0; i < net.npeers; i++) {
+                any = any || s_ready[i];
+            }
+            if (!any) {
+                hs_reissue();
+            } else {
+                /* Some guests have taken this start and cannot move off it
+                 * (on_ready), so the rest can no longer make it. */
+                pc_log_line("net: start_frame=%d went by without every guest's READY, "
+                            "handshake failed",
+                    net.start_frame);
+                net.hs = HS_FAILED;
+            }
         }
         /* Re-checked: recv_inputs() or the flush above may have just finished
          * the handshake, and a done one is not timed out. */
@@ -666,6 +765,8 @@ bool pc_net_host_match(uint32_t seed, int32_t* start_frame) {
         }
         net.hs = HS_PENDING;
         s_hs_t0 = SDL_GetTicksNS();
+        memset(s_ready, 0, sizeof s_ready); /* every guest answers this RULES afresh */
+        memset(s_ready_nonce, 0, sizeof s_ready_nonce);
         net.seed = seed;
         seed_apply();
         net.start_frame = net.tick_frame + hs_lead();

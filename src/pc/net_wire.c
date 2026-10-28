@@ -174,6 +174,13 @@ void wire_ready(Ready* rd) {
     be32(&rd->hash);
 }
 
+void wire_nonces(Nonces* nc) {
+    for (int i = 0; i < 4; i++) {
+        be64(&nc->nonce[i]);
+    }
+    be32(&nc->hash);
+}
+
 /* Hash of a handshake payload's wire image (everything before .hash) with
  * the session id folded in after it, big-endian like every wire field. The
  * session binding is what stops a captured RULES/READY from validating in a
@@ -193,6 +200,11 @@ uint32_t rules_hash(Rules ru, uint32_t session) {
 uint32_t ready_hash(Ready rd, uint32_t session) {
     wire_ready(&rd);
     return hs_hash(&rd, offsetof(Ready, hash), session);
+}
+
+uint32_t nonces_hash(Nonces nc, uint32_t session) {
+    wire_nonces(&nc);
+    return hs_hash(&nc, offsetof(Nonces, hash), session);
 }
 
 /* ---- datagram authentication ------------------------------------------

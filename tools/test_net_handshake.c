@@ -111,6 +111,15 @@ bool pc_net_send_reliable(uint8_t type, const void* payload, int len) {
     return true;
 }
 
+/* One link, peer 0: the host's from the guest's side. */
+int net_host_peer(void) {
+    return net.hs_host ? -1 : 0;
+}
+bool rel_send_to(int peer, uint8_t type, const void* payload, int len) {
+    (void)peer;
+    return pc_net_send_reliable(type, payload, len);
+}
+
 /* net_handshake.c branches to the Slippi transport for its setup message. This
  * fixture drives the custom handshake, so the Slippi path is inactive; the
  * other two stubs exist only to satisfy the link. */
@@ -730,6 +739,7 @@ int main(void) {
          * up on it) settles on that frame; one for a frame never sent does not */
         side_load(&host);
         net.hs = HS_PENDING;
+        memset(s_ready, 0, sizeof s_ready); /* pending again: no guest has answered */
         forge_ready_at(k, sess_e, 0x4444444444444444ull, hn, unlock_hash_now(), 12345);
         s_logn = 0;
         handshake_msg(0, REL_READY, k, sizeof k);
