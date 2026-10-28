@@ -6,6 +6,9 @@ Nintendo artwork: it only borrows Melee's chrome-on-red menu style.
 
 Run it to rewrite the SVGs beside it; the PNG is
     magick -background none -density 384 xelee-badge.svg -resize 1024x1024 xelee-badge-1024.png
+and the Android app icon (platforms/android/app/src/main/res/mipmap/icon.png) is
+    magick xelee-badge-1024.png -trim +repage -resize 472x472 -gravity center \
+        -background none -extent 512x512 icon.png
 """
 import os
 
