@@ -318,6 +318,7 @@ set(PC_SOURCES
         src/pc/graphics_menu.cpp
         src/pc/settings_page.cpp
         src/pc/slippi_menu.cpp
+        src/pc/xeleenet_menu.cpp
         src/pc/rml_picklist.cpp
         src/pc/discfont.c
         src/pc/gcadapter.c

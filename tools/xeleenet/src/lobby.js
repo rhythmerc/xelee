@@ -217,7 +217,7 @@ export class Lobby extends DurableObject {
       .concat(this.s.members.filter((m) => m.key !== member.key).map(publicMember));
     return {
       status: "joined", id: this.s.id, code: this.s.code, name: this.s.name, port: member.port,
-      state: this.s.state, members: others,
+      state: this.s.state, settings: this.s.settings, members: others,
     };
   }
 

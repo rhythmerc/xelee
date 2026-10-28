@@ -7,6 +7,7 @@
 #include "mndatadel.h"
 #include "mnonline.h"
 #include "mnslippi.h"
+#include "mnxeleenet.h"
 #include "pc/menu_screen.h"
 #include <melee/it/forward.h>
 #include <melee/lb/lb_00B0.h>
@@ -462,8 +463,13 @@ static const char* mnPage_Title(MenuKind kind)
     if (kind == MENU_KIND_SETTINGS_PAGE) {
         return mnPage_open != NULL ? mnPage_open->name : NULL;
     }
-    return kind == MENU_KIND_SLIPPI_PAGE ? mnSlippi_Title() : NULL;
+    if (kind == MENU_KIND_SLIPPI_PAGE) {
+        return mnXeleeNet_Active() ? mnXeleeNet_Title() : mnSlippi_Title();
+    }
+    return NULL;
 }
+
+void mnPage_PanelMainTitle(HSD_JObj* panel, bool ours);
 
 /* The tab's title on a PC page: the borrowed page's texture hidden, ours in
  * SIS text where it sits, following it through the tab's slide in and out. */
@@ -482,6 +488,8 @@ void mnPage_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, bool leavin
     if (text == NULL && leaving) {
         text = mnPage_Title(prev);
     }
+    mnPage_PanelMainTitle(panel, text != NULL && mnXeleeNet_Active() &&
+                                     (cur == MENU_KIND_SLIPPI_PAGE || (leaving && prev == MENU_KIND_SLIPPI_PAGE)));
     lb_80011E24(panel, &joint, PANEL_TITLE_JOINT, -1);
     if (joint == NULL) {
         return;
@@ -519,10 +527,65 @@ void mnPage_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, bool leavin
     HSD_SisLib_803A74F0(mnPage_title, 0, (GXColor*) &colour);
 }
 
+/* XeleeNet's pages: the menu's own title ("VS. Mode", joint 84) reads
+ * "XeleeNet" too, as the wireframe's tab does, drawn the same way. */
+static HSD_Text* mnPage_mainTitle;
+static bool mnPage_mainHidden;
+static HSD_JObj* mnPage_mainJoint;
+
+static void mnPage_MainItalic(void* gobj)
+{
+    HSD_JObj* keep = mnPage_titleJoint;
+    mnPage_titleJoint = mnPage_mainJoint;
+    mnPage_TitleItalic(gobj);
+    mnPage_titleJoint = keep;
+}
+
+void mnPage_PanelMainTitle(HSD_JObj* panel, bool ours)
+{
+    static const GXColor colour = { 0x9C, 0x9C, 0x9C, 0xFF };
+    HSD_JObj* joint = NULL;
+    Vec3 pos;
+
+    lb_80011E24(panel, &joint, 84, -1);
+    if (joint == NULL) {
+        return;
+    }
+    mnPage_mainJoint = joint;
+    if (!ours) {
+        if (mnPage_mainTitle != NULL) {
+            HSD_SisLib_803A5CC4(mnPage_mainTitle);
+            mnPage_mainTitle = NULL;
+        }
+        if (mnPage_mainHidden) {
+            HSD_JObjClearFlagsAll(joint, JOBJ_HIDDEN);
+            mnPage_mainHidden = false;
+        }
+        return;
+    }
+    HSD_JObjSetFlagsAll(joint, JOBJ_HIDDEN);
+    mnPage_mainHidden = true;
+    if (mnPage_mainTitle == NULL) {
+        mnPage_mainTitle = HSD_SisLib_803A6754(0, mn_804D6BB4);
+        mnPage_mainTitle->default_kerning = 1;
+        mnPage_mainTitle->font_size.x = 0.034f;
+        mnPage_mainTitle->font_size.y = 0.040f;
+        HSD_SisLib_803A6B98(mnPage_mainTitle, 0.0f, 0.0f, "XeleeNet");
+        mnPage_mainTitle->render_callback = mnPage_MainItalic;
+    }
+    lb_8000B1CC(joint, NULL, &pos);
+    mnPage_mainTitle->pos_x = pos.x + 0.4f;
+    mnPage_mainTitle->pos_y = -pos.y - 16.0f * mnPage_mainTitle->font_size.y;
+    mnPage_mainTitle->pos_z = pos.z;
+    HSD_SisLib_803A74F0(mnPage_mainTitle, 0, (GXColor*) &colour);
+}
+
 void mnPage_PanelTitleForget(void)
 {
     mnPage_title = NULL;
     mnPage_titleHidden = false;
+    mnPage_mainTitle = NULL;
+    mnPage_mainHidden = false;
 }
 
 void mnPage_SceneForget(void)

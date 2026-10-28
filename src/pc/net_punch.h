@@ -26,14 +26,18 @@ extern "C" {
 const char* pc_xn_url(void);
 /* Host (`code` NULL, for up to `seats` players) or join by code. */
 bool pc_xn_punch_start(const char* url, const char* name, const char* code, int seats);
-/* Drive it (game thread, often): 0 still going, 1 the session is up, -1 it
- * failed (pc_xn_punch_error). */
+/* Drive it (game thread, often), session or not: the lobby goes on while
+ * one runs. 1 while a session is up, 0 before, -1 it failed
+ * (pc_xn_punch_error). */
 int pc_xn_punch_poll(void);
 const char* pc_xn_punch_error(void);
 void pc_xn_punch_cancel(void);
 /* The host starts the session now, without waiting for the seats to fill:
  * as soon as someone has joined and every link is decided. */
 void pc_xn_punch_request_start(void);
+/* Sessions started this run. A new one is a roster change: everyone runs the
+ * handshake again and reloads the CSS (gmonlinemode.c). */
+int pc_xn_punch_session_seq(void);
 /* Leave the lobby (a host closes it) and forget this run, session or not.
  * The session itself is pc_net_disconnect's. */
 void pc_xn_punch_end(void);
@@ -71,6 +75,12 @@ void pc_xn_set_name(const char* name);
 /* The first characters of this install's key tag, for "NAME#TAG": two
  * players with the same name are told apart by it. "" without a key. */
 const char* pc_xn_tag(void);
+/* A file in the profile folder (MELEE_XN_IDENTITY's, for tests): `out`, or
+ * NULL without one. */
+char* pc_xn_profile_file(const char* leaf, char* out, size_t cap);
+/* This install's key, for the service calls made outside a run (Browse). */
+struct PcNetIdentity;
+bool pc_xn_identity(struct PcNetIdentity* out);
 /* MELEE_XN=host or join:CODE (with MELEE_XN_URL, MELEE_XN_NAME, MELEE_XN_SEATS):
  * the connect phase at boot, blocking until the session is up, as
  * MELEE_NET_PEERS is up from boot. False when MELEE_XN is unset. */

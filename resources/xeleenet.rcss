@@ -1,0 +1,123 @@
+/* XeleeNet's pages (src/pc/xeleenet_menu.cpp; docs/xeleenet-plan.md and its
+ * wireframe: H1, H2, B1, J1-J4), on top of the Slippi pages' line work
+ * (slippi-setup.rcss). Laid out in px on the same 1120x660 screen. F5 in the
+ * game reloads this file. */
+
+.arr, .type, .go, .small, .note { display: inline; }
+.arr { color: #f0c226; margin: 0 12px; font-weight: bold; }
+
+/* ---- H1: the preset bar, two columns of rows, OPEN LOBBY ------------------- */
+
+.pbar { position: absolute; left: 28px; top: 2px; width: 1064px; height: 60px; padding: 0 22px;
+        border: 3px #f0c226b0; border-radius: 9px; background-color: #0c0b08e8; }
+.pbar .k { position: absolute; left: 24px; top: 18px; font-size: 16px; font-weight: bold; letter-spacing: 3px; color: #c9b77c; }
+.pbar .pv { position: absolute; left: 330px; width: 400px; top: 9px; text-align: center; font-size: 30px; font-weight: 800; color: #ffffff; }
+.pbar .pk { position: absolute; right: 24px; top: 19px; font-size: 16px; color: #8d8468; }
+.pbar.cursor { border-color: #fff4c4; background-color: #1d180af0; box-shadow: #ffb020e0 0px 0px 16px 3px; }
+
+.col { position: absolute; top: 74px; width: 516px; }
+.col.left { left: 28px; }
+.col.right { left: 576px; }
+.col.single { left: 270px; top: 40px; width: 580px; }
+
+.grp { height: 30px; margin-top: 4px; padding-top: 8px; border-bottom: 1px #f0c22640; }
+.grp span { font-size: 15px; font-weight: bold; letter-spacing: 3px; color: #c9b77c; }
+
+.xrow { position: relative; height: 40px; margin-top: 4px; padding: 0 14px; border: 2px #00000000; border-radius: 7px; }
+.xrow .n { font-size: 22px; color: #f0e4b8; line-height: 36px; }
+.xrow .v { position: absolute; right: 12px; top: 0; font-size: 22px; font-weight: bold; color: #fff8e0; line-height: 36px; }
+.xrow .note { margin-left: 12px; padding: 1px 7px; font-size: 12px; font-weight: bold; letter-spacing: 2px;
+              color: #1a1406; background-color: #6f6852; border-radius: 4px; }
+.xrow .type { margin-left: 10px; font-size: 14px; font-weight: bold; letter-spacing: 2px; color: #f0c226; }
+.xrow .go { margin-left: 10px; color: #f0c226; font-weight: bold; }
+.xrow.link .v { font-weight: normal; color: #c9b77c; }
+.xrow.cursor { border-color: #fff4c4; background-color: #1d180af0; box-shadow: #ffb020c0 0px 0px 12px 2px; }
+.xrow.cursor .n { color: #ffffff; }
+.xrow.off .n, .xrow.off .v { color: #6f6852; }
+.xrow.off .arr { color: #6f6852; }
+
+button.gold { display: block; position: relative; margin: 16px 0 0 auto; width: 270px; height: 58px; text-align: center;
+              font-size: 26px; font-weight: 800; letter-spacing: 2px; line-height: 54px; color: #1a1406;
+              background-color: #f0c226; border: 3px #f0c226; border-radius: 8px; }
+button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shadow: #ffb020 0px 0px 18px 4px; }
+.col.single button.gold { margin: 26px auto 0; }
+
+/* ---- H2: stages -------------------------------------------------------------- */
+
+.chips { position: absolute; left: 40px; top: 10px; width: 1040px; height: 44px; }
+.chipx { display: inline-block; margin-right: 14px; padding: 0 20px; height: 40px; font-size: 17px; font-weight: bold;
+         letter-spacing: 2px; line-height: 36px; color: #c9b77c; border: 2px #f0c22680; border-radius: 20px; }
+.chipx.on { color: #1a1406; background-color: #f0c226; border-color: #f0c226; }
+.chipx.dash { border-color: #f0c22650; }
+.chipx.cursor { border-color: #fff4c4; box-shadow: #ffb020c0 0px 0px 12px 2px; }
+.chips .count { position: absolute; right: 0; top: 8px; font-size: 19px; color: #c9b77c; }
+#grid { position: absolute; left: 40px; top: 70px; width: 1060px; }
+.tile { display: inline-block; width: 160px; height: 96px; margin: 0 12px 12px 0; padding: 0 8px; text-align: center;
+        font-size: 19px; font-weight: bold; line-height: 92px; color: #6f6852; border: 2px #f0c22640; border-radius: 7px;
+        background-color: #0c0b08c0; }
+.tile.on { color: #fff8e0; border-color: #f0c226; background-color: #2a2008e0; }
+.tile.cursor { border: 3px #fff4c4; color: #ffffff; box-shadow: #ffb020e0 0px 0px 14px 3px; line-height: 90px; }
+
+/* ---- B1: lobbies ---------------------------------------------------------------- */
+
+.bhead { position: absolute; left: 30px; top: 4px; width: 1060px; height: 44px; }
+.bhead .chipx { font-size: 15px; height: 34px; line-height: 30px; }
+.bhead .upd { position: absolute; right: 4px; top: 8px; font-size: 18px; color: #8d8468; }
+#list { position: absolute; left: 30px; top: 60px; width: 1060px; }
+.lrow { position: relative; height: 84px; margin-bottom: 12px; padding: 0 22px; border: 2px #f0c22660; border-radius: 9px;
+        background-color: #0c0b08e0; }
+.lrow .lw { position: absolute; left: 22px; top: 10px; width: 600px; }
+.lrow .ln { font-size: 27px; font-weight: 800; color: #ffffff; }
+.lrow .ls { margin-top: 4px; font-size: 17px; color: #8d8468; }
+.lrow .lm { position: absolute; left: 650px; top: 28px; width: 120px; font-size: 17px; font-weight: bold;
+            letter-spacing: 2px; color: #c9b77c; }
+.lrow .lb { position: absolute; left: 780px; top: 24px; width: 110px; }
+.badge { display: inline-block; padding: 0 9px; height: 28px; font-size: 15px; font-weight: bold; letter-spacing: 2px;
+         line-height: 28px; color: #1a1406; background-color: #f0c226; border-radius: 5px; }
+.badge.game { color: #f0c226; background-color: #00000000; border: 2px #f0c226; line-height: 24px; }
+.lrow .lt { position: absolute; left: 900px; top: 22px; font-size: 26px; font-weight: 800; color: #fff8e0; }
+.lrow .lc { position: absolute; right: 22px; top: 26px; font-size: 19px; color: #8d8468; }
+.lrow.cursor { border: 3px #fff4c4; background-color: #1d180af0; box-shadow: #ffb020e0 0px 0px 16px 3px; padding: 0 21px; }
+.lrow.full { opacity: 0.5; }
+.empty { margin-top: 140px; text-align: center; font-size: 25px; color: #c9b77c; }
+.empty.bad { color: #ff8a5c; }
+.foot { position: absolute; left: 0; width: 1120px; top: 620px; text-align: center; font-size: 18px; color: #8d8468; }
+
+/* ---- J1: the code -------------------------------------------------------------- */
+
+#tiles.six { display: block; left: 216px; top: 40px; width: 690px; height: 112px; }
+#tiles.six .cell { position: absolute; top: 0; width: 92px; margin: 0; }
+#tiles.six .dash { position: absolute; top: 0; width: 56px; font-size: 60px; font-weight: 800; color: #8d8468;
+                   line-height: 104px; text-align: center; }
+#keys.xn { left: 168px; top: 196px; width: 800px; }
+#keys.xn .key { width: 76px; height: 62px; margin: 0 12px 12px 0; line-height: 58px; font-size: 30px; }
+#keys.xn .key.cursor { line-height: 56px; }
+#keys.xn .key.join { width: 340px; font-size: 26px; font-weight: 800; letter-spacing: 2px; color: #1a1406;
+                     background-color: #f0c226; border-color: #f0c226; }
+#keys.xn .key.join.cursor { border-color: #fff4c4; background-color: #ffd84a; }
+
+/* ---- J2-J4: joining ------------------------------------------------------------ */
+
+.step.bad .dot { border-color: #ff6a4c; background-color: #ff6a4c; box-shadow: #ff5a3ce0 0px 0px 12px 3px; }
+.step.bad .lbl { color: #ff8a5c; }
+#lobbycard { position: absolute; left: 230px; top: 116px; width: 660px; padding: 26px 34px 24px;
+             border: 3px #f0c226b0; border-radius: 13px; background-color: #0c0b08e8; }
+#lobbycard .head { font-size: 32px; font-weight: 800; color: #ffffff; }
+#lobbycard .head.bad { color: #ff9a6c; }
+#lobbycard .rules { margin-top: 4px; font-size: 18px; color: #c9b77c; }
+#lobbycard .players { margin-top: 16px; padding-top: 10px; border-top: 1px #f0c22640; }
+#lobbycard .why { margin-top: 12px; font-size: 22px; color: #f0e4b8; line-height: 30px; }
+#lobbycard .text { margin-top: 16px; font-size: 22px; color: #f0e4b8; }
+#lobbycard .wait { margin-top: 16px; font-size: 22px; color: #c9b77c; }
+#lobbycard .fine { margin-top: 16px; }
+#lobbycard.failed { border-color: #ff6a4cc0; background-color: #1a0c08e8; }
+.player { position: relative; height: 44px; }
+.player .name { font-size: 23px; font-weight: bold; color: #fff8e0; line-height: 44px; }
+.player .badge { position: absolute; left: 300px; top: 9px; height: 24px; line-height: 24px; font-size: 13px; }
+.player .how { position: absolute; right: 0; top: 0; font-size: 20px; color: #8d8468; line-height: 44px; }
+.player.ok .how { color: #9fdc6a; }
+.player.me .how { color: #ffe066; }
+.buttons.fail { position: absolute; left: 330px; top: 404px; width: 460px; }
+.buttons.fail .btn { width: 220px; height: 58px; padding-top: 11px; font-size: 24px; letter-spacing: 2px; }
+.buttons.fail .btn.primary { color: #1a1406; background-color: #f0c226; border-color: #f0c226; }
+.buttons.fail .btn.primary.cursor { border-color: #fff4c4; background-color: #ffd84a; }

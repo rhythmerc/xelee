@@ -53,6 +53,8 @@ bool pc_net_active(void);
 int pc_net_void_port_now(void);
 /* Presentation-only quick chat is available in connected noncombat scenes. */
 bool pc_net_chat_available(void);
+/* XeleeNet turns quick-chat off (not in its v1); every other mode has it. */
+void pc_net_chat_set_enabled(bool enabled);
 /* True when the simulation must be reproducible elsewhere: netplay,
  * record, replay or sync test. Guards machine-seeded retail behaviour. */
 bool pc_net_deterministic(void);
@@ -88,6 +90,9 @@ typedef struct PcNetLink {
  * controller port `local`. Ownership of the socket moves on success only. */
 bool pc_net_connect_links(
     intptr_t socket, const PcNetLink* links, int n, int local, uint32_t seed);
+/* End the session without a goodbye and hand its socket back (-1 when there
+ * is none): XeleeNet restarts the session on it when a player joins. */
+intptr_t pc_net_release_socket(void);
 /* The controller ports in the session, ours included (bit per port); 0 offline. */
 int pc_net_port_mask(void);
 /* Connect over the Slippi transport (MELEE_NET_STACK=slippi,
@@ -158,6 +163,12 @@ int pc_net_handshake_state(void);
  * written all-unlocked (net_handshake.c), so this flag now agrees with them
  * instead of overriding them; the direct mask readers agree too. */
 bool pc_net_rules(bool* unlock_all, bool* frozen_stadium);
+/* XeleeNet's Teams: the host sets what its RULES carry; every player's CSS
+ * opens with what the session agreed (the host's own setting before one). */
+void pc_net_set_teams(bool teams);
+/* The host's lobby Frozen Stadium for RULES: 0 or 1, -1 for the player's own. */
+void pc_net_set_frozen_stadium(int frozen);
+bool pc_net_rules_teams(void);
 
 /* Called once per simulation tick before the pad queue head is consumed.
  * Replaces the head sample's four ports with the synced inputs for this

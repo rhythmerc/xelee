@@ -129,6 +129,9 @@ static int32_t s_hs_prev_start = -1;
 static uint64_t s_direct_idle_ns;
 static bool s_rules_on; /* a RULES set is in force (host or guest) */
 static bool s_rules_frozen;
+static bool s_rules_teams;
+static bool s_teams_wanted; /* what this host's RULES will carry */
+static int s_frozen_wanted = -1; /* XeleeNet's lobby setting; -1: the player's own */
 static bool s_rules_saved; /* guest: s_rules_orig holds its own values */
 static Rules s_rules_orig;
 static uint64_t s_nonce_local;   /* ours this session; 0: not drawn yet */
@@ -255,7 +258,8 @@ static void rules_capture(Rules* ru) {
     ru->item_freq = p->item_freq;
     ru->item_mask = p->item_mask;
     ru->stage_mask = p->stage_mask;
-    ru->frozen_stadium = pc_is_frozen_stadium_enabled();
+    ru->frozen_stadium = s_frozen_wanted >= 0 ? (uint8_t)s_frozen_wanted : pc_is_frozen_stadium_enabled();
+    ru->teams = s_teams_wanted;
 }
 
 static void rules_apply(const Rules* ru, bool from_peer) {
@@ -269,6 +273,7 @@ static void rules_apply(const Rules* ru, bool from_peer) {
     p->item_mask = ru->item_mask;
     p->stage_mask = ru->stage_mask;
     s_rules_frozen = ru->frozen_stadium != 0;
+    s_rules_teams = ru->teams != 0;
     s_rules_on = true;
     pc_log_line("net: RULES %s mode=%u time=%u stock=%u handicap=%u dmg=%u stage_sel=%u ff=%u "
                 "pause=%u sd=%u items=%u/%016llx stages=%08x frozen=%u unlock_all=1",
@@ -366,6 +371,18 @@ void rules_restore(void) {
     s_hs_tx.len = 0;
     s_hs_logged = 0;
     s_direct_idle_ns = 0;
+}
+
+void pc_net_set_teams(bool teams) {
+    s_teams_wanted = teams;
+}
+
+void pc_net_set_frozen_stadium(int frozen) {
+    s_frozen_wanted = frozen;
+}
+
+bool pc_net_rules_teams(void) {
+    return s_rules_on ? s_rules_teams : s_teams_wanted;
 }
 
 bool pc_net_rules(bool* unlock_all, bool* frozen_stadium) {

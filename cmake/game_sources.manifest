@@ -893,6 +893,7 @@ src/melee/mn/mnstagesel.c
 src/melee/mn/mnstagesel_slippi.c
 src/melee/mn/mnstagesw.c
 src/melee/mn/mnvibration.c
+src/melee/mn/mnxeleenet.c
 src/melee/mp/mpcoll.c
 src/melee/mp/mpisland.c
 src/melee/mp/mplib.c

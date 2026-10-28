@@ -23,6 +23,7 @@ extern const char* pc_get_net_name(void);
 #define START_MS 200       /* the host's start, until every guest answers */
 #define PAIR_WAIT_MS 8000  /* two guests not through by then go via the host */
 #define HOST_WAIT_MS 20000 /* a guest that cannot reach the host cannot play */
+#define SWITCH_LEAD 90     /* frames between naming the switch and making it */
 
 #define DEFAULT_STUN "stun.l.google.com:19302,stun.cloudflare.com:3478"
 
@@ -70,6 +71,7 @@ typedef struct XnStart { /* host -> guest */
     uint8_t direct[4]; /* per port: the ports it has its own link to */
     uint8_t seed[4];
     uint8_t nonces[4][8];
+    uint8_t at[4]; /* players already in a session switch on this frame; ~0: not yet */
     uint8_t sig[64];
 } XnStart;
 
@@ -109,7 +111,7 @@ static uint16_t s_bound;
 static PcNetIdentity s_id;
 static char s_url[256], s_name[16], s_code[8];
 static int s_seats;
-static uint64_t s_t0, s_stun_next, s_tell_next, s_in_ms;
+static uint64_t s_t0, s_stun_next, s_tell_next, s_start_next, s_in_ms;
 static struct {
     struct sockaddr_in to;
     uint8_t txid[12];
@@ -126,6 +128,24 @@ static uint16_t s_block;
 static char s_lobby_code[8];
 static bool s_start_req; /* host: start without waiting for every seat */
 static XnStart s_start; /* the host's, sent or accepted */
+static int s_session_seq; /* sessions started this run: a new one is a roster change */
+static uint32_t s_running_seed; /* the session running's start, 0 none */
+static int32_t s_switch_at = -1; /* in a session: the frame the next one starts on */
+
+/* Once a session runs, the engine owns the socket: its receive thread hands
+ * punch datagrams over (ride_datagram) and the game thread drains them
+ * (receive), sending through the engine (pc_net_send_datagram). That keeps
+ * the lobby going in the CSS: a player who joins is found, linked and keyed
+ * the same way, and the host starts the next session with them in it. */
+#define RIDE_SLOTS 32
+static struct {
+    uint8_t buf[512];
+    int n;
+    struct sockaddr_in from;
+} s_ride[RIDE_SLOTS];
+static int s_ride_head, s_ride_n;
+static SDL_Mutex* s_ride_lock;
+static bool s_riding;
 static XnAck s_ack;     /* a guest's answer to it, for the late repeats */
 
 static uint64_t now_ms(void) {
@@ -153,6 +173,12 @@ static void fail(const char* why) {
     snprintf(s_why, sizeof s_why, "%s", why);
     s_phase = PH_FAILED;
     pc_log_line("xeleenet: %s", why);
+    if (s_riding) {
+        /* The lobby is gone (the service, a refused start), not the session:
+         * the game goes on with whoever is in it. */
+        pc_net_set_datagram_handler(NULL);
+        s_riding = false;
+    }
     if (s_sock != SOCK_INVALID) {
         sock_close(s_sock);
         s_sock = SOCK_INVALID;
@@ -188,7 +214,11 @@ static void send_to(const void* buf, size_t n, uint32_t ip, uint16_t port, int t
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = ip;
     a.sin_port = htons(port);
-    sendto(s_sock, (const char*)buf, (int)n, 0, (const struct sockaddr*)&a, sizeof a);
+    if (s_sock != SOCK_INVALID) {
+        sendto(s_sock, (const char*)buf, (int)n, 0, (const struct sockaddr*)&a, sizeof a);
+    } else if (s_riding) {
+        pc_net_send_datagram(buf, n, ip, port);
+    }
 }
 
 /* Signs the datagram (its last 64 bytes are the signature) and sends it to
@@ -242,16 +272,58 @@ static void link_key(int a, int b, const uint8_t nonces[4][8], uint8_t out[32]) 
 
 /* ---- after the start: the engine owns the socket -------------------------- */
 
-/* A guest whose answer to the start was lost hears it again from the
- * host, now on the engine's receive thread: answer with the same bytes. */
-static bool late_datagram(const void* buf, size_t n, uint32_t ip, uint16_t port) {
+/* The engine's receive thread: a punch datagram is queued for the game
+ * thread; anything else is the engine's. */
+static bool ride_datagram(const void* buf, size_t n, uint32_t ip, uint16_t port) {
     if (n < 3 || memcmp(buf, "XNP", 3) != 0) {
         return false;
     }
-    if (s_local != 0 && n == sizeof s_start && memcmp(buf, &s_start, n) == 0) {
-        pc_net_send_datagram(&s_ack, sizeof s_ack, ip, port);
+    if (n <= sizeof s_ride[0].buf) {
+        SDL_LockMutex(s_ride_lock);
+        if (s_ride_n < RIDE_SLOTS) {
+            int i = (s_ride_head + s_ride_n++) % RIDE_SLOTS;
+            memcpy(s_ride[i].buf, buf, n);
+            s_ride[i].n = (int)n;
+            memset(&s_ride[i].from, 0, sizeof s_ride[i].from);
+            s_ride[i].from.sin_family = AF_INET;
+            s_ride[i].from.sin_addr.s_addr = ip;
+            s_ride[i].from.sin_port = htons(port);
+        }
+        SDL_UnlockMutex(s_ride_lock);
     }
-    return true; /* any other punch datagram is late and done with */
+    return true;
+}
+
+/* The next datagram: off our own socket before the session, else out of the
+ * engine's hand-over queue. -1 when there is none. */
+static int next_datagram(uint8_t* buf, size_t cap, struct sockaddr_in* from) {
+    if (s_sock != SOCK_INVALID) {
+        for (;;) {
+            socklen_t len = sizeof *from;
+            int n = (int)recvfrom(s_sock, (char*)buf, (int)cap, 0, (struct sockaddr*)from, &len);
+#if defined(_WIN32)
+            /* Winsock hands an unconnected UDP socket the ICMP unreachable from a
+             * candidate nobody listens on as a recvfrom error; the queue goes on. */
+            if (n < 0 && WSAGetLastError() == WSAECONNRESET) {
+                continue;
+            }
+#endif
+            return n > 0 ? n : -1;
+        }
+    }
+    int n = -1;
+    if (s_riding && s_ride_lock != NULL) {
+        SDL_LockMutex(s_ride_lock);
+        if (s_ride_n > 0) {
+            n = s_ride[s_ride_head].n;
+            memcpy(buf, s_ride[s_ride_head].buf, (size_t)n);
+            *from = s_ride[s_ride_head].from;
+            s_ride_head = (s_ride_head + 1) % RIDE_SLOTS;
+            s_ride_n--;
+        }
+        SDL_UnlockMutex(s_ride_lock);
+    }
+    return n;
 }
 
 static void begin_session(uint32_t seed) {
@@ -272,18 +344,31 @@ static void begin_session(uint32_t seed) {
         pc_log_line("xeleenet: P%d %s at %s", p + 1, l->via_host ? "through the host" : "direct",
             ip_text(l->ip, l->port));
     }
-    sock_t sock = s_sock;
+    /* The first session takes our socket; a later one (someone joined) takes
+     * it back from the running session, with no goodbye: every peer restarts. */
+    sock_t sock = s_sock != SOCK_INVALID ? s_sock : (sock_t)pc_net_release_socket();
     s_sock = SOCK_INVALID;
-    if (!pc_net_connect_links((intptr_t)sock, links, n, s_local, seed)) {
-        sock_close(sock);
+    if (sock == SOCK_INVALID || !pc_net_connect_links((intptr_t)sock, links, n, s_local, seed)) {
+        if (sock != SOCK_INVALID) {
+            sock_close(sock);
+        }
+        s_riding = false;
         fail("Couldn't start the session");
         return;
     }
     crypto_wipe(links, sizeof links);
-    pc_net_set_datagram_handler(late_datagram);
+    if (s_ride_lock == NULL) {
+        s_ride_lock = SDL_CreateMutex();
+    }
+    s_ride_head = s_ride_n = 0;
+    s_riding = true;
+    pc_net_set_datagram_handler(ride_datagram);
     s_phase = PH_DONE;
-    pc_log_line("xeleenet: session up as P%d with %d others after %.1f s", s_local + 1, n,
-        (now_ms() - s_t0) / 1000.0);
+    s_session_seq++;
+    s_running_seed = seed;
+    s_switch_at = -1;
+    pc_log_line("xeleenet: session %d up as P%d with %d others after %.1f s", s_session_seq,
+        s_local + 1, n, (now_ms() - s_t0) / 1000.0);
 }
 
 /* ---- receiving ------------------------------------------------------------ */
@@ -337,8 +422,33 @@ static void on_intro(const XnIntro* m) {
     pc_log_line("xeleenet: the host introduced P%d (%s)", p + 1, w->name);
 }
 
+static uint32_t get32b(const uint8_t* p) {
+    return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
+}
+
+static void put32b(uint8_t* p, uint32_t v) {
+    p[0] = (uint8_t)(v >> 24), p[1] = (uint8_t)(v >> 16), p[2] = (uint8_t)(v >> 8), p[3] = (uint8_t)v;
+}
+
+/* A start. Not in a session yet (the first, or a newcomer): begin now. In
+ * one, a roster change: answer at once, then switch on the frame the host
+ * names, together with everyone else in it -- leaving first would stall the
+ * session the others still tick, and with it their answers (a deadlock seen
+ * at the second join). */
 static void on_start(const XnStart* m) {
-    if (s_phase != PH_PUNCH || !(m->ports & (1u << s_local)) || get64(m->nonces[s_local]) != s_nonce) {
+    if ((s_phase != PH_PUNCH && s_phase != PH_DONE) || !(m->ports & (1u << s_local)) ||
+        get64(m->nonces[s_local]) != s_nonce)
+    {
+        return;
+    }
+    const uint32_t seed = get32b(m->seed);
+    const bool riding = s_riding && pc_net_active();
+    if (riding && seed == s_running_seed) {
+        send_signed(&s_ack, sizeof s_ack, 0); /* the session we're in: answered already */
+        return;
+    }
+    if (riding && memcmp(m->seed, s_start.seed, 4) == 0 && get32b(m->at) == get32b(s_start.at)) {
+        send_signed(&s_ack, sizeof s_ack, 0); /* our answer was lost: the same one again */
         return;
     }
     for (int p = 1; p < 4; p++) {
@@ -352,8 +462,14 @@ static void on_start(const XnStart* m) {
     for (int i = 0; i < 3; i++) {
         send_signed(&s_ack, sizeof s_ack, 0);
     }
-    uint32_t seed = (uint32_t)m->seed[0] << 24 | (uint32_t)m->seed[1] << 16 |
-                    (uint32_t)m->seed[2] << 8 | m->seed[3];
+    if (riding) {
+        const uint32_t at = get32b(m->at);
+        if (at != 0xFFFFFFFFu) {
+            s_switch_at = (int32_t)at;
+            pc_log_line("xeleenet: the next session (players %02x) starts at frame %d", m->ports, s_switch_at);
+        }
+        return;
+    }
     begin_session(seed);
 }
 
@@ -361,16 +477,8 @@ static void receive(void) {
     uint8_t buf[512];
     for (;;) {
         struct sockaddr_in from;
-        socklen_t len = sizeof from;
-        int n = (int)recvfrom(s_sock, (char*)buf, sizeof buf, 0, (struct sockaddr*)&from, &len);
-#if defined(_WIN32)
-        /* Winsock hands an unconnected UDP socket the ICMP unreachable from a
-         * candidate nobody listens on as a recvfrom error; the queue goes on. */
-        if (n < 0 && WSAGetLastError() == WSAECONNRESET) {
-            continue;
-        }
-#endif
-        if (n <= 0 || s_sock == SOCK_INVALID) {
+        int n = next_datagram(buf, sizeof buf, &from);
+        if (n <= 0) {
             return;
         }
         if (from.sin_family != AF_INET) {
@@ -708,16 +816,42 @@ static void start_build(void) {
             }
         }
     }
+    put32b(s_start.at, 0xFFFFFFFFu);
+    for (int g = 1; g < 4; g++) {
+        s_who[g].acked = false;
+    }
+    s_start_next = 0;
     s_phase = PH_STARTING;
     pc_log_line("xeleenet: starting, players %02x, seed %u", s_start.ports, seed);
 }
 
+/* The host's start, until everyone has answered. Then, with nobody in a
+ * session yet, it begins at once. With one running, the second step: the
+ * frame everyone in it switches on, sent until it comes. */
 static void start_tick(void) {
-    uint64_t t = now_ms();
-    if (t < s_tell_next) {
+    const uint64_t t = now_ms();
+    const bool riding = s_riding && pc_net_active();
+    const uint32_t seed = get32b(s_start.seed);
+    if (riding && get32b(s_start.at) != 0xFFFFFFFFu) {
+        if (pc_net_frame() >= (int32_t)get32b(s_start.at)) {
+            begin_session(seed);
+            return;
+        }
+        if (t >= s_start_next) {
+            s_start_next = t + START_MS;
+            for (int g = 1; g < 4; g++) {
+                if (s_start.ports & (1u << g)) {
+                    head(&s_start.h, T_START, g);
+                    send_signed(&s_start, sizeof s_start, g);
+                }
+            }
+        }
         return;
     }
-    s_tell_next = t + START_MS;
+    if (t < s_start_next) {
+        return; /* its own clock: punch_tick's runs alongside while a session does */
+    }
+    s_start_next = t + START_MS;
     bool all = true;
     for (int g = 1; g < 4; g++) {
         if ((s_start.ports & (1u << g)) && !s_who[g].acked) {
@@ -726,10 +860,28 @@ static void start_tick(void) {
             send_signed(&s_start, sizeof s_start, g);
         }
     }
-    if (all) {
-        begin_session((uint32_t)s_start.seed[0] << 24 | (uint32_t)s_start.seed[1] << 16 |
-                      (uint32_t)s_start.seed[2] << 8 | s_start.seed[3]);
+    if (!all) {
+        return;
     }
+    if (!riding) {
+        begin_session(seed);
+        return;
+    }
+    put32b(s_start.at, (uint32_t)(pc_net_frame() + SWITCH_LEAD));
+    s_start_next = 0; /* the named frame goes out on the next tick */
+    pc_log_line("xeleenet: everyone answered; the next session (players %02x) starts at frame %d",
+        s_start.ports, (int)get32b(s_start.at));
+}
+
+/* Host, with a session running: a guest the session doesn't have yet, linked
+ * to everyone, means the next session. */
+static bool roster_grew(void) {
+    uint8_t guests = 0;
+    for (int g = 1; g < 4; g++) {
+        guests |= s_who[g].known ? (uint8_t)(1u << g) : 0;
+    }
+    int players = 0;
+    return (guests & ~s_start.ports) != 0 && links_decided(&players);
 }
 
 int pc_xn_punch_poll(void) {
@@ -737,8 +889,6 @@ int pc_xn_punch_poll(void) {
     case PH_OFF:
     case PH_FAILED:
         return -1;
-    case PH_DONE:
-        return 1;
     default:
         break;
     }
@@ -795,12 +945,37 @@ int pc_xn_punch_poll(void) {
         }
         break;
     case PH_STARTING:
+        if (s_riding) {
+            learn_members();
+            punch_tick(); /* the running session's links stay probed meanwhile */
+        }
         start_tick();
+        break;
+    case PH_DONE:
+        /* The lobby goes on in the CSS: newcomers are found and linked. */
+        learn_members();
+        if (pc_xn_status() == PC_XN_FAILED) {
+            fail(pc_xn_error(NULL));
+            break;
+        }
+        punch_tick();
+        if (s_local != 0 && s_switch_at >= 0 && pc_net_frame() >= s_switch_at) {
+            begin_session(get32b(s_start.seed)); /* the frame the host named */
+        } else if (s_local == 0 && roster_grew()) {
+            start_build();
+        }
         break;
     default:
         break;
     }
-    return s_phase == PH_DONE ? 1 : s_phase == PH_FAILED ? -1 : 0;
+    if (s_phase == PH_FAILED) {
+        return -1;
+    }
+    return s_session_seq > 0 && pc_net_active() ? 1 : 0;
+}
+
+int pc_xn_punch_session_seq(void) {
+    return s_session_seq;
 }
 
 bool pc_xn_punch_start(const char* url, const char* name, const char* code, int seats) {
@@ -808,6 +983,8 @@ bool pc_xn_punch_start(const char* url, const char* name, const char* code, int 
         return false;
     }
     memset(s_who, 0, sizeof s_who);
+    memset(&s_start, 0, sizeof s_start);
+    s_session_seq = 0;
     s_lobby_code[0] = '\0';
     s_start_req = false;
     s_phase = PH_STUN;
@@ -922,9 +1099,9 @@ bool pc_xn_punch_from_env(void) {
 }
 
 void pc_xn_punch_request_start(void) {
-    if (s_local == 0 && s_phase == PH_PUNCH && !s_start_req) {
-        s_start_req = true;
-        pc_log_line("xeleenet: the host starts the session");
+    if (s_code[0] == '\0' && !s_start_req) {
+        s_start_req = true; /* a host: start as soon as anyone has joined */
+        pc_log_line("xeleenet: the host starts the session with the first to join");
     }
 }
 
@@ -932,9 +1109,11 @@ void pc_xn_punch_end(void) {
     if (s_phase == PH_OFF) {
         return;
     }
-    if (s_phase == PH_DONE) {
+    if (s_riding) {
         pc_net_set_datagram_handler(NULL);
-    } else if (s_sock != SOCK_INVALID) {
+        s_riding = false;
+    }
+    if (s_sock != SOCK_INVALID) {
         sock_close(s_sock);
         s_sock = SOCK_INVALID;
     }
@@ -979,7 +1158,7 @@ void pc_xn_punch_view(PcXnPunchView* v) {
 static char s_xn_name[16];
 static bool s_xn_name_read;
 
-static char* profile_file(const char* leaf, char* out, size_t cap) {
+char* pc_xn_profile_file(const char* leaf, char* out, size_t cap) {
     const char* dir_env = getenv("MELEE_XN_IDENTITY");
     char* pref = dir_env == NULL ? SDL_GetPrefPath(NULL, "melee-pc") : NULL;
     const char* dir = dir_env != NULL ? dir_env : pref;
@@ -999,7 +1178,7 @@ const char* pc_xn_name(void) {
     if (!s_xn_name_read) {
         char path[1024];
         s_xn_name_read = true;
-        FILE* f = profile_file("xeleenet-name.txt", path, sizeof path) ? fopen(path, "r") : NULL;
+        FILE* f = pc_xn_profile_file("xeleenet-name.txt", path, sizeof path) ? fopen(path, "r") : NULL;
         if (f != NULL) {
             if (fgets(s_xn_name, sizeof s_xn_name, f) == NULL) {
                 s_xn_name[0] = '\0';
@@ -1015,7 +1194,7 @@ void pc_xn_set_name(const char* name) {
     char path[1024];
     snprintf(s_xn_name, sizeof s_xn_name, "%.12s", name != NULL ? name : "");
     s_xn_name_read = true;
-    FILE* f = profile_file("xeleenet-name.txt", path, sizeof path) ? fopen(path, "w") : NULL;
+    FILE* f = pc_xn_profile_file("xeleenet-name.txt", path, sizeof path) ? fopen(path, "w") : NULL;
     if (f != NULL) {
         fprintf(f, "%s\n", s_xn_name);
         fclose(f);
@@ -1037,4 +1216,12 @@ const char* pc_xn_tag(void) {
         SDL_free(pref);
     }
     return tag;
+}
+
+bool pc_xn_identity(PcNetIdentity* out) {
+    const char* dir_env = getenv("MELEE_XN_IDENTITY");
+    char* pref = dir_env == NULL ? SDL_GetPrefPath(NULL, "melee-pc") : NULL;
+    bool ok = pc_identity_load(out, dir_env != NULL ? dir_env : pref, "PLAYER");
+    SDL_free(pref);
+    return ok;
 }

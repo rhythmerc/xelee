@@ -15,6 +15,7 @@
 #include "gmscene.h"
 #include "gmvsmode.h"
 #include "gmvsmelee.h"
+#include "gmmain_lib.h"
 #include "types.h"
 #include <dolphin/pad.h>
 #include <melee/if/if_2FD9.h>
@@ -24,6 +25,7 @@
 #include <melee/mn/mnmain.h>
 #include <melee/mn/mnnamenew.h>
 #include <melee/mn/mnslippi.h>
+#include <melee/mn/mnxeleenet.h>
 #include <melee/lb/lbdvd.h>
 #include <melee/lb/types.h>
 #include <melee/mn/inlines.h>
@@ -38,6 +40,7 @@
 #include "pc/net_identity.h"
 #include "pc/net_match.h"
 #include "pc/net_punch.h"
+#include "pc/xeleenet_menu.h"
 #include "pc/slippi/slp_user.h"
 #include "pc/net_rank_session.h"
 #include "pc/xr_pointer.h"
@@ -76,6 +79,9 @@ enum {
 /* Why the session ended, for the CSS to show: Slippi's flow has no lobby to
  * return to, so a failure lands on the CSS with the reason on it. */
 static char slpcss_notice[48];
+/* XeleeNet: the CSS leaves for itself, the roster having changed (see
+ * gmOnline_XnCssFrame). */
+static bool xn_reload;
 static void routeAfterFailure(void);
 #endif
 static bool awaiting_rank_result;
@@ -270,6 +276,7 @@ void gmOnline_SetKind(OnlineKind kind)
 {
     online_kind = kind;
 #ifdef TARGET_PC
+    pc_net_chat_set_enabled(kind != ONLINE_KIND_XN); /* XeleeNet has no chat yet */
     /* Entered from the menu: a pick from an earlier visit (START on the CSS,
      * then backed out) would skip this visit's CSS for the lobby view. */
     slippi_picked = false;
@@ -437,10 +444,21 @@ void onEnterCss(GameModeState* state)
     if (online_kind == ONLINE_KIND_XN) {
         /* A door for every player in the session, by controller port. */
         int ports = pc_net_port_mask();
+        if (ports == 0) {
+            ports = 1; /* the host, alone until someone joins */
+        }
+        if (xn_reload) {
+            /* A roster reload: everyone starts from the same CSS, the newcomer
+             * included (gm_InitVsMode, as entering the lobby does). */
+            gm_InitVsMode(&online_vs);
+            xn_reload = false;
+        }
         for (int i = 0; i < GM_MAX_PLAYERS; ++i) {
             online_vs.start.players[i].slot_type =
                 i < 4 && (ports & (1 << i)) ? Gm_PKind_Human : Gm_PKind_NA;
         }
+        online_vs.start.rules.is_teams = pc_net_rules_teams(); /* the host's H1, via RULES */
+        pc_xn_banner_show(true); /* C1: the lobby's name, rules and code */
     }
 #endif
     gmVsMelee_EnterCss(state, &online_vs, VS_MELEE);
@@ -482,6 +500,22 @@ void onExitCss(GameModeState* state)
             slippi_picked = true;
             gm_SetNextGameModeStateId(state_lobby);
         }
+        return;
+    }
+    if (online_kind == ONLINE_KIND_XN) {
+        pc_xn_banner_show(false);
+    }
+    if (online_kind == ONLINE_KIND_XN && xn_reload) {
+        gm_SetNextGameModeStateId(state_css); /* the roster changed: the CSS again */
+        return;
+    }
+    if (online_kind == ONLINE_KIND_XN &&
+        ((CSSData*) gm_GetGameModeStateExitData(state))->pending_scene_change == CSSPendingSceneChange_2)
+    {
+        /* B leaves the lobby (a host closes it) for the XeleeNet menu. */
+        pc_net_disconnect();
+        pc_xn_punch_end();
+        gm_ChangeGameModeAfterCurrentScene(GM_MENU);
         return;
     }
     if (pc_net_peer_status() != PC_NET_PEER_OK) {
@@ -1505,25 +1539,25 @@ static bool directEntryFrame(OnlineLobbyView* view, u64 input)
 
 
 #ifdef TARGET_PC
-/* ---- XeleeNet (docs/xeleenet-plan.md; wireframe J1-J3) --------------------
- * The XeleeNet menu (mnonline.c) sends Host, Join or Name here. The first
- * visit asks for a name on Melee's keyboard, Join asks for the code on it,
- * and then the room shows the joining steps and every player's link while
- * the punch (src/pc/net_punch.c) finds them. The host's START starts the
- * session, and the lobby leaves for the CSS on the handshake's frame, as
- * LAN's does. Players gather here first: seating someone into a running CSS
- * is XN4's roster reload. */
-enum { XN_BEGIN, XN_NAME, XN_CODE, XN_ROOM, XN_LEAVE };
+/* ---- XeleeNet (docs/xeleenet-plan.md; wireframe M2, H1, J1-J3) ------------
+ * The XeleeNet menu (mnonline.c) sends Host, Join or Name here, and the
+ * lobby scene shows its pages (mnxeleenet.c). Host opens the lobby with H1's
+ * rules and goes on to the CSS, which is the lobby. Join finds the lobby,
+ * links to everyone and goes on to the CSS on the handshake's frame.
+ *
+ * The lobby goes on in the CSS (gmOnline_XnCssFrame): the punch keeps
+ * finding newcomers (src/pc/net_punch.c), and when one is linked to everyone
+ * the host starts the next session with them in it. Every session is a new
+ * handshake, and the CSS reloads on its agreed frame for every player, with
+ * a door each (plan section 3.5's roster reload, in its simplest form: the
+ * picks start over). */
 static int xn_intent;
-static int xn_stage;
-static bool xn_view_up;
-static HSD_Archive* xn_ext; /* MnExtAll, for the keyboard */
-static bool xn_kb_ok;
-static char xn_code[8];
-static char xn_note[ONLINE_LOBBY_MSG_LEN];
+static int xn_seq;           /* the session the handshake below is for */
+static bool xn_agreed;       /* its handshake is done */
+static bool xn_entered;      /* and its CSS entered */
+static bool xn_joined;       /* the Join page's session is up */
 static int32_t xn_start_frame;
 static uint32_t xn_seed;
-static bool xn_agreed;
 
 void gmOnline_SetXnIntent(int intent)
 {
@@ -1535,310 +1569,103 @@ int gmOnline_XnIntent(void)
     return xn_intent;
 }
 
-static void xnEnter(void)
+/* H1's rules into Melee's own, which the RULES handshake hands to everyone. */
+static void xnApplyRules(void)
 {
-    xn_stage = XN_BEGIN;
-    xn_view_up = true;
-    xn_note[0] = '\0';
-    xn_ext = lbArchive_LoadArchive(lbLang_IsSavedLanguageUS() ? "MnExtAll.usd" : "MnExtAll.dat");
+    PcXnRules r;
+    GameRules* rules = gmMainLib_GetGameRules();
+    pc_xn_menu_rules(&r);
+    rules->mode = r.stock ? 1 : 0; /* Melee's Time = 0, Stock = 1 */
+    rules->stock_count = (u8) r.stocks;
+    rules->time_limit = (u8) r.minutes;
+    rules->stock_time_limit = (u8) (r.stock ? r.minutes : 0);
+    rules->friendly_fire = r.friendly_fire;
+    rules->handicap = (u8) r.handicap;
+    rules->damage_ratio = (u8) r.damage_ratio;
+    rules->pause = r.pause;
+    gmMainLib_GetGamePrefs()->item_freq = (u8) (r.items < 0 ? 0xFF : r.items);
+    gmMainLib_GetGamePrefs()->stage_mask = r.stage_mask;
 }
 
-static void xnExit(void)
+/* The handshake of the session now running, once per session (each roster
+ * change starts a new one); true on its agreed frame, once. */
+static bool xnAgreeFrame(void)
 {
-    if (xn_ext != NULL) {
-        lbArchive_80016EFC(xn_ext);
-        xn_ext = NULL;
+    const int seq = pc_xn_punch_session_seq();
+    if (!pc_net_active() || seq == 0) {
+        return false;
     }
-}
-
-static bool xnNameDone(bool confirmed, const char* text, UNUSED void* user)
-{
-    xn_kb_ok = confirmed && text[0] != '\0';
-    if (xn_kb_ok) {
-        pc_xn_set_name(text);
+    if (seq != xn_seq) {
+        xn_seq = seq;
+        xn_agreed = xn_entered = false;
     }
-    return true;
-}
-
-/* A code as typed: capitals, no spaces or dashes; 0/O and 1/I are the same
- * key to a person reading one aloud. */
-static void xnLeave(void);
-
-/* J1: the code's own keypad. Lobby codes skip 0/O and 1/I, so the keys
- * never offer a look-alike (tools/xeleenet/src/common.js normalizeCode). */
-static const char xn_keys[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-static int xn_key;
-
-/* One frame of the keypad; true once a whole code is entered. */
-static bool xnCodeFrame(OnlineLobbyView* view, u64 input)
-{
-    const int nkeys = (int) sizeof xn_keys - 1;
-    u64 repeat = gm_801A36C0(PAD_MAX_CONTROLLERS);
-    int len = (int) strlen(xn_code);
-    {
-        /* The pointer follows the keys, its click types one; JOIN is START. */
-        float px, py;
-        bool leads = false;
-        int hit = -1;
-        view->key_button_hot = -1;
-        if (pc_xr_pointer_at(&px, &py, &leads)) {
-            hit = mnOnlineLobby_KeyHit(px, py);
-            if ((hit >= nkeys && hit < 100) || (hit >= 100 && hit != 102)) {
-                hit = -1;
+    if (!xn_agreed) {
+        const bool host = pc_net_local_player() == 0;
+        xn_agreed = host ? pc_net_host_match(pc_net_seed(), &xn_start_frame) :
+                           pc_net_guest_wait_match(&xn_seed, &xn_start_frame);
+        if (xn_agreed) {
+            if (host) {
+                xn_seed = pc_net_seed();
             }
-            pc_xr_pointer_target(hit >= 0);
-            if (leads && hit >= 0 && hit < 100) {
-                xn_key = hit;
-            }
-            view->key_button_hot = leads && hit == 102 ? 2 : -1;
-            if (leads && hit == 102 && (input & HSD_PAD_A)) {
-                input = (input & ~(u64) HSD_PAD_A) | HSD_PAD_START;
-            }
+            pc_log_line("online: XeleeNet session %d agreed, CSS at frame %d (players %02x)", seq,
+                        xn_start_frame, pc_net_port_mask());
         }
     }
-    if (repeat & PAD_ANY_LEFT) {
-        xn_key = xn_key / ONLINE_LOBBY_KEY_COLS * ONLINE_LOBBY_KEY_COLS +
-                 (xn_key + ONLINE_LOBBY_KEY_COLS - 1) % ONLINE_LOBBY_KEY_COLS;
-        sfxMove();
-    } else if (repeat & PAD_ANY_RIGHT) {
-        xn_key = xn_key / ONLINE_LOBBY_KEY_COLS * ONLINE_LOBBY_KEY_COLS +
-                 (xn_key + 1) % ONLINE_LOBBY_KEY_COLS;
-        sfxMove();
-    } else if (repeat & PAD_ANY_UP) {
-        xn_key = (xn_key + nkeys - ONLINE_LOBBY_KEY_COLS) % nkeys;
-        sfxMove();
-    } else if (repeat & PAD_ANY_DOWN) {
-        xn_key = (xn_key + ONLINE_LOBBY_KEY_COLS) % nkeys;
-        sfxMove();
+    if (xn_agreed && !xn_entered && pc_net_frame() >= xn_start_frame) {
+        xn_entered = true;
+        *HSD_RandSeedPtr = xn_seed;
+        return true;
     }
-    if ((input & HSD_PAD_A) && len < 6) {
-        xn_code[len++] = xn_keys[xn_key];
-        xn_code[len] = '\0';
-        xn_note[0] = '\0';
-        sfxForward();
-    } else if (input & HSD_PAD_B) {
-        sfxBack();
-        if (len == 0) {
-            xnLeave(); /* B on an empty code goes back to the menu */
-            return false;
-        }
-        xn_code[--len] = '\0';
-    } else if (input & HSD_PAD_START) {
-        if (len == 6) {
-            sfxForward();
-            return true;
-        }
-        snprintf(xn_note, sizeof xn_note, "A lobby code has 6 characters");
-        sfxBack();
-    }
-    char slots[7];
-    for (int i = 0; i < 6; i++) {
-        slots[i] = i < len ? xn_code[i] : '_';
-    }
-    slots[6] = '\0';
-    view->screen = LOBBY_SCREEN_KEYS;
-    view->keys = xn_keys;
-    view->key_cursor = xn_key;
-    view->menu_count = 1;
-    view->key_buttons[2] = "JOIN";
-    snprintf(view->menu[0], sizeof view->menu[0], "Lobby code   %.3s - %.3s", slots, slots + 3);
-    snprintf(view->message, sizeof view->message, "%s",
-             xn_note[0] ? xn_note : "Type the 6-letter code the host shared.");
-    view->hint = "A: type   B: delete   START: join";
     return false;
 }
 
-/* Melee's keyboard in place of the lobby view, as the Slippi pages open it. */
-static void xnKeyboard(const char* initial, int max_len, const char* prompt, MnNameNewDoneFn done)
+static void xnLobbyFrame(void)
 {
-    if (xn_view_up) {
-        mnOnlineLobby_Destroy();
-        HSD_SisLib_803A5E70();
-        mn_8022EBDC();
-        xn_view_up = false;
-    }
-    mnNameNew_PcOpen(xn_ext, initial, max_len, false, false, prompt, done, NULL, false, NULL);
-}
-
-static void xnOpen(const char* code)
-{
-    const char* url = pc_xn_url();
-    xn_note[0] = '\0';
-    xn_stage = XN_ROOM;
-    xn_start_frame = -1;
-    xn_agreed = false;
-    if (url[0] == '\0') {
-        snprintf(xn_note, sizeof xn_note, "This build has no XeleeNet server set");
+    mnXeleeNet_Frame();
+    switch (pc_xn_menu_result()) {
+    case PC_XN_MENU_LEAVE:
+        pc_xn_punch_end();
+        gm_ChangeGameModeAfterCurrentScene(GM_MENU);
+        gm_801A4B60();
         return;
-    }
-    if (!pc_xn_punch_start(url, pc_xn_name(), code, 4)) {
-        snprintf(xn_note, sizeof xn_note, "%s", pc_xn_punch_error());
+    case PC_XN_MENU_HOSTED:
+        /* Into the CSS alone: the lobby is open, and the first to join
+         * starts the session (gmOnline_XnCssFrame). */
+        xnApplyRules();
+        pc_xn_punch_request_start();
+        xn_seq = 0;
+        pc_log_line("online: XeleeNet lobby open, host to the CSS");
+        gm_801A4B60();
         return;
-    }
-    pc_log_line("lobby: xeleenet %s%s", code ? "joining " : "hosting", code ? code : "");
-}
-
-static void xnLeave(void)
-{
-    pc_net_disconnect();
-    pc_xn_punch_end();
-    pc_net_peer_status_clear();
-    xn_stage = XN_LEAVE;
-    gm_ChangeGameModeAfterCurrentScene(GM_MENU);
-    gm_801A4B60();
-}
-
-/* The room (J2): the steps, then a line per player with how its link is
- * going. True when the lobby leaves for the CSS. */
-static bool xnRoomFrame(OnlineLobbyView* view, u64 input)
-{
-    PcXnPunchView pv;
-    int r = xn_note[0] ? -1 : pc_xn_punch_poll();
-    pc_xn_punch_view(&pv);
-    view->screen = LOBBY_SCREEN_MENU;
-    view->phase = LOBBY_PHASE_FOUND;
-    if (pv.code[0] != '\0') {
-        snprintf(view->subtitle, sizeof view->subtitle, "CODE %.3s %.3s", pv.code, pv.code + 3);
-    }
-    view->menu_count = 0;
-    view->cursor = 0;
-    for (int i = 0; i < pv.nplayers && view->menu_count < ONLINE_LOBBY_MENU_ROWS; i++) {
-        const char* how = pv.players[i].local    ? "you" :
-                          pv.players[i].linked   ? "connected" :
-                          pv.players[i].via_host ? "through the host" :
-                                                   "trying direct...";
-        if (pv.players[i].local) {
-            view->cursor = view->menu_count;
-        }
-        snprintf(view->menu[view->menu_count++], ONLINE_LOBBY_MSG_LEN, "P%d  %-13s%-6s %s",
-                 pv.players[i].port + 1, pv.players[i].name, pv.players[i].port == 0 ? "HOST" : "",
-                 how);
-    }
-    if (r < 0) {
-        view->phase = LOBBY_PHASE_ERROR;
-        snprintf(view->message, sizeof view->message, "%.86s",
-                 xn_note[0] ? xn_note : pv.error);
-    } else if (pv.phase == PC_XN_PUNCH_SERVICE) {
-        view->phase = LOBBY_PHASE_SEARCHING;
-        snprintf(view->message, sizeof view->message, "Finding the lobby...");
-    } else if (pv.phase == PC_XN_PUNCH_LOBBY && pv.host) {
-        snprintf(view->message, sizeof view->message, "%s",
-                 pv.nplayers < 2 ? "Share the code above with your friends" :
-                 pv.can_start    ? "Everyone's in - START: begin" :
-                                   "Connecting to everyone...");
-        if ((input & HSD_PAD_START) && pv.can_start) {
-            sfxForward();
-            pc_xn_punch_request_start();
-        }
-    } else if (pv.phase == PC_XN_PUNCH_LOBBY) {
-        snprintf(view->message, sizeof view->message, "Waiting for the host to start");
-    } else {
-        view->phase = LOBBY_PHASE_CONNECTING;
-        snprintf(view->message, sizeof view->message, "Starting...");
-    }
-    if (r == 1) {
-        if (!pc_net_active()) {
-            view->phase = LOBBY_PHASE_ERROR;
-            snprintf(view->message, sizeof view->message, "Lost the connection to the lobby");
-            r = -1;
-        } else if (!xn_agreed) {
-            xn_agreed = pv.host ? pc_net_host_match(pc_net_seed(), &xn_start_frame) :
-                                  pc_net_guest_wait_match(&xn_seed, &xn_start_frame);
-            if (xn_agreed) {
-                if (pv.host) {
-                    xn_seed = pc_net_seed();
-                }
-                pc_log_line("lobby: xeleenet session agreed, CSS at frame %d", xn_start_frame);
-            }
-        }
-        if (xn_agreed && r == 1) {
-            view->phase = LOBBY_PHASE_STARTING;
-            view->countdown_frames = xn_start_frame - pc_net_frame();
-            if (view->countdown_frames < 0) {
-                view->countdown_frames = 0;
-            }
-            if (pc_net_frame() >= xn_start_frame) {
-                *HSD_RandSeedPtr = xn_seed;
-                pc_log_line("lobby: entering CSS at frame %d, seed %u", pc_net_frame(), xn_seed);
-                return true;
-            }
-        }
-    }
-    {
-        static char last[ONLINE_LOBBY_MSG_LEN];
-        if (strcmp(view->message, last) != 0) {
-            snprintf(last, sizeof last, "%s", view->message);
-            pc_log_line("lobby: %s [%s, %d players]", view->message, pv.code, pv.nplayers);
-        }
-    }
-    view->hint = r < 0                                 ? "B: back" :
-                 pv.host && pv.phase == PC_XN_PUNCH_LOBBY ? "START: begin   B: close the lobby" :
-                                                            "B: leave";
-    return false;
-}
-
-static void xnLobbyFrame(u64 input)
-{
-    OnlineLobbyView view;
-    if (!xn_view_up && xn_stage != XN_LEAVE) {
-        mnOnlineLobby_Create(); /* back from the keyboard */
-        xn_view_up = true;
-    }
-    switch (xn_stage) {
-    case XN_BEGIN:
-        if (pc_xn_name()[0] == '\0' || xn_intent == XN_INTENT_NAME) {
-            xn_stage = XN_NAME;
-            xnKeyboard(pc_xn_name(), 12,
-                       pc_xn_name()[0] ? "Your XeleeNet name" :
-                                         "Pick a name for XeleeNet. Others see it; it can repeat.",
-                       xnNameDone);
-            return;
-        }
-        if (xn_intent == XN_INTENT_JOIN) {
-            xn_stage = XN_CODE;
-            xn_code[0] = '\0';
-            xn_key = 0;
-            return;
-        }
-        xnOpen(NULL);
+    case PC_XN_MENU_JOINED:
+        xn_joined = true;
         break;
-    case XN_NAME:
-        /* Name alone, or Back: done. Host or Join with a name: on to it. */
-        if (!xn_kb_ok || xn_intent == XN_INTENT_NAME) {
-            xnLeave();
-            return;
-        }
-        xn_stage = XN_BEGIN;
-        return;
-    case XN_CODE:
-        memset(&view, 0, sizeof view);
-        view.title = "XELEENET";
-        view.phase = LOBBY_PHASE_FOUND;
-        if (xnCodeFrame(&view, input)) {
-            xnOpen(xn_code);
-            break;
-        }
-        if (xn_stage == XN_CODE) {
-            mnOnlineLobby_Update(&view);
-        }
-        return;
-    case XN_LEAVE:
-        return;
     default:
         break;
     }
-    memset(&view, 0, sizeof view);
-    view.title = "XELEENET";
-    if (xnRoomFrame(&view, input)) {
-        mnOnlineLobby_Update(&view);
-        gm_801A4B60(); /* on to the CSS */
-        return;
+    if (xn_joined) {
+        pc_xn_punch_poll();
+        if (xnAgreeFrame()) {
+            pc_log_line("lobby: entering CSS at frame %d, seed %u", pc_net_frame(), xn_seed);
+            gm_801A4B60();
+        }
     }
-    mnOnlineLobby_Update(&view);
-    if (input & (HSD_PAD_B | PAD_CANCEL)) {
-        sfxBack();
-        xnLeave();
+}
+
+bool gmOnline_XnCssFrame(void)
+{
+    if (online_kind != ONLINE_KIND_XN) {
+        return false;
     }
+    if (pc_xn_punch_poll() < 0) {
+        return false; /* the lobby closed; the game goes on with whoever is here */
+    }
+    if (xnAgreeFrame()) {
+        xn_reload = true;
+        pc_log_line("online: XeleeNet roster changed, the CSS reloads at frame %d", pc_net_frame());
+        return true;
+    }
+    return false;
 }
 #endif
 
@@ -1854,15 +1681,22 @@ void gm_Scene_OnlineLobby_OnEnter(UNUSED void* unused)
         return; /* a pass-through: to the placement scene, or on to the CSS */
     }
 #endif
+#ifdef TARGET_PC
+    if (online_kind == ONLINE_KIND_XN) {
+        xn_joined = false;
+        mnXeleeNet_Begin(xn_intent == XN_INTENT_JOIN ? PC_XN_MENU_JOIN :
+                         xn_intent == XN_INTENT_NAME ? PC_XN_MENU_NAME :
+                                                       PC_XN_MENU_HOST);
+        return; /* its own screens, as the Slippi pages' */
+    }
+#endif
     mnOnlineLobby_Create();
 #ifdef TARGET_PC
     direct_screen = DIRECT_OFF;
     if (slippiFlow() && !slippi_picked) {
         return; /* straight on to the CSS: the pick comes before the search */
     }
-    if (online_kind == ONLINE_KIND_XN) {
-        xnEnter();
-    } else if (online_kind == ONLINE_KIND_PROFILE) {
+    if (online_kind == ONLINE_KIND_PROFILE) {
         profileRefresh();
     } else if (internetLobby() && online_kind == ONLINE_KIND_DIRECT) {
         /* Ask for the code first: starting on a stale launcher pref is how
@@ -1890,7 +1724,8 @@ void gm_Scene_OnlineLobby_OnExit(UNUSED void* unused)
         return;
     }
     if (online_kind == ONLINE_KIND_XN) {
-        xnExit();
+        mnXeleeNet_End();
+        return;
     }
 #endif
     mnOnlineLobby_Destroy();
@@ -2045,7 +1880,7 @@ void gm_Scene_OnlineLobby_OnFrame(void)
         return;
     }
     if (online_kind == ONLINE_KIND_XN) {
-        xnLobbyFrame(input);
+        xnLobbyFrame();
         return;
     }
     if (online_kind == ONLINE_KIND_PROFILE || internetLobby()) {

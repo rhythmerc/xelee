@@ -5827,6 +5827,10 @@ void mnCharSel_Scene_OnFrame(void)
             return;
         }
     }
+    if (gmOnline_XnCssFrame()) {
+        gm_801A4B60(); /* XeleeNet: a new player set; the CSS reloads */
+        return;
+    }
     {
         static bool dumped;
         if (!dumped && mnCharSel_804D6CEC == 90 && getenv("MELEE_CSS_DUMP")) {

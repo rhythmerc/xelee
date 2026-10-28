@@ -29,6 +29,26 @@ typedef struct PcXnMember {
     uint16_t udp[PC_XN_CANDS];
 } PcXnMember;
 
+/* A lobby as the browser lists it (and as joining learns it): the
+ * service's summary (tools/xeleenet/src/common.js settings()). */
+typedef struct PcXnListing {
+    char code[8];
+    char name[24];
+    char host[16];
+    char tag[12];
+    char country[4];
+    int taken, seats;
+    char preset[10];
+    bool teams;
+    bool stock;
+    int stocks, time_min;
+    char items[12];
+    char stage_list[12];
+    bool first_to; /* else endless */
+    int first_to_n;
+    bool playing, xr;
+} PcXnListing;
+
 typedef enum PcXnStatus {
     PC_XN_OFF,     /* nothing started, or closed */
     PC_XN_WORKING, /* signing in, opening the lobby, joining */
@@ -54,6 +74,19 @@ int pc_xn_members(PcXnMember* out, int max);
 void pc_xn_set_roster(const uint8_t (*keys)[32], int n);
 /* Leave the lobby (a host closes it) and stop the thread. */
 void pc_xn_stop(void);
+
+/* What the next host run opens: its name, visibility and the settings
+ * summary the browser shows (JSON, the service's settings object). */
+void pc_xn_host_options(const char* name, bool open, const char* settings_json);
+/* The lobby we're in, as far as the service told us (name and summary). */
+bool pc_xn_lobby_info(PcXnListing* out);
+
+/* Browse: the public lobbies on our build, fetched on a thread of its own
+ * (`full` includes the full ones). Poll: 0 still fetching, 1 done (rows in
+ * `out`, the count in *n, lobbies on other builds in *others), -1 failed
+ * (pc_xn_error). Joining waits for a fetch still running. */
+bool pc_xn_browse(const char* url, const PcNetIdentity* id, bool full);
+int pc_xn_browse_poll(PcXnListing* out, int max, int* n, int* others);
 
 #ifdef __cplusplus
 }

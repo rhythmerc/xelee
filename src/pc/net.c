@@ -390,9 +390,16 @@ int scene_kind(void) {
     return gm_804D6720 != NULL ? gm_804D6720->scene_kind : -1;
 }
 
+static bool s_chat_enabled = true;
+
+void pc_net_chat_set_enabled(bool enabled) {
+    s_chat_enabled = enabled;
+}
+
 bool pc_net_chat_available(void) {
     int scene = scene_kind();
-    return net.active && (scene == GS_CSS || scene == GS_RESULTS || scene == GS_ONLINE_LOBBY);
+    return s_chat_enabled && net.active &&
+           (scene == GS_CSS || scene == GS_RESULTS || scene == GS_ONLINE_LOBBY);
 }
 
 bool in_fight(void) {
@@ -2920,7 +2927,24 @@ static void session_reset(void) {
     snaps_free();
 }
 
+/* The session's end. `keep` hands the socket back instead of closing it and
+ * says no goodbye: XeleeNet starts the next session on it at once (a player
+ * joined), and the peers must not take the restart for someone leaving. */
+static sock_t session_stop(bool keep);
+
 void pc_net_disconnect(void) {
+    session_stop(false);
+}
+
+intptr_t pc_net_release_socket(void) {
+    if (s_slippi_on || net.sock == SOCK_INVALID) {
+        return -1;
+    }
+    return (intptr_t)session_stop(true);
+}
+
+static sock_t session_stop(bool keep) {
+    sock_t kept = SOCK_INVALID;
     if (s_slippi_on) {
         /* Tear the Slippi transport down first: it owns the ENet host, and a
          * disconnected peer needs no custom BYE (ENet signals it). */
@@ -2939,10 +2963,10 @@ void pc_net_disconnect(void) {
         HSD_PadLibData.qtype = 0;
         pc_log_line("net: Slippi disconnected at frame %d (status %d)", net.tick_frame, s_status);
         snaps_free();
-        return;
+        return SOCK_INVALID;
     }
     if (net.sock == SOCK_INVALID) {
-        return;
+        return SOCK_INVALID;
     }
     /* Timer and receive thread first: a removed timer cannot fire again, and
      * taking tx_lock below waits out a callback already running; a joined
@@ -2958,7 +2982,7 @@ void pc_net_disconnect(void) {
         s_rx_thread = NULL;
     }
     s_rxq_head = s_rxq_n = 0;
-    if (!s_peer_left) {
+    if (!s_peer_left && !keep) {
         /* Tell the peer why so it need not wait out the silence; sent
          * as a 5-packet burst so NAT/firewall drops are tolerated. */
         uint8_t why = s_status == PC_NET_PEER_OK ? PC_NET_PEER_LEFT : (uint8_t)s_status;
@@ -2978,7 +3002,11 @@ void pc_net_disconnect(void) {
     SDL_LockMutex(net.tx_lock);
     net.active = false;
     net.resim = false;
-    sock_close(net.sock);
+    if (keep) {
+        kept = net.sock;
+    } else {
+        sock_close(net.sock);
+    }
     net.sock = SOCK_INVALID;
     net.hs = HS_IDLE;
     /* After the BYE burst above, which still needed the key to be accepted:
@@ -2991,8 +3019,10 @@ void pc_net_disconnect(void) {
     rules_restore();
     HSD_PadLibData.qtype = 0;
     SDL_UnlockMutex(net.tx_lock);
-    pc_log_line("net: disconnected at frame %d (status %d)", net.tick_frame, s_status);
+    pc_log_line("net: %s at frame %d (status %d)", keep ? "session ended, socket kept" : "disconnected",
+        net.tick_frame, s_status);
     snaps_free();
+    return kept;
 }
 
 /* MELEE_NET_EXIT_AFTER_FRAMES=n (tools/net_test.py): the instance that reaches

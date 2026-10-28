@@ -6,11 +6,11 @@ M2 and J1-J3): N instances on one machine and a local lobby service.
                               [--exe build/linux/melee] [--disc ...]
                               [--work /tmp/net_test_xn_menu] [--shots DIR]
 
-Player 1 walks Online Mode > XeleeNet > Host Lobby and reads its code off its
-log; the others walk to Join with Code and type it on the keypad. Once the
-host's room says everyone is in, its START begins: every instance must reach
-the CSS with a door per player, agree one stage at the SSS and play a match
-with no DESYNC. Each screen on the way is captured into --shots (default
+Player 1 walks Online Mode > XeleeNet > Host, opens the lobby from the Host
+page (H1) and waits in the CSS, which is the lobby; its code comes off its
+log. The others walk to Join and type it on the keypad (J1), and each join
+reloads everyone's CSS with a door more (the roster reload). Then every
+instance must agree one stage at the SSS and play a match with no DESYNC. Each screen on the way is captured into --shots (default
 <work>/shots) for the share.
 
 The names come from MELEE_XN_NAME, so the first-visit keyboard is skipped,
@@ -29,8 +29,8 @@ sys.path.insert(0, os.path.join(HERE, "xeleenet"))
 import net_test as nt  # noqa: E402
 import test_service  # noqa: E402
 
-KEYS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # gmonlinemode.c xn_keys
-COLS = 8                                   # ONLINE_LOBBY_KEY_COLS
+KEYS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # xeleenet_menu.cpp kCodeKeys
+COLS = 9                                   # its kKeysAcross
 TO_ONLINE = [("Down", 7), ("Down", 7), ("X", 7)]  # main menu > Online Mode
 STEP = 0.35
 
@@ -50,18 +50,44 @@ def walk(inst, keys):
         nt.settle((inst,), nt.MENU_SETTLE)
 
 
+def keypad():
+    """The keypad's items as xeleenet_menu.cpp lays them out: (id, row, col)."""
+    items = [(ch, i // COLS, i % COLS) for i, ch in enumerate(KEYS)]
+    n = len(KEYS)
+    items.append(("del", n // COLS, n % COLS))
+    return items
+
+
+def step(items, cur, key):
+    """Join::move: the nearest enabled item that way, ties to the first."""
+    r0, c0 = items[cur][1], items[cur][2]
+    best, best_score = cur, None
+    for i, (_, r, c) in enumerate(items):
+        if i == cur:
+            continue
+        dr, dc = r - r0, c - c0
+        ok, score = {"Up": (dr < 0, -dr * 10 + abs(dc)), "Down": (dr > 0, dr * 10 + abs(dc)),
+                     "Left": (dr == 0 and dc < 0, -dc), "Right": (dr == 0 and dc > 0, dc)}[key]
+        if ok and (best_score is None or score < best_score):
+            best, best_score = i, score
+    return best
+
+
 def type_code(inst, code):
-    """The keypad: from the first key, arrows to each character, A types it."""
+    """The keypad: arrows to each character the way the game moves, A types it."""
+    items = keypad()
     cur = 0
     for ch in code:
-        idx = KEYS.index(ch)
-        dr, dc = idx // COLS - cur // COLS, idx % COLS - cur % COLS
-        for _ in range(abs(dr)):
-            nt.press((inst,), "Down" if dr > 0 else "Up", 7, STEP)
-        for _ in range(abs(dc)):
-            nt.press((inst,), "Right" if dc > 0 else "Left", 7, STEP)
+        want = next(i for i, it in enumerate(items) if it[0] == ch)
+        for _ in range(12):
+            if cur == want:
+                break
+            r, c = items[cur][1], items[cur][2]
+            wr, wc = items[want][1], items[want][2]
+            key = "Down" if wr > r else "Up" if wr < r else "Right" if wc > c else "Left"
+            nt.press((inst,), key, 7, STEP)
+            cur = step(items, cur, key)
         nt.press((inst,), "X", 7, STEP)
-        cur = idx
 
 
 def drive_css(insts):
@@ -117,36 +143,46 @@ def run(args):
         walk(host, [("X", 7)])
         shot(host, shots, "2-xeleenet-menu")
         walk(host, [("X", 7)])
+        time.sleep(1.5)
+        if args.players > 2:
+            nt.press((host,), "Right", 7, 0.6)  # Preset: 1v1 (2 seats) -> Doubles (4)
+        shot(host, shots, "3-host-page")
+        nt.press((host,), "Return", 9, 1.0)  # START: open the lobby
         if not host.wait_log(r"xeleenet: lobby code [A-Z0-9]{6}", 60):
             print("FAIL: the host never opened a lobby")
             return False
         code = nt.re.search(r"xeleenet: lobby code ([A-Z0-9]{6})", host.text()).group(1)
         print(f"net_test_xn_menu: lobby code {code}", flush=True)
-        time.sleep(1.5)
-        shot(host, shots, "3-host-room-empty")
+        if not host.wait_log(nt.SCENE_FILE["css"], 60):
+            print("FAIL: the host never reached the CSS")
+            return False
+        time.sleep(3)
+        shot(host, shots, "4-host-css-alone")
         for k, g in enumerate(guests):
             walk(g, TO_ONLINE + [("X", 7), ("Down", 7), ("X", 7)])
             if k == 0:
-                shot(g, shots, "4-join-keypad")
+                time.sleep(1.0)
+                shot(g, shots, "5-join-keypad")
             type_code(g, code)
             if k == 0:
-                shot(g, shots, "5-join-code-typed")
-            nt.press((g,), "Return", 9, 1.0)
-        if not host.wait_log(r"Everyone's in", 90):
-            print("FAIL: the host's room never said everyone is in")
-            return False
-        time.sleep(1.0)
-        shot(host, shots, "6-host-room-ready")
-        shot(guests[0], shots, "7-guest-room")
-        nt.press((host,), "Return", 9, 1.0)
+                shot(g, shots, "6-join-code-typed")
+            nt.press((g,), "Return", 9, 0.4)
+            if k == 0:
+                time.sleep(0.6)
+                shot(g, shots, "7-joining")
+            # Seated: this guest's own session agreed and its CSS entered.
+            if not g.wait_log(r"lobby: entering CSS", 90):
+                print(f"[{g.name}] FAIL: never got into the lobby")
+                return False
+        want = f"(players {(1 << len(insts)) - 1:02x})"
         for inst in insts:
-            if not inst.wait_log(r"lobby: entering CSS", 60):
-                print(f"[{inst.name}] FAIL: never left the room for the CSS")
+            if not inst.wait_log(nt.re.escape(want), 90):
+                print(f"[{inst.name}] FAIL: never in a session with everyone {want}")
                 return False
         if not all(i.wait_log(nt.SCENE_FILE["css"], 120) for i in insts):
             print("FAIL: the CSS never loaded everywhere")
             return False
-        time.sleep(3)
+        time.sleep(4)
         shot(host, shots, "8-css")
         if not drive_css(insts):
             print("FAIL: no CSS pick reached the SSS")

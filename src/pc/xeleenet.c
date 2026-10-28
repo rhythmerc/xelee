@@ -49,6 +49,18 @@ static uint8_t s_roster[3][32];
 static int s_nroster;
 
 static char s_token[256]; /* the thread's own */
+static PcXnListing s_info;  /* the lobby we're in (s_lock) */
+static struct {
+    char name[40];
+    bool open;
+    char settings[512];
+} s_host_opts = {"", false, ""};
+/* Browse's own thread and results (s_lock). */
+static SDL_Thread* s_browse_thread;
+static int s_browse_state; /* 0 fetching, 1 done, -1 failed */
+static bool s_browse_full;
+static PcXnListing s_rows[16];
+static int s_nrows, s_others;
 static char s_last[160];  /* the start of the last reply, for the log */
 static char s_pubkey[48];
 
@@ -242,6 +254,46 @@ static int parse_members(const PcSlippiJson* list, PcXnMember* out, int max) {
     return n;
 }
 
+static void str_of(const PcSlippiJson* obj, const char* key, char* out, size_t cap) {
+    if (!pc_slippi_json_string(pc_slippi_json_get(obj, key), out, cap)) {
+        out[0] = '\0';
+    }
+}
+
+/* A summary (the service's settings object) into a listing. */
+static void parse_settings(const PcSlippiJson* st, PcXnListing* x) {
+    char v[16];
+    str_of(st, "preset", x->preset, sizeof x->preset);
+    x->seats = pc_slippi_json_int(pc_slippi_json_get(st, "seats"), 2);
+    str_of(st, "mode", v, sizeof v);
+    x->teams = strcmp(v, "teams") == 0;
+    str_of(st, "win", v, sizeof v);
+    x->stock = strcmp(v, "time") != 0;
+    x->stocks = pc_slippi_json_int(pc_slippi_json_get(st, "stocks"), 4);
+    x->time_min = pc_slippi_json_int(pc_slippi_json_get(st, "time_min"), 8);
+    str_of(st, "items", x->items, sizeof x->items);
+    str_of(st, "stage_list", x->stage_list, sizeof x->stage_list);
+    str_of(st, "format", v, sizeof v);
+    x->first_to = strcmp(v, "first_to") == 0;
+    x->first_to_n = pc_slippi_json_int(pc_slippi_json_get(st, "first_to"), 2);
+}
+
+static void parse_listing(const PcSlippiJson* row, PcXnListing* x) {
+    char v[16];
+    memset(x, 0, sizeof *x);
+    str_of(row, "code", x->code, sizeof x->code);
+    str_of(row, "name", x->name, sizeof x->name);
+    const PcSlippiJson* host = pc_slippi_json_get(row, "host");
+    str_of(host, "name", x->host, sizeof x->host);
+    str_of(host, "tag", x->tag, sizeof x->tag);
+    str_of(row, "country", x->country, sizeof x->country);
+    x->taken = pc_slippi_json_int(pc_slippi_json_get(row, "taken"), 1);
+    str_of(row, "state", v, sizeof v);
+    x->playing = strcmp(v, "playing") == 0;
+    x->xr = pc_slippi_json_bool(pc_slippi_json_get(row, "xr"), false);
+    parse_settings(pc_slippi_json_get(row, "settings"), x);
+}
+
 static void set_members(const PcSlippiJson* list) {
     PcXnMember m[3];
     int n = parse_members(list, m, 3);
@@ -275,20 +327,29 @@ static void common_fields(char* out, size_t cap) {
 }
 
 static bool host(void) {
-    char common[512], body[1024], lobby_name[40];
+    char common[512], body[1536], lobby_name[64];
     int status = 0;
     PcSlippiJson* r;
     common_fields(common, sizeof common);
-    char display[24];
-    snprintf(display, sizeof display, "%.12s's lobby", s_args.name);
+    char display[40];
+    if (s_host_opts.name[0] != '\0') {
+        snprintf(display, sizeof display, "%s", s_host_opts.name);
+    } else {
+        snprintf(display, sizeof display, "%.12s's lobby", s_args.name);
+    }
     pc_slippi_json_escape(display, lobby_name, sizeof lobby_name);
     int seats = s_args.seats < 2 ? 2 : s_args.seats > 4 ? 4 : s_args.seats;
-    snprintf(body, sizeof body,
-        "{\"name\":\"%s\",\"visibility\":\"private\",\"ask\":false,%s,"
-        "\"settings\":{\"preset\":\"custom\",\"seats\":%d,\"mode\":\"ffa\",\"win\":\"stock\","
+    char fallback[256];
+    snprintf(fallback, sizeof fallback,
+        "{\"preset\":\"custom\",\"seats\":%d,\"mode\":\"ffa\",\"win\":\"stock\","
         "\"stocks\":4,\"time_min\":8,\"items\":\"off\",\"stage_list\":\"competitive\","
-        "\"pick\":\"random\",\"format\":\"endless\",\"first_to\":2,\"place_secs\":15}}",
-        lobby_name, common, seats);
+        "\"pick\":\"random\",\"format\":\"endless\",\"first_to\":2,\"place_secs\":15}",
+        seats);
+    char big[1536];
+    snprintf(big, sizeof big, "{\"name\":\"%s\",\"visibility\":\"%s\",\"ask\":false,%s,\"settings\":%s}",
+        lobby_name, s_host_opts.open ? "public" : "private", common,
+        s_host_opts.settings[0] ? s_host_opts.settings : fallback);
+    snprintf(body, sizeof body, "%s", big);
     if (!call_auth("/v1/lobbies", body, &status, &r)) {
         fail("offline", "Couldn't reach XeleeNet");
         return false;
@@ -306,6 +367,18 @@ static bool host(void) {
     SDL_LockMutex(s_lock);
     memcpy(s_lobby, id, sizeof s_lobby);
     memcpy(s_lobby_code, code, sizeof s_lobby_code);
+    memset(&s_info, 0, sizeof s_info);
+    snprintf(s_info.code, sizeof s_info.code, "%s", code);
+    snprintf(s_info.name, sizeof s_info.name, "%s", display);
+    snprintf(s_info.host, sizeof s_info.host, "%s", s_args.name);
+    {
+        PcSlippiJson* st = NULL;
+        const char* text = s_host_opts.settings[0] ? s_host_opts.settings : fallback;
+        if (pc_slippi_json_parse(text, strlen(text), &st, NULL, 0)) {
+            parse_settings(st, &s_info);
+            pc_slippi_json_free(st);
+        }
+    }
     s_port = 0;
     s_status = PC_XN_IN;
     SDL_UnlockMutex(s_lock);
@@ -365,6 +438,10 @@ static bool join(void) {
             memcpy(s_lobby, id, sizeof s_lobby);
             pc_slippi_json_string(pc_slippi_json_get(r, "code"), s_lobby_code, sizeof s_lobby_code);
             s_port = pc_slippi_json_int(pc_slippi_json_get(r, "port"), -1);
+            memset(&s_info, 0, sizeof s_info);
+            snprintf(s_info.code, sizeof s_info.code, "%s", s_lobby_code);
+            str_of(r, "name", s_info.name, sizeof s_info.name);
+            parse_settings(pc_slippi_json_get(r, "settings"), &s_info);
             s_status = PC_XN_IN;
             SDL_UnlockMutex(s_lock);
             pc_slippi_json_free(r);
@@ -420,6 +497,10 @@ bool pc_xn_start(const char* url, const PcNetIdentity* id, const char* name, con
     }
     if (s_thread != NULL) {
         return false;
+    }
+    if (s_browse_thread != NULL) {
+        SDL_WaitThread(s_browse_thread, NULL); /* it shares the arguments and token */
+        s_browse_thread = NULL;
     }
     memset(&s_args, 0, sizeof s_args);
     snprintf(s_args.url, sizeof s_args.url, "%s", url);
@@ -514,4 +595,108 @@ void pc_xn_stop(void) {
     SDL_LockMutex(s_lock);
     s_status = PC_XN_OFF;
     SDL_UnlockMutex(s_lock);
+}
+
+void pc_xn_host_options(const char* name, bool open, const char* settings_json) {
+    snprintf(s_host_opts.name, sizeof s_host_opts.name, "%s", name != NULL ? name : "");
+    s_host_opts.open = open;
+    snprintf(s_host_opts.settings, sizeof s_host_opts.settings, "%s", settings_json != NULL ? settings_json : "");
+}
+
+bool pc_xn_lobby_info(PcXnListing* out) {
+    if (s_lock == NULL || pc_xn_status() != PC_XN_IN) {
+        return false;
+    }
+    SDL_LockMutex(s_lock);
+    *out = s_info;
+    SDL_UnlockMutex(s_lock);
+    return true;
+}
+
+static int browse_main(void* unused) {
+    (void)unused;
+    char path[160], rev[48];
+    int status = 0;
+    PcSlippiJson* r;
+    size_t n = 0;
+    for (const char* p = pc_app_rev(); *p && n + 1 < sizeof rev; p++) {
+        char c = *p;
+        rev[n++] = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' ||
+                           c == '_' || c == '+' || c == '-' ?
+                       c :
+                       '-';
+    }
+    rev[n] = '\0';
+    snprintf(path, sizeof path, "/v1/lobbies?proto=%d&rev=%s&disc=%s%s", PC_NET_PROTO_VERSION,
+        rev[0] ? rev : "unknown", pc_lan_disc_id(), s_browse_full ? "&full=1" : "");
+    bool ok = (s_token[0] != '\0' || sign_in()) && call_auth(path, NULL, &status, &r);
+    if (ok && status == 200) {
+        const PcSlippiJson* list = pc_slippi_json_get(r, "lobbies");
+        SDL_LockMutex(s_lock);
+        s_nrows = 0;
+        for (int i = 0; list != NULL && i < list->child_count && s_nrows < 16; i++) {
+            parse_listing(pc_slippi_json_at(list, i), &s_rows[s_nrows++]);
+        }
+        s_others = pc_slippi_json_int(pc_slippi_json_get(r, "other_versions"), 0);
+        s_browse_state = 1;
+        SDL_UnlockMutex(s_lock);
+    } else {
+        if (ok) {
+            refusal(r, status);
+        }
+        SDL_LockMutex(s_lock);
+        s_browse_state = -1;
+        SDL_UnlockMutex(s_lock);
+    }
+    if (ok) {
+        pc_slippi_json_free(r);
+    }
+    return 0;
+}
+
+bool pc_xn_browse(const char* url, const PcNetIdentity* id, bool full) {
+    if (s_lock == NULL) {
+        s_lock = SDL_CreateMutex();
+    }
+    if (s_thread != NULL) {
+        return false; /* a run owns the arguments */
+    }
+    if (s_browse_thread != NULL) {
+        SDL_WaitThread(s_browse_thread, NULL);
+        s_browse_thread = NULL;
+    }
+    if (strncmp(s_args.url, url, sizeof s_args.url) != 0 ||
+        memcmp(s_args.id.public_key, id->public_key, 32) != 0)
+    {
+        memset(&s_args, 0, sizeof s_args);
+        snprintf(s_args.url, sizeof s_args.url, "%s", url);
+        size_t ul = strlen(s_args.url);
+        while (ul > 0 && s_args.url[ul - 1] == '/') {
+            s_args.url[--ul] = '\0';
+        }
+        s_args.id = *id;
+        b64url(id->public_key, 32, s_pubkey);
+        s_token[0] = '\0';
+    }
+    s_browse_full = full;
+    SDL_LockMutex(s_lock);
+    s_browse_state = 0;
+    SDL_UnlockMutex(s_lock);
+    s_browse_thread = SDL_CreateThread(browse_main, "xeleenet browse", NULL);
+    return s_browse_thread != NULL;
+}
+
+int pc_xn_browse_poll(PcXnListing* out, int max, int* n, int* others) {
+    if (s_lock == NULL) {
+        return -1;
+    }
+    SDL_LockMutex(s_lock);
+    int st = s_browse_state;
+    if (st == 1) {
+        *n = s_nrows < max ? s_nrows : max;
+        memcpy(out, s_rows, (size_t)*n * sizeof *out);
+        *others = s_others;
+    }
+    SDL_UnlockMutex(s_lock);
+    return st;
 }

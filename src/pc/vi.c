@@ -27,6 +27,7 @@ extern void browser_yield(void);
 #include "pc/pc.h"
 #include "pc/fight_map.h"
 #include "pc/slippi_menu.h"
+#include "pc/xeleenet_menu.h"
 #include "pc/launcher.h"
 #include "pc/touch.h"
 #include "pc/xr_scene.h"
@@ -275,6 +276,7 @@ void pc_frame_boundary(void) {
     pc_menu_update();
     mnPage_Update(); /* the Options pages' screens */
     pc_slippi_menu_update();
+    pc_xn_menu_update();
     /* Nothing draws while the overlay pauses the game, so hold the last
      * frame instead of clearing the EFB to black underneath the menu. */
     aurora_preserve_frame_buffer(pc_menu_is_open());

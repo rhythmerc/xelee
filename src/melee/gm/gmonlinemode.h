@@ -67,6 +67,9 @@ bool gmOnline_SlippiCssFrame(void);
 /* START was pressed with a valid pick: true if the flow handled it (the CSS
  * stays up and locks) rather than leaving the scene. */
 bool gmOnline_SlippiCssStart(int character, int color);
+/* Called every CSS frame: XeleeNet's lobby goes on in the CSS. True when the
+ * CSS should leave now, to reload with a new player set. */
+bool gmOnline_XnCssFrame(void);
 /* True while the CSS must ignore the controller (a search is running). */
 bool gmOnline_SlippiCssLocked(void);
 
