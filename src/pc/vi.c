@@ -41,7 +41,6 @@ bool gmOnline_XnFlow(void);
 #include <melee/mn/mnpage.h>
 #include <dolphin/pad.h>
 #include <melee/lb/lb_0195.h>
-#include "pc/net_lan.h"
 #include "pc/net_match.h"
 #include "pc/net_rank_session.h"
 
@@ -170,39 +169,6 @@ void pc_frame_boundary(void) {
 #endif
     aurora_heap_check();    /* no-op unless MELEE_HEAP_CHECK is set */
     pc_widescreen_update(); /* Auto mode follows window resizes. */
-    /* MELEE_LAN_TEST=1|host: the LAN lobby without the menu; "host" starts
-     * a match with the first peer found. MELEE_LAN_DIRECT=ip:port: the same
-     * with a known peer, no discovery (src/pc/net_lan.c). */
-    static int lan_test = -1;
-    static u32 lan_frames;
-    if (lan_test < 0) {
-        const char* t = getenv("MELEE_LAN_TEST");
-        lan_test = getenv("MELEE_LAN_DIRECT") != NULL ? 3 :
-                   t == NULL                          ? 0 :
-                   strcmp(t, "host") == 0             ? 2 :
-                                                        1;
-    }
-    if (lan_test) {
-        pc_lan_poll();
-        /* Both fixtures start only once the game has its rules loaded (the
-         * title screen), not at frame 0: RULES would carry zeros. */
-        lan_frames++;
-        if (lan_test == 2 && lan_frames >= 300 && pc_lan_state(NULL) == 0) {
-            pc_lan_start_match();
-        }
-        if (lan_test == 3 && lan_frames == 300) {
-            const char* d = getenv("MELEE_LAN_DIRECT");
-            char host[64];
-            const char* colon = strrchr(d, ':');
-            if (colon != NULL && (size_t)(colon - d) < sizeof host) {
-                memcpy(host, d, (size_t)(colon - d));
-                host[colon - d] = '\0';
-                pc_lan_connect_direct(host, (uint16_t)atoi(colon + 1));
-            } else {
-                pc_log_line("lan: MELEE_LAN_DIRECT must be ip:port");
-            }
-        }
-    }
     if (fps_log < 0) {
         fps_log = getenv("MELEE_FPS") != NULL;
         fps_t0 = SDL_GetTicks();
@@ -307,7 +273,6 @@ void pc_frame_boundary(void) {
     if (pc_exit_requested) {
         pc_net_match_stop();
         pc_net_disconnect();
-        pc_lan_stop();
         exit(0);
     }
 
@@ -423,7 +388,6 @@ void pc_frame_boundary(void) {
             if (event->type == AURORA_EXIT) {
                 pc_net_match_stop();
                 pc_net_disconnect();
-                pc_lan_stop();
                 exit(0);
             }
             ++event;

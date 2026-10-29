@@ -3,7 +3,6 @@
 #include "lang.h"
 #include "xeleenet_backend.h"
 #include "net.h"
-#include "net_lan.h"
 #include "pc.h"
 #include "pc/slippi/slp_json.h"
 #include "pc/slippi/slp_user.h"
@@ -337,7 +336,7 @@ static void common_fields(char* out, size_t cap) {
     snprintf(out, cap,
         "\"player\":\"%s\",\"xr\":false,\"candidates\":[%s],"
         "\"compat\":{\"proto\":%d,\"rev\":\"%s\",\"disc\":\"%s\"}",
-        name, cands, PC_NET_PROTO_VERSION, rev[0] ? rev : "unknown", pc_lan_disc_id());
+        name, cands, PC_NET_PROTO_VERSION, rev[0] ? rev : "unknown", pc_net_disc_id());
 }
 
 static bool host(void) {
@@ -397,7 +396,7 @@ static bool host(void) {
     s_status = PC_XN_IN;
     SDL_UnlockMutex(s_lock);
     pc_log_line("xeleenet: hosting lobby %s, code %s, %d seats (build %s, disc %s)", id, code, seats,
-        pc_app_rev(), pc_lan_disc_id());
+        pc_app_rev(), pc_net_disc_id());
     return true;
 }
 
@@ -460,7 +459,7 @@ static bool join(void) {
             SDL_UnlockMutex(s_lock);
             pc_slippi_json_free(r);
             pc_log_line("xeleenet: joined lobby %s as P%d with %d others (build %s, disc %s)", id,
-                s_port + 1, s_nmembers, pc_app_rev(), pc_lan_disc_id());
+                s_port + 1, s_nmembers, pc_app_rev(), pc_net_disc_id());
             return true;
         }
         pc_slippi_json_free(r);
@@ -645,7 +644,7 @@ static int browse_main(void* unused) {
     }
     rev[n] = '\0';
     snprintf(path, sizeof path, "/v1/lobbies?proto=%d&rev=%s&disc=%s%s", PC_NET_PROTO_VERSION,
-        rev[0] ? rev : "unknown", pc_lan_disc_id(), s_browse_full ? "&full=1" : "");
+        rev[0] ? rev : "unknown", pc_net_disc_id(), s_browse_full ? "&full=1" : "");
     bool ok = (s_token[0] != '\0' || sign_in()) && call_auth(path, NULL, &status, &r);
     if (ok && status == 200) {
         const PcSlippiJson* list = pc_slippi_json_get(r, "lobbies");
@@ -778,6 +777,12 @@ void pc_xn_set_roster(const uint8_t (*keys)[32], int n) {
 
 void pc_xn_stop(void) {
     backend()->stop();
+}
+
+void pc_xn_exit(void) {
+    if (s_net == PC_XN_NET_LAN) {
+        backend()->stop();
+    }
 }
 
 void pc_xn_host_options(const char* name, bool open, const char* settings_json) {

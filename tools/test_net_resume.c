@@ -211,10 +211,6 @@ int aurora_dvd_inflight(void) {
 int aurora_arq_inflight(void) {
     return 0;
 }
-void net_addr_text(const struct sockaddr* sa, char* out, size_t cap) {
-    (void)sa;
-    snprintf(out, cap, "peer");
-}
 /* pad_rumble.c routes a game port's motor command to the device being
  * played with; here it is the console call it stands for, which is what
  * tools/test_net_snapshot.py counts. */

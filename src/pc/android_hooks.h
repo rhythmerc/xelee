@@ -11,26 +11,19 @@
 extern "C" {
 #endif
 
-/* Hold a WifiManager.MulticastLock while LAN discovery runs. Without it the
- * Wi-Fi stack drops every multicast frame not addressed to this device, so
- * the mDNS group is joined, our announces go out, and no answer ever comes
- * back: pc_lan_discovery_unavailable() turns true after 5 s and the lobby
- * stays empty (docs/netcode-plan.md §8).
+/* Hold a WifiManager.MulticastLock while LAN discovery runs (net_mdns.c).
+ * Without it the Wi-Fi stack drops every multicast frame not addressed to
+ * this device, so the mDNS group is joined, our announces go out, and no
+ * answer ever comes back: pc_mdns_unavailable() turns true after 5 s and the
+ * LAN list stays empty (docs/lan-lobbies-plan.md).
  *
  * Nesting is counted: the OS lock is taken on the 0 -> 1 acquire and dropped
- * on the 1 -> 0 release, so repeated pc_lan_start()/pc_lan_stop() cycles in
- * one process are safe, as is the atexit(pc_lan_stop) path. An unbalanced
+ * on the 1 -> 0 release, so repeated pc_mdns_open()/pc_mdns_close() cycles
+ * in one process are safe, as is the exit path (pc_xn_exit). An unbalanced
  * release is ignored rather than letting MulticastLock.release() throw.
  * Safe to call from any thread. */
 void pc_android_multicast_lock_acquire(void);
 void pc_android_multicast_lock_release(void);
-
-/* The user's device name ("Sian's Pixel 7") reduced to a DNS label, or NULL
- * when there is none to be had. gethostname() is no use on Android: stock
- * devices leave the kernel hostname at "localhost", so every instance would
- * announce localhost-<id>._meleepc._udp.local. and claim localhost.local.
- * The result is cached; the buffer is owned by the callee. */
-const char* pc_android_device_name(void);
 
 /* Tell the Android touch overlay whether the RmlUi launcher owns the screen.
  * The overlay is the only touch entry point, and its analog-stick capture

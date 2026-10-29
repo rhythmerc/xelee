@@ -124,7 +124,6 @@ struct StageSelUserData {
 #ifdef TARGET_PC
 #include "pc/net.h"
 #include "pc/xr_pointer.h"
-#include "pc/net_lan.h"
 #include "pc/net_match.h"
 #include "pc/net_rank_session.h"
 #include <sysdolphin/baselib/sislib.h>

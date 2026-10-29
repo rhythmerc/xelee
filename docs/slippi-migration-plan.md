@@ -494,6 +494,8 @@ internet handshake and the DHT/ranked parts of `net_match.c`; retire the Ranked
 menu entry. **Keep the legacy LAN stack** (`net_lan.c` mDNS discovery + election
 + direct-IP, and the `net.c`/`net_wire.c`/`net_handshake.c`/`net_reliable.c`
 engine it runs on) as the LAN transport (decision 1, revised 2026-10-12).
+(2026-10-29: that LAN stack is gone; LAN is XeleeNet on the local network, on
+the same engine. See docs/lan-lobbies-plan.md.)
 Selection becomes mode-driven, not a build switch: LAN → legacy engine,
 Unranked/Direct → Slippi. `MELEE_NET_STACK` is retained as the engine selector
 rather than removed. Update `docs/netcode-plan.md` (mark the DHT/ranked sections

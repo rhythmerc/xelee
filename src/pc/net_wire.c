@@ -338,3 +338,23 @@ bool addr_eq(const struct sockaddr_storage* a, const struct sockaddr_storage* b)
     const struct sockaddr_in *x = (const struct sockaddr_in*)a, *y = (const struct sockaddr_in*)b;
     return x->sin_port == y->sin_port && x->sin_addr.s_addr == y->sin_addr.s_addr;
 }
+
+/* Datagram source as text net.c can getaddrinfo(): IPv4, a v4-mapped v6 as
+ * IPv4, IPv6 with %scope when link-local. net.c names the source of a datagram
+ * it rejects with it; mDNS and LAN lobbies print peers' addresses. */
+void net_addr_text(const struct sockaddr* sa, char* out, size_t cap) {
+    if (sa->sa_family == AF_INET) {
+        inet_ntop(AF_INET, &((const struct sockaddr_in*)sa)->sin_addr, out, (socklen_t)cap);
+        return;
+    }
+    const struct sockaddr_in6* a6 = (const struct sockaddr_in6*)sa;
+    if (IN6_IS_ADDR_V4MAPPED(&a6->sin6_addr)) {
+        inet_ntop(AF_INET, &a6->sin6_addr.s6_addr[12], out, (socklen_t)cap);
+        return;
+    }
+    inet_ntop(AF_INET6, &a6->sin6_addr, out, (socklen_t)cap);
+    if (IN6_IS_ADDR_LINKLOCAL(&a6->sin6_addr) && a6->sin6_scope_id != 0) {
+        size_t len = strlen(out);
+        snprintf(out + len, cap - len, "%%%u", (unsigned)a6->sin6_scope_id);
+    }
+}

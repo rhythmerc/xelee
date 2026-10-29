@@ -180,7 +180,7 @@ target_compile_definitions(aurora_mtx PRIVATE ${MELEE_FP_PERTURB_DEFS})
 add_compile_definitions(${MELEE_FP_PERTURB_DEFS})
 if (WIN32)
     set(MELEE_CRYPTO_LIBS bcrypt)
-    set(MELEE_NETWORK_LIBS winhttp ws2_32 iphlpapi) # iphlpapi: GetAdaptersAddresses in src/pc/net_lan.c
+    set(MELEE_NETWORK_LIBS winhttp ws2_32 iphlpapi) # iphlpapi: GetAdaptersAddresses in src/pc/net_mdns.c
     add_compile_definitions(MELEE_USE_BCRYPT)
 elseif (ANDROID OR IOS OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(MELEE_CRYPTO_LIBS)
@@ -397,8 +397,8 @@ set(PC_SOURCES
         extern/dht/sha1.c
         extern/monocypher/monocypher.c
         extern/monocypher/monocypher-ed25519.c
+        src/pc/net_disc.c
         src/pc/net_handshake.c
-        src/pc/net_lan.c
         src/pc/net_mdns.c
         src/pc/net_reliable.c
         src/pc/net_sfx.c
@@ -660,7 +660,7 @@ if (NOT ANDROID AND NOT IOS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
-        foreach(case IN ITEMS net_resume net_handshake net_lan_txt net_reliable)
+        foreach(case IN ITEMS net_resume net_handshake net_reliable)
             if (case STREQUAL "net_reliable")
                 add_executable(${case}_test EXCLUDE_FROM_ALL tools/test_net_chat_transport.c src/pc/net_chat.c)
             else()
@@ -825,7 +825,7 @@ if (NOT ANDROID AND NOT IOS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
             set_tests_properties(${case} PROPERTIES LABELS melee TIMEOUT 60)
             add_dependencies(unit_tests ${case}_test)
         endforeach()
-        foreach(case IN ITEMS net_snapshot net_stage net_set_flow net_replay_seed net_scene_timing net_fixture_env net_rank_rules net_match net_magnify net_late_poll snapshot_platforms sim_prefs)
+        foreach(case IN ITEMS net_snapshot net_stage net_replay_seed net_scene_timing net_fixture_env net_rank_rules net_match net_magnify net_late_poll snapshot_platforms sim_prefs)
             add_test(NAME ${case} COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_${case}.py)
             set_tests_properties(${case} PROPERTIES LABELS melee TIMEOUT 60)
         endforeach()

@@ -94,8 +94,9 @@ src/pc/                PC layer (C, platform compiler)
   net_handshake.c    ✓ RULES/READY with per-session nonces (§6.4)
   net_sync.c         ✓ time sync, auto delay, pacing nudge
   net_snapshot.c     ✓ region table, capture/restore ring, record/replay, sync test
-  net_lan.c          ✓ mDNS announce/browse (mjansson/mdns), disc identity, lobby, election
-  android_compat.cpp ✓ JNI: Wi-Fi multicast lock, device name (§8); no-ops elsewhere
+  net_mdns.c         ✓ mDNS announce/browse (mjansson/mdns) for LAN lobbies (docs/lan-lobbies-plan.md)
+  net_disc.c         ✓ disc identity (pc_net_disc_id)
+  android_compat.cpp ✓ JNI: Wi-Fi multicast lock; no-ops elsewhere
   net_dht.c            jech/dht + BEP 42 ip + BEP 44 put/get, bootstrap cache
   net_match.c          queues (ranked/unranked/direct) on top of the handshake
   net_rank.c           identity, Weng-Lin update, signed records, publish/verify
@@ -1293,6 +1294,14 @@ pubkey fingerprint so a collision is visible. Full-width `#` (0x8194) for
 in-game text as Slippi does.
 
 ## 8. LAN
+
+> **Removed 2026-10-29.** This section records the first LAN lobby (the
+> counter screen, the election, `MELEE_LAN_TEST`/`MELEE_LAN_DIRECT`), which is
+> gone. LAN is now XeleeNet on the local network: the host's game is the lobby
+> service, found over mDNS (`net_mdns.c`, `xeleenet_lan.c`). See
+> [docs/lan-lobbies-plan.md](lan-lobbies-plan.md). The line numbers below point
+> into the deleted `net_lan.c`; the reasoning about mDNS, the TXT parser and
+> multicast still applies to `net_mdns.c`.
 
 Built (`src/pc/net_lan.c`, `src/pc/net_lan.h`): mDNS/DNS-SD
 `_meleepc._udp.local.` via the vendored mjansson/mdns (`src/pc/mdns/mdns.h`),

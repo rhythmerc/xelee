@@ -239,9 +239,9 @@ void onEnter(GameModeState* scene)
                                       gmOnline_XnIntent() == XN_INTENT_NAME ? SEL_XN_NAME :
                                                                               SEL_XN_HOST;
             break;
-        default:
+        default: /* Ranked, Profile: no row of their own */
             data->menu_kind = MENU_KIND_ONLINE;
-            data->hovered_selection = SEL_ONLINE_LAN;
+            data->hovered_selection = SEL_ONLINE_XN;
             break;
         }
         return;

@@ -2,20 +2,16 @@
 """Netplay integration test: two instances on one machine, a match, then asserts.
 
     tools/net_test.py [--loss PCT] [--delay MS] [--rxdelay MS] [--jitter] [--reorder]
-                      [--burst] [--dup] [--minutes N] [--lan] [--scenes] [--oom FRAME]
+                      [--burst] [--dup] [--minutes N] [--oom FRAME]
                       [--disconnect [a|b]] [--stall SECONDS] [--reconnect-ms MS]
                       [--fuzz] [--exe build/melee]
                       [--disc ../melee.ciso] [--port 42050] [--work /tmp/net_test]
 
 Direct mode (default): MELEE_NET=127.0.0.1:<peer> + MELEE_DEBUG_VS=1, Start
 pressed twice through MELEE_KEY_FIFO (title, then straight into Link vs Mario).
---lan: both instances walk the real menus into the LAN lobby (VS Mode -> ONLINE
--> LAN PLAY), Start on one elects the host, then the CSS by sweeping the
-portrait grid and the SSS by one Start on its random cell; needs the shared LAN
-free (coordinate with anyone else in the lobby).
---scenes: --lan plus the rest of the set - match, out of it by L+R+A+Start,
-results, CSS, SSS, rematch - and the cross-log assertions in check_scenes()
-(same CSS frame and seed, identical SSS picks twice, same stage archives).
+LAN and XeleeNet lobbies, N players: tools/net_test_n.py and
+tools/net_test_xn_menu.py (--scenario set: a whole set through results and a
+rematch).
 --oom FRAME: MELEE_NET_SIM_OOM_FRAME on A, so its first
 snapshot at/after FRAME fails like a realloc would; check_oom() asserts the
 session drops to lockstep and finishes anyway. --disconnect: B SIGKILLed
@@ -122,7 +118,7 @@ def wait_port_free(port, timeout=30):
 
 
 class Instance:
-    def __init__(self, name, exe, disc, work, port, peer_port, env, lan, slippi=False):
+    def __init__(self, name, exe, disc, work, port, peer_port, env, lobby, slippi=False):
         self.name = name
         self.port = port
         self.log_path = os.path.join(work, f"{name}.log")
@@ -147,7 +143,7 @@ class Instance:
             "MELEE_FPS": "1",  # one line per second: the rate the drive scales its holds by
             "MELEE_NET_RECORD": self.rec_path,  # per-frame pads + checksum, for check_match()
         })
-        if not lan:
+        if not lobby:  # a lobby (matchmaking, XeleeNet) starts the session itself
             e["MELEE_NET"] = f"127.0.0.1:{peer_port}"
             e["MELEE_NET_PLAYER"] = "0" if name == "a" else "1"
             e["MELEE_DEBUG_VS"] = "1"
@@ -364,7 +360,6 @@ def settle(insts, frames):
 # is stateless: a retry starts from the same place. X = A button in the
 # keyboard map, Z = B.
 # Main Menu -> Online Mode (third, under VS. Mode) -> (Slippi is first; Down to) LAN
-LAN_SUBMENU = [("Down", 7), ("Down", 7), ("X", 7), ("Down", 7), ("Down", 7), ("X", 7)]  # Online: XeleeNet, Slippi, LAN
 MENU_SETTLE = 90  # frames of animation a menu hop can eat a press during
 CSS_BACK = 40     # frames of held B that leave a character-select screen (>30)
 
@@ -413,33 +408,6 @@ def to_main_menu(insts, tries=8):
     return False
 
 
-def in_lobby(inst):
-    """In the LAN lobby now: it announced and has not stopped since."""
-    text = inst.text()
-    return text.rfind("lan: announcing") > text.rfind("lan: stopped")
-
-
-def to_lobby(inst, tries=4):
-    """One instance from wherever it is into the LAN lobby, proven by its own
-    announce. Per instance and not in lockstep, because until the session
-    exists each instance needs its own keyboard and the two walks fail
-    independently: a shared retry re-walks the peer that already made it, and
-    to_main_menu's B presses take it straight back out of the lobby (measured:
-    /tmp/sf_scenes1, a announced, b did not, and the retry lost both)."""
-    for attempt in range(tries):
-        if in_lobby(inst):
-            return True
-        if to_main_menu((inst,)):
-            for key, frames in LAN_SUBMENU:
-                press((inst,), key, frames, 0)
-                settle((inst,), MENU_SETTLE)
-            if inst.wait_log(r"lan: announcing", 25) and in_lobby(inst):
-                return True
-        print(f"net_test: [{inst.name}] no lobby on attempt {attempt + 1}, resetting the menus",
-              flush=True)
-    return False
-
-
 def drive_mm(a, b):
     """Slippi's order: both instances boot into the Unranked flow, which opens on
     the CSS with a pick already placed (MELEE_CSS_PICK, different per seat);
@@ -463,26 +431,6 @@ def drive_mm(a, b):
         return False
     print(f"net_test: agreed Slippi match {ma[-1]}", flush=True)
     return True
-
-
-def drive_lan(a, b):
-    """Both instances walk the real menus into the LAN lobby, Start on A elects
-    a host, then the CSS and SSS. Every step waits for the scene's own archive
-    or log line."""
-    for inst in (a, b):
-        if not to_lobby(inst):
-            print(f"net_test: [{inst.name}] never reached the LAN lobby "
-                  "(no 'lan: announcing')", flush=True)
-            return False
-    if not (a.wait_log(r"lobby: \d+ players found", 40) and
-            b.wait_log(r"lobby: \d+ players found", 40)):
-        print("net_test: the two lobbies never saw each other", flush=True)
-        return False
-    press((a,), "Return", 9, 0)  # Start: elects a host among the ready peers
-    if not (a.wait_log(r"lobby: entering CSS", 60) and b.wait_log(r"lobby: entering CSS", 60)):
-        print("net_test: the lobby never handed over to the CSS", flush=True)
-        return False
-    return drive_css(a, b) and drive_sss(a, b)
 
 
 # CSS hand geometry, all read off src/melee/mn/mncharsel.c - measured
@@ -529,54 +477,6 @@ CSS_STEP = 6      # frames of Right: 7.4 units, one column
 CSS_COLS = 7      # columns 1..7 of the row
 
 
-def drive_css(a, b, want=1, done=None):
-    """CSS: pin both hands on the top-left clamp, drop into a row of
-    portraits and press A once per column until a pick sticks on both ports,
-    then Start -> SSS. Both peers press: each instance drives its own port's
-    hand (P1 on the host, P2 on the guest) and the Start gate needs both.
-    The row is swept rather than aimed at one portrait because the only
-    imprecise quantity is how many frames a wall-clock hold covers; a column
-    is 7 units wide and the whole swept row is 49, so the sweep absorbs the
-    frame-rate error that a single calibrated hold could not (the inherited
-    Up 90 + Down 21 left both hands off the grid entirely). Start between rows
-    is the only evidence the game gives that a pick landed: the CSS logs
-    nothing, and the SSS's own archive load is what proves the gate opened."""
-    if not (a.wait_log(SCENE_FILE["css"], 180) and b.wait_log(SCENE_FILE["css"], 60)):
-        print("net_test: the CSS never loaded (no 'HIT: MnSlChr')", flush=True)
-        return False
-    settle((a, b), MENU_SETTLE)  # the doors are still opening; the hands are not live yet
-    for row, down in enumerate(CSS_ROWS):
-        press((a, b), "Left+Up", CSS_PIN, 1.2)  # both hands on the (-35, 25) clamp
-        press((a, b), "Down", down, 0.8)        # into a row; the token comes out here
-        press((a, b), "Right", CSS_FIRST, 0.6)
-        for col in range(CSS_COLS):
-            press((a, b), "X", 7, 0.5)  # A: pick whatever the token is over
-            press((a, b), "Right", CSS_STEP, 0.4)
-        # With `done` the CSS is each instance's own (Slippi's order: nothing is
-        # connected yet), so both are pressed; otherwise one press carries both.
-        if press_until((a, b), "Return", 9, done or SCENE_FILE["sss"], want=want, tries=2,
-                       each=8.0, on=(a, b) if done else (a,)):
-            print(f"net_test: CSS picked on row {row} (Down {down}), "
-                  f"{'search started' if done else 'SSS loaded'}", flush=True)
-            return True
-        print(f"net_test: no pick on CSS row {row} (Down {down}), trying the next row",
-              flush=True)
-    print("net_test: no CSS pick stuck: the SSS never loaded", flush=True)
-    return False
-
-
-# Confirm through just one port: the other peer must see the synchronized input.
-PICKED_RX = re.compile(r"sss: we picked (\d+)")
-
-
-def drive_sss(a, b, want=1):
-    return press_until((a, b), "Return", 9, r"sss: we picked", want=want,
-                       tries=8, each=6.0)
-
-
-# L+R+A+Start on the pauser's own pad ends a paused VS match as NO CONTEST
-# (gmvs.c:1359-1383; a debug build drops START from the mask, and the extra
-# buttons are masked out either way). Keyboard map: Q=L, E=R, X=A, Return=Start.
 LRAS = "Q+E+X+Return"
 
 
@@ -739,21 +639,6 @@ def check_match(inst):
     return fails, f"match at frame {entry}, {n} frames simulated"
 
 
-def drive_scenes(a, b):
-    """Play, leave a match through results, then start a rematch."""
-    if not drive_lan(a, b) or not wait_match((a, b)):
-        return False
-    settle((a, b), 2100)  # require sustained gameplay before ending the game
-    press((a,), "Return", 9, 1.0)
-    if not press_until((a, b), LRAS, 9, r"online: enter RESULTS", tries=4,
-                       each=8.0, on=(a,)):
-        return False
-    if not press_until((a, b), "Return", 9, r"online: enter CSS", want=2,
-                       tries=12, each=5.0):
-        return False
-    return drive_css(a, b, want=2) and drive_sss(a, b, want=2)
-
-
 def check_delay(a, b):
     """Auto delay is decided by one side and applied by frame number, so both
     peers must land every change on the same frame (net_sync.c delay_apply).
@@ -770,8 +655,7 @@ def check_delay(a, b):
 def check_entry(a, b):
     """Both peers must have entered the match on the same frame. Inputs are
     synced and the clocks are locked together, so the scene hand-off is
-    frame-exact; this is the frame-stamped stage anchor the direct rows have
-    (the LAN flow also stamps the CSS hand-off, see check_scenes)."""
+    frame-exact; this is the frame-stamped stage anchor the direct rows have."""
     e = [match_entry(record_cks(i.rec_path)) for i in (a, b)]
     if None in e:
         return []  # check_match reports that with its own detail
@@ -793,57 +677,10 @@ STATS_RX = re.compile(r"net: frame (\d+), rollbacks (\d+) \(max depth (\d+), los
                       r"ping (\d+) ms(?: \(avg [\d.]+, min \d+, max \d+, jitter ([\d.]+)\))?"
                       r"(?:, loss (\d+)%)?")
 
-# Scene-flow anchors: the online lobby's frame-stamped hand-off into the CSS
-# (gmonlinemode.c:378), the SSS's resolved pick (mnstagesel.c:89), the peer we
-# actually elected (net_lan.c:663,677), the stage archive a match loads, the
-# snapshot report
-# (net_snapshot.c:382).
-CSS_RX = re.compile(r"lobby: entering CSS at frame (\d+), seed (\d+)")
-PICKS_RX = re.compile(r"sss: picks P1=(-?\d+) P2=(-?\d+) -> (-?\d+)")
-CONNECT_RX = re.compile(r"lan: connect (\d+\.\d+\.\d+\.\d+):(\d+) as P(\d)")
+# The stage archive a match loads, the snapshot report (net_snapshot.c:382).
 STAGE_RX = re.compile(r"\[FileCache\] (?:LOOSE )?HIT: (Gr[A-Za-z0-9]+)\.(?:dat|usd)")
 OOM_RX = re.compile(r"net: out of memory for snapshots at frame (\d+), lockstep from here")
 SNAP_RX = re.compile(r"net:\s+snapshot take [\d.]+ ms \(max [\d.]+, n (\d+)\)")
-
-
-def check_scenes(a, b):
-    """Require both peers to complete the same frame-exact set flow."""
-    fails = []
-    for inst, peer in ((a, b), (b, a)):
-        got = CONNECT_RX.findall(inst.text())
-        if not got:
-            fails.append(f"{inst.name}: no 'lan: connect', never left the lobby")
-        elif int(got[0][1]) != peer.port:
-            fails.append(f"{inst.name}: elected udp/{got[0][1]}, not its partner's "
-                         f"udp/{peer.port} (another melee-pc lobby was on the LAN)")
-    css = [CSS_RX.findall(inst.text()) for inst in (a, b)]
-    if not all(css):
-        fails.append("no 'lobby: entering CSS' on both")
-    elif css[0][0] != css[1][0]:
-        fails.append(f"CSS entered at different (frame, seed): a {css[0][0]} b {css[1][0]}")
-    for scene in ("css", "sss"):
-        got = [count(inst, SCENE_FILE[scene]) for inst in (a, b)]
-        if min(got) < 1:
-            fails.append(f"{scene.upper()} loaded {got[0]}/{got[1]} times (want 1 each)")
-    picks = [PICKS_RX.findall(inst.text()) for inst in (a, b)]
-    if min(map(len, picks)) < 2:
-        fails.append(f"{len(picks[0])}/{len(picks[1])} 'sss: picks' lines (want 2 each: both "
-                     "peers' picks have to resolve to one stage)")
-    elif picks[0] != picks[1]:
-        fails.append(f"SSS picks differ: a {picks[0]} b {picks[1]}")
-    transitions = [re.findall(r"online: enter (CSS|SSS|VS|RESULTS) at frame (\d+)",
-                              inst.text()) for inst in (a, b)]
-    expected = ["CSS", "SSS", "VS", "RESULTS", "CSS", "SSS", "VS"]
-    for inst, events in zip((a, b), transitions):
-        if [scene for scene, frame in events][:len(expected)] != expected:
-            fails.append(f"{inst.name}: incomplete set flow: {events}")
-        resolved = re.findall(r"sss: resolved cell (\d+) stage (\d+)", inst.text())
-        if not STAGE_RX.search(inst.text()) and not (len(resolved) >= 2 and
-                all(0 <= int(cell) < 29 and 2 <= int(stage) <= 32 for cell, stage in resolved)):
-            fails.append(f"{inst.name}: no valid resolved stage or stage archive loaded")
-    if transitions[0] != transitions[1]:
-        fails.append(f"scene transition frames differ: {transitions}")
-    return fails
 
 
 def check_load_stall(a, b):
@@ -944,8 +781,8 @@ def summarize(inst, need_match=True):
     """(fails, one-line summary, stats dict for tools/net_acceptance.py). The
     match precondition is in here, so every row inherits it and none can pass
     from a menu again. need_match=False is for a row whose flow cannot reach
-    a match on this build at all (--scenes, see check_scenes): the note still
-    says what the checksum stream saw, it just is not a failure."""
+    a match at all (net_test_n.py --kill): the note still says what the
+    checksum stream saw, it just is not a failure."""
     text = inst.text()
     fails = []
     if not re.search(r"net: test done at frame (\d+)", text) and \
@@ -1238,9 +1075,6 @@ def parse_args(argv=None):
     ap.add_argument("--burst", action="store_true")
     ap.add_argument("--dup", action="store_true")
     ap.add_argument("--minutes", type=float, default=2)
-    ap.add_argument("--lan", action="store_true")
-    ap.add_argument("--scenes", action="store_true",
-                    help="LAN menus through a whole set: CSS, SSS, match, results, rematch")
     ap.add_argument("--oom", type=int, default=0, metavar="FRAME",
                     help="MELEE_NET_SIM_OOM_FRAME=FRAME on A (snapshot allocation failure)")
     ap.add_argument("--disconnect", nargs="?", const="b", choices=("a", "b"), default=None,
@@ -1305,10 +1139,6 @@ def run(args):
         return run_disconnect(args)
     if args.stall:
         return run_stall(args)
-    if args.mm:
-        args.lan = True  # boots a lobby, not a MELEE_NET direct session
-    if args.scenes:
-        args.lan = True  # the set flow is the online one: lobby, CSS, SSS, VS, results
     global MM_RUN
     if args.mm_server:
         args.mm = True
@@ -1404,29 +1234,21 @@ def run(args):
         sim["MELEE_NET_STATE_LOG"] = os.path.join(args.work, "b.state")
     wait_port_free(args.port)
     wait_port_free(args.port + 1)
-    a = Instance("a", args.exe, args.disc, args.work, args.port, args.port + 1, sim_a, args.lan,
+    a = Instance("a", args.exe, args.disc, args.work, args.port, args.port + 1, sim_a, bool(args.mm),
                  args.slippi)
-    b = Instance("b", args.exe, args.disc, args.work, args.port + 1, args.port, sim, args.lan,
+    b = Instance("b", args.exe, args.disc, args.work, args.port + 1, args.port, sim, bool(args.mm),
                  args.slippi)
-    print(f"net_test: {'lan' if args.lan else 'direct'} loss={args.loss}% delay={args.delay}ms "
+    print(f"net_test: {'mm' if args.mm else 'direct'} loss={args.loss}% delay={args.delay}ms "
           f"rxdelay={args.rxdelay}ms {' '.join(k for k in SIM_ENV if getattr(args, k))} "
           f"minutes={args.minutes} frames={frames} pids={a.proc.pid},{b.proc.pid} "
           f"logs={args.work}", flush=True)
     ok = True
     work = None
     try:
-        if args.scenes:
-            ok = drive_scenes(a, b)
-            if not ok:
-                print("net_test: scene drive failed (see logs)", flush=True)
-        elif args.mm:
+        if args.mm:
             ok = drive_mm(a, b)
             if not ok:
                 print("net_test: matchmaking drive failed (see logs)", flush=True)
-        elif args.lan:
-            ok = drive_lan(a, b)
-            if not ok:
-                print("net_test: LAN drive failed (see logs)", flush=True)
         else:
             ok = drive_direct(a, b)
             if not ok:
@@ -1434,7 +1256,7 @@ def run(args):
         # Every row, not just the new ones: a run that never entered a match
         # measures the transport at a menu, which is how this matrix used to
         # pass green from the title screen.
-        if ok and not args.scenes:
+        if ok:
             ok = wait_match((a, b))
         if ok:
             work = Workout((a, b), args.combat)  # keep both players moving for the rest of the run
@@ -1492,7 +1314,7 @@ def run(args):
                   flush=True)
     # Cross-instance assertions belong to neither log; they ride on A's row.
     extra = check_entry(a, b) + check_delay(a, b)
-    extra += check_scenes(a, b) if args.scenes else check_oom(a, args.oom) if args.oom else []
+    extra += check_oom(a, args.oom) if args.oom else []
     if args.load_stall:
         extra += check_load_stall(a, b)
     if args.hitch:

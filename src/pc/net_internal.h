@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Internals shared by the netplay modules (src/pc/net*.c); callers use
- * pc/net.h and pc/net_lan.h. Modules:
+ * pc/net.h. Modules:
  *   net.c           session lifecycle, receive dispatch, input send/ack,
  *                   stall/barrier, rollback and the per-tick entry points
  *   net_wire.c      byte order, wire codecs, headers, pad conversion, and
@@ -68,7 +68,6 @@
 #define PC_NET_INTERNAL_H
 
 #include "pc/net.h"
-#include "pc/net_lan.h"
 #include "pc/pc.h"
 #include "pc/slippi/slp_checksum.h"
 
@@ -535,7 +534,7 @@ void net_mac_stamp(int peer, void* buf, size_t len);
 bool net_mac_ok(int peer, const void* buf, size_t len);
 Hdr hdr(uint8_t magic);
 bool addr_eq(const struct sockaddr_storage* a, const struct sockaddr_storage* b);
-/* net_lan.c; text form of a datagram source, for logs and getaddrinfo(). */
+/* Text form of a datagram source, for logs and getaddrinfo() (net_wire.c). */
 void net_addr_text(const struct sockaddr* sa, char* out, size_t cap);
 
 /* ---- net_sim.c -------------------------------------------------------- */

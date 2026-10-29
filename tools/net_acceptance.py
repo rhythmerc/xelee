@@ -55,7 +55,6 @@ MATRIX = [
     ("jitter", ["--jitter"]),
     ("dup", ["--dup"]),
     ("rx delay 100 ms", ["--rxdelay", "100"]),
-    ("scene flow to SSS", ["--scenes", "--minutes", "4"]),
     # 6000 rather than 2400, and a delayed link rather than a clean one: the
     # OOM knob only fires on a snapshot the engine really takes, snapshots
     # are only taken off the prediction path, and prediction is sporadic on a

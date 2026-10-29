@@ -106,9 +106,9 @@ def type_code(inst, code, items=None):
         nt.press((inst,), "X", 7, STEP)
 
 
-def drive_css(insts):
-    """nt.drive_css for N: every hand sweeps a row of portraits, then every
-    player's START (Ready)."""
+def drive_css(insts, want=1):
+    """The CSS for N players: every hand sweeps a row of portraits, then every
+    player's START (Ready), until the stage select has loaded `want` times."""
     settle = nt.settle
     settle(insts, nt.MENU_SETTLE)
     for row, down in enumerate(nt.CSS_ROWS):
@@ -120,7 +120,7 @@ def drive_css(insts):
             nt.press(insts, "Right", nt.CSS_STEP, 0.4)
         # Every player readies with START (the CSS's Ready); the stage select
         # follows a 2 s countdown.
-        if nt.press_until(insts, "Return", 9, nt.SCENE_FILE["sss"], tries=2, each=8.0):
+        if nt.press_until(insts, "Return", 9, nt.SCENE_FILE["sss"], want=want, tries=2, each=8.0):
             return True
         print(f"net_test_xn_menu: no pick on CSS row {row}", flush=True)
     return False
@@ -521,6 +521,77 @@ def leave_host_alone(host, shots):
     return True
 
 
+# --scenario set: the host's Host page loads these rules (xeleenet-lobby.txt in
+# its profile, as tools/xn_bot.py writes it): 1-minute time matches, so the
+# first one runs out to the results by itself.
+COMPETITIVE = sum(1 << b for b in (24, 25, 26, 4, 5, 7))  # xeleenet_menu.cpp kCompetitive
+
+
+def set_rules(ident, seats):
+    with open(os.path.join(ident, "xeleenet-lobby.txt"), "w") as f:
+        f.write(f"preset=3\nname=Set test\nopen=1\nseats={seats}\nteams=0\nstock=0\nstocks=4\n"
+                f"minutes=1\nitems=-1\nff=0\nhandicap=0\ndamage=10\npause=0\nstages={COMPETITIVE}\n"
+                f"frozen=1\nhide=0\n")
+
+
+def wait_more(insts, pattern, since, timeout):
+    """Every instance has logged `pattern` more times than `since` (a count per
+    instance): a scene's next entry, when an earlier one is in the log."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if all(nt.count(i, pattern) > n for i, n in zip(insts, since)):
+            return True
+        if any(i.proc.poll() is not None for i in insts):
+            return False
+        time.sleep(0.5)
+    return False
+
+
+def rematch(insts, shots, drive):
+    """--scenario set (the old LAN's --scenes, on XeleeNet's flow): the match
+    runs out to the results, START there takes everyone back to the CSS, and a
+    second pick, stage and match follow, agreed everywhere."""
+    vs = [nt.count(i, r"online: enter VS at frame") for i in insts]  # the first match's
+    if not all(i.wait_log(r"online: enter RESULTS", 150) for i in insts):
+        drive.done()
+        print("FAIL: the match never reached the results")
+        return False
+    drive.done()
+    time.sleep(3)
+    shot(insts[0], shots, "13-results")
+    css = [nt.count(i, r"online: enter CSS") for i in insts]
+    for _ in range(12):
+        if wait_more(insts, r"online: enter CSS", css, 5):
+            break
+        nt.press(insts, "Return", 9, 0)  # START leaves the results
+    else:
+        print("FAIL: the results never went back to the CSS")
+        return False
+    time.sleep(3)
+    shot(insts[0], shots, "14-css-again")
+    if not drive_css(insts, want=2):
+        print("FAIL: no second CSS pick reached the SSS")
+        return False
+    cells = [nt.count(i, r"sss: resolved cell") for i in insts]
+    if not nt.press_until(insts, "Return", 9, r"sss: resolved cell", want=min(cells) + 1, tries=8, each=6.0):
+        print("FAIL: the second SSS never resolved a stage everywhere")
+        return False
+    picked = {i.name: nt.re.findall(r"sss: resolved cell (\d+)", i.text())[-1:] for i in insts}
+    print(f"net_test_xn_menu: second stages {picked}", flush=True)
+    if len({tuple(v) for v in picked.values()}) != 1:
+        print("FAIL: the players resolved different stages for the rematch")
+        return False
+    again = __import__("net_test_n").Drive(insts)
+    if not wait_more(insts, r"online: enter VS at frame", vs, 180):
+        again.done()
+        print("FAIL: the rematch never loaded")
+        return False
+    time.sleep(15)
+    shot(insts[0], shots, "15-rematch")
+    again.done()
+    return True
+
+
 def run(args):
     names = "abcd"[:args.players]
     shots = args.shots or os.path.join(args.work, "shots")
@@ -534,6 +605,8 @@ def run(args):
     for k, name in enumerate(names):
         ident = os.path.join(args.work, f"{name}.id")
         os.makedirs(ident)
+        if args.scenario == "set" and k == 0:
+            set_rules(ident, args.players)
         env = {
             "MELEE_XN_URL": args.url,
             "MELEE_XN_NAME": NAMES[k],
@@ -560,7 +633,7 @@ def run(args):
         shot(host, shots, "2-xeleenet-menu")
         walk(host, [("X", 7)])
         time.sleep(1.5)
-        if args.players > 2:
+        if args.players > 2 and args.scenario != "set":  # set: its rules file has the seats
             nt.press((host,), "Right", 7, 0.6)  # Preset: 1v1 (2 seats) -> Doubles (4)
         shot(host, shots, "3-host-page")
         nt.press((host,), "Return", 9, 1.0)  # START: open the lobby
@@ -661,8 +734,12 @@ def run(args):
             return False
         time.sleep(12)
         shot(host, shots, "11-match")
-        time.sleep(args.seconds)
-        drive.done()
+        if args.scenario == "set":
+            if not rematch(insts, shots, drive):
+                return False
+        else:
+            time.sleep(args.seconds)
+            drive.done()
         shot(host, shots, "12-match-later")
         texts = [i.text() for i in insts]
         ok = not any(nt.re.search(r"net: DESYNC", t) for t in texts)
@@ -690,7 +767,7 @@ def main():
     ap.add_argument("--block", default="")
     ap.add_argument("--scenario", default="",
                     choices=("", "sss-host-b", "ready", "leave-guest", "leave-host", "sss-repick", "sss-timeout",
-                             "sss-same", "css-b-hold", "leave-host-alone"),
+                             "sss-same", "css-b-hold", "leave-host-alone", "set"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
@@ -699,7 +776,8 @@ def main():
                          "sss-timeout: P3 never picks, the 15 s timer ends it; "
                          "sss-same: everyone picks Battlefield, no draw; "
                          "css-b-hold: B held over the grid leaves the token and the pick alone; "
-                         "leave-host-alone: the host alone holds B and leaves its lobby")
+                         "leave-host-alone: the host alone holds B and leaves its lobby; "
+                         "set: 1-minute matches, the results, back to the CSS and a rematch")
     ap.add_argument("--join-shots", action="store_true", help="shots every 0.35 s through the first join")
     ap.add_argument("--url", default="", help="a running service instead of a local wrangler dev")
     ap.add_argument("--net", choices=("service", "lan"), default="service",

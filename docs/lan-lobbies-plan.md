@@ -207,7 +207,35 @@ The plan as written:
 Test: `net_test_xn_menu.py --net lan` walks Online Mode › LAN, hosts and
 joins from the list, and plays a match with no DESYNC. No wrangler.
 
-### L4 · The old LAN goes (small-medium)
+### L4 · The old LAN goes (small-medium) — done 2026-10-29
+
+Built as planned, with these specifics:
+- **Removed:** `net_lan.c`/`.h` (the election, the counter lobby, the old
+  mDNS), `ONLINE_KIND_LAN` and its lobby tick, `MELEE_LAN_TEST`/
+  `MELEE_LAN_DIRECT` and their fixtures in `vi.c` and `os.c`. Also gone: the
+  old LAN's tools (`net_lan_test.py`, `net_lan_fuzz.py`,
+  `net_lan_txt_test.py`, `test_net_lan_txt.c`), `net_test.py --lan/--scenes`
+  with their drives and `check_scenes`, `test_net_set_flow.py`, and
+  Android's device-name lookup (the old announce's hostname).
+- **Kept, moved:**
+  - The session calls (`pc_net_connect`, the reliable channel, the match
+    handshake) are now in `net.h`.
+  - The disc id is `pc_net_disc_id` in `net_disc.c`.
+  - `net_addr_text` is in `net_wire.c`.
+- **Exit:** `pc_xn_exit()` (main's shutdown, Android's disconnect) sends a
+  LAN lobby's goodbye in place of `pc_lan_stop()`. The service's lobby is
+  left to its timeouts, as before.
+- **Coverage:** `--scenes` moved rather than lapsed.
+  `net_test_xn_menu.py --scenario set` (1-minute matches from a rules file
+  in the host's profile) plays the match out to the results, goes back to
+  the CSS and plays a rematch, and asserts the same stages everywhere.
+  `--net lan --players 3 --scenario set` passes.
+- **Unit tests:** the same 17 of 51 fail as before L4 (netcode, pad and
+  wobble tests, unrelated); `net_resume` and `net_reliable` pass.
+- **Docs:** `docs/netcode-plan.md` §8 now opens with a note pointing here.
+
+The plan as written:
+
 
 1. Remove the election, the counter lobby view and `ONLINE_KIND_LAN`'s flow
    in `gmonlinemode.c` (`lobbyFrame`'s LAN branch, `pc_lan_*` callers).

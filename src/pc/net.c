@@ -7,7 +7,7 @@
  * Both peers must boot with the same disc and no memory card; every session
  * agrees the rest -- seed, rules and unlock state -- in the match handshake,
  * the env path below included (net_handshake.c's handshake_direct). Sessions
- * can also be opened at runtime through pc_net_connect() (src/pc/net_lan.h).
+ * can also be opened at runtime through pc_net_connect() (src/pc/net.h).
  *
  *   MELEE_NET=host:port          peer address (enables netplay at boot)
  *   MELEE_NET_PORT=n             local UDP port (default 41000)
@@ -2385,11 +2385,11 @@ static void resume_fail(void) {
 }
 
 /* Only an established session can be resumed, and waiting on one that is not
- * actively harms the caller: the lobby reports a failure from pc_lan_poll(),
- * which runs on the very thread parked in wait_remote(), so holding the
- * phase open through a handshake that will never finish turns a 7 s "connect
- * failed" into a 22 s hang (tools/net_lan_test.py host_dies, where the host
- * is killed while the guest is still connecting at frame 3). Before the
+ * actively harms the caller: the lobby reports a failure from its poll, which
+ * runs on the very thread parked in wait_remote(), so holding the phase open
+ * through a handshake that will never finish turned a 7 s "connect failed"
+ * into a 22 s hang (the old LAN lobby's host_dies test, where the host was
+ * killed while the guest was still connecting at frame 3). Before the
  * handshake there is also nothing to resume: no agreed seed, no agreed start
  * frame, and rings holding a couple of menu frames.
  *
@@ -2686,7 +2686,7 @@ int pc_net_local_player(void) {
  * So the exit frame is agreed instead of inferred: each peer announces the
  * frame its scene asked to end on, and both leave on the later of the two
  * plus a lead that covers the reliable round trip. This is the pattern the
- * lobby already uses to hand over to the CSS (pc_lan_start_frame). */
+ * lobbies use to hand over to the CSS (pc_net_start_frame). */
 #define SCENE_HANDOFF 20 /* frames of lead: ~330 ms, menus are lockstep */
 #define SCENE_SLOTS 8    /* announcements kept: the peer may be a scene ahead */
 /* How long a scene may wait for the other half of a hand-off before the
@@ -3770,7 +3770,7 @@ bool pc_net_connect_links(
             links[i].via_host};
     }
     /* A lobby-started session: the lobby drives the handshake
-     * (pc_net_host_match / pc_net_guest_wait_match), as LAN's does; the
+     * (pc_net_host_match / pc_net_guest_wait_match); the
      * boot-time env path sets net.direct itself (net_punch.c). */
     return connect_impl((sock_t)socket, peers, n, local, seed);
 }

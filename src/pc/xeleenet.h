@@ -94,6 +94,10 @@ int pc_xn_members(PcXnMember* out, int max);
 void pc_xn_set_roster(const uint8_t (*keys)[32], int n);
 /* Leave the lobby (a host closes it) and stop the thread. */
 void pc_xn_stop(void);
+/* The app is closing: a LAN lobby says goodbye (the host's announcement, a
+ * guest's LEAVE) at once. The service's lobby is left to its own timeouts, as
+ * a lost connection would be. */
+void pc_xn_exit(void);
 
 /* What the next host run opens: its name, visibility and the settings
  * summary the browser shows (JSON, the service's settings object). */

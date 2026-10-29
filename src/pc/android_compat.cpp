@@ -23,15 +23,9 @@
  *   MulticastLock.setReferenceCounted (Z)V
  *   MulticastLock.acquire           ()V
  *   MulticastLock.release           ()V
- *   Context.getContentResolver      ()Landroid/content/ContentResolver;
- *   Settings$Global.getString
- * (Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;  [static]
- *   Settings$Global.DEVICE_NAME     = "device_name"
- *   Build.MODEL                     Ljava/lang/String;  [static]
  * The lock needs android.permission.CHANGE_WIFI_MULTICAST_STATE
  * (AndroidManifest.xml:16); it is a `normal` permission, so it is granted at
- * install and there is nothing to request at runtime. Reading a Settings
- * global and Build.MODEL needs no permission at all. */
+ * install and there is nothing to request at runtime. */
 
 namespace {
 
@@ -135,62 +129,6 @@ bool lock_open(JNIEnv* env) {
     env->PopLocalFrame(nullptr);
     g_failed = !ok;
     return ok;
-}
-
-/* A device name is free text ("Sian's Pixel 7"); a DNS label is not. Keep
- * [A-Za-z0-9-], map the rest to '-', collapse runs, trim the ends. */
-void dns_label(const char* in, char* out, size_t cap) {
-    size_t n = 0;
-    for (const char* p = in; *p != '\0' && n + 1 < cap; p++) {
-        bool keep =
-            (*p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z');
-        if (keep) {
-            out[n++] = *p;
-        } else if (n > 0 && out[n - 1] != '-') {
-            out[n++] = '-';
-        }
-    }
-    while (n > 0 && out[n - 1] == '-') {
-        n--;
-    }
-    out[n] = '\0';
-}
-
-/* Settings.Global.DEVICE_NAME is the name the user typed under Settings >
- * About phone; it is null on a device where none was ever set, so fall back
- * to Build.MODEL ("Pixel 7"). Neither read needs a permission. The local
- * ref returned lives in the caller's frame. */
-jstring device_name_string(JNIEnv* env) {
-    jobject activity = (jobject)SDL_GetAndroidActivity();
-    jclass ctx_cls = env->FindClass("android/content/Context");
-    jclass set_cls = env->FindClass("android/provider/Settings$Global");
-    if (activity != nullptr && ctx_cls != nullptr && set_cls != nullptr) {
-        jmethodID resolver =
-            env->GetMethodID(ctx_cls, "getContentResolver", "()Landroid/content/ContentResolver;");
-        jmethodID get = env->GetStaticMethodID(set_cls, "getString",
-            "(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;");
-        jstring key = env->NewStringUTF("device_name"); /* Settings.Global.DEVICE_NAME */
-        if (resolver != nullptr && get != nullptr && key != nullptr) {
-            jobject cr = env->CallObjectMethod(activity, resolver);
-            if (!threw(env, "getContentResolver") && cr != nullptr) {
-                jstring name = (jstring)env->CallStaticObjectMethod(set_cls, get, cr, key);
-                if (!threw(env, "Settings.Global.getString") && name != nullptr &&
-                    env->GetStringLength(name) > 0)
-                {
-                    return name;
-                }
-            }
-        }
-    }
-    threw(env, "device name lookup");
-    jclass build_cls = env->FindClass("android/os/Build");
-    jfieldID model = build_cls != nullptr ?
-                         env->GetStaticFieldID(build_cls, "MODEL", "Ljava/lang/String;") :
-                         nullptr;
-    jstring name =
-        model != nullptr ? (jstring)env->GetStaticObjectField(build_cls, model) : nullptr;
-    threw(env, "Build.MODEL");
-    return name;
 }
 
 }  // namespace
@@ -349,29 +287,6 @@ bool pc_android_install_apk(const char* path) {
     return path != nullptr && path[0] != '\0' && call_activity("installApk", "(Ljava/lang/String;)V", path);
 }
 
-const char* pc_android_device_name(void) {
-    static char s_label[64];
-    static bool s_done;
-    std::lock_guard<std::mutex> guard(g_mutex);
-    if (!s_done) {
-        s_done = true;
-        JNIEnv* env = (JNIEnv*)SDL_GetAndroidJNIEnv();
-        if (env != nullptr && env->PushLocalFrame(16) == JNI_OK) {
-            jstring text = device_name_string(env);
-            const char* utf = text != nullptr ? env->GetStringUTFChars(text, nullptr) : nullptr;
-            if (utf != nullptr) {
-                dns_label(utf, s_label, sizeof s_label);
-                env->ReleaseStringUTFChars(text, utf);
-            }
-            env->PopLocalFrame(nullptr);
-        }
-        if (s_label[0] == '\0') { /* once per process */
-            pc_log_line("lan: no Android device name: using the kernel hostname");
-        }
-    }
-    return s_label[0] != '\0' ? s_label : nullptr;
-}
-
 #ifdef AURORA_ENABLE_OPENXR
 #include <aurora/xr.h>
 
@@ -458,10 +373,6 @@ bool pc_android_download(const char* url, const char* path) {
 bool pc_android_install_apk(const char* path) {
     (void)path;
     return false;
-}
-
-const char* pc_android_device_name(void) {
-    return nullptr;
 }
 
 bool pc_android_headset_camera_granted(void) {

@@ -30,7 +30,7 @@
 #include "mdns/mdns.h"
 
 extern void pc_log_line(const char* fmt, ...);
-void net_addr_text(const struct sockaddr* sa, char* out, size_t cap); /* net_lan.c */
+void net_addr_text(const struct sockaddr* sa, char* out, size_t cap); /* net_wire.c */
 
 #define ANNOUNCE_MS 1000
 #define QUERY_MS 2000

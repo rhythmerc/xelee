@@ -36,7 +36,6 @@
 #ifdef TARGET_PC
 #include <SDL3/SDL.h>
 #include "pc/net.h"
-#include "pc/net_lan.h"
 #include "pc/net_identity.h"
 #include "pc/net_match.h"
 #include "pc/net_punch.h"
@@ -54,15 +53,13 @@ extern void pc_set_net_target(const char* code);
 #endif
 
 /* GM_ONLINE: lobby -> CSS -> SSS -> VS -> (sudden death) -> results -> CSS,
- * the vanilla VS flow (gmvsmode.c) on a private VsModeData that both peers
- * reset identically on entering the lobby. The lobby is the Double Dash LAN
- * counter screen (docs/netcode-plan.md §8): pc_lan_* announces us, counts
- * peers, and the first Start elects the host; once pc_lan_state() reports
- * the match (2) both peers leave for the CSS on the same synced frame. From
- * there every scene runs on synced inputs: the local player is P1 when
- * hosting and P2 as guest, ports 3/4 report no controller, and the RULES
- * handshake (net.c) has made GameRules/GamePrefs/unlock/frozen-stadium
- * identical on both sides. B on the CSS goes back to the lobby. */
+ * the vanilla VS flow (gmvsmode.c) on a private VsModeData that every peer
+ * resets identically on entering the lobby. The lobby is the kind's: Slippi's
+ * search, Direct, Ranked, or XeleeNet's pages, on the service or this network
+ * (LAN, docs/lan-lobbies-plan.md). Once the session agrees a start frame,
+ * every peer leaves for the CSS on that synced frame. From there every scene
+ * runs on synced inputs, and the RULES handshake (net.c) has made
+ * GameRules/GamePrefs/unlock/frozen-stadium identical on every side. */
 
 enum {
     state_lobby = 0,
@@ -231,7 +228,7 @@ GameModeState gm_Mode_Online_States[] = {
     { GM_GAMEMODESTATE_TERMINATE },
 };
 
-static OnlineKind online_kind;
+static OnlineKind online_kind = ONLINE_KIND_XN; /* the menu sets it before GM_ONLINE */
 static VsModeData online_vs;
 
 #ifdef TARGET_PC
@@ -312,7 +309,6 @@ void onEnterLobby(UNUSED GameModeState* state)
         pc_net_match_stop();
         pc_net_disconnect();
     }
-    pc_lan_stop();
     pc_xn_punch_end(); /* back in the lobby: a XeleeNet run starts over */
 #endif
     /* Same CSS start state on both peers: two human doors, nothing picked. */
@@ -984,7 +980,7 @@ void onExitPlace(UNUSED GameModeState* state)
             cancelled_mode = mode_after_place;
             mode_after_place = -1;
         } else if (kind_after_place != ONLINE_KIND_PLACE) {
-            gmOnline_SetKind(kind_after_place); /* the menu's row for Unranked, Direct or LAN */
+            gmOnline_SetKind(kind_after_place); /* the menu's row for Unranked, Direct or XeleeNet */
             kind_after_place = ONLINE_KIND_PLACE;
         }
         gm_ChangeGameModeAfterCurrentScene(GM_MENU);
@@ -1237,9 +1233,8 @@ static void profileRefresh(void) {
     pc_rank_store_close(store);
 }
 static bool internetLobby(void) {
-    return online_kind != ONLINE_KIND_LAN && online_kind != ONLINE_KIND_PROFILE &&
-           online_kind != ONLINE_KIND_LOGIN && online_kind != ONLINE_KIND_REGISTER &&
-           !(online_kind == ONLINE_KIND_DIRECT && getenv("MELEE_LAN_DIRECT"));
+    return online_kind != ONLINE_KIND_PROFILE && online_kind != ONLINE_KIND_LOGIN &&
+           online_kind != ONLINE_KIND_REGISTER;
 }
 
 /* Direct Connect. From the online-UX research (2026-09): the code is
@@ -1899,7 +1894,7 @@ void gm_Scene_OnlineLobby_OnEnter(UNUSED void* unused)
             pc_net_match_start(online_kind == ONLINE_KIND_UNRANKED ? PC_MATCH_UNRANKED :
                                PC_MATCH_RANKED, NULL);
         }
-    } else if (!internetLobby()) pc_lan_start();
+    }
 #endif
 }
 
@@ -1932,121 +1927,14 @@ static void lobbyCopyName(char* dst, const char* src)
     snprintf(dst, ONLINE_LOBBY_NAME_LEN, "%s", src);
 }
 
-/* Peers on our protocol and build: the only ones counted or started with. */
-static int lobbyCompatible(const PcLanPeer* peers, int n)
-{
-    int i, nc = 0;
-    for (i = 0; i < n; i++) {
-        nc += peers[i].compatible;
-    }
-    return nc;
-}
-
-/* Fill the view from the LAN state; logs the status line when it changes. */
-static void lobbyFillView(OnlineLobbyView* view, int state, const char* why,
-                          const PcLanPeer* peers, int n)
-{
-    /* Indexed by pc_net_quality() 0..3 and pc_net_peer_status() 0..5;
-     * anything outside stays blank. */
-    static const char* const link_word[] = { "stable", "warning", "stalling",
-                                             "reconnecting" };
-    static char last_status[ONLINE_LOBBY_MSG_LEN];
-    char status[ONLINE_LOBBY_MSG_LEN];
-    bool connected = state == 1 || state == 2;
-    bool host = connected && pc_lan_is_host();
-    int ping = -1, delay;
-    unsigned rollbacks;
-    int quality, reason;
-    int nc = lobbyCompatible(peers, n);
-    int i;
-
-    memset(view, 0, sizeof *view);
-    view->title =
-        online_kind == ONLINE_KIND_DIRECT ? "DIRECT CONNECT" : "LAN PLAY";
-    if (connected && !pc_net_stats(&ping, &delay, &rollbacks)) {
-        ping = -1;
-    }
-    quality = connected ? pc_net_quality() : -1;
-    if (quality >= 0 && quality < (int) ARRAY_SIZE(link_word)) {
-        view->link = link_word[quality];
-    }
-
-    lobbyCopyName(view->players[0].name, pc_lan_local_name());
-    view->players[0].ping_ms = -1;
-    view->players[0].is_host = host;
-    view->players[0].is_local = true;
-    view->player_count = 1;
-    for (i = 0; i < n && view->player_count < ONLINE_LOBBY_MAX_PLAYERS; i++) {
-        OnlineLobbyPlayer* p = &view->players[view->player_count++];
-        lobbyCopyName(p->name, peers[i].name);
-        p->is_host = peers[i].host;
-        p->incompatible = !peers[i].compatible;
-        /* The session peer: the host we joined, or our first peer as host. */
-        p->ping_ms = connected && (peers[i].host || (host && i == 0)) ? ping : -1;
-    }
-
-    switch (state) {
-    case 0:
-        view->phase = nc == 0 ? LOBBY_PHASE_SEARCHING : LOBBY_PHASE_FOUND;
-        if (nc == 0 && pc_lan_discovery_unavailable()) {
-            /* Five seconds without even our own announce looping back:
-             * this network (often guest or campus Wi-Fi) hides players
-             * from each other, and waiting longer will not change it. */
-            snprintf(status, sizeof status,
-                     "This network hides other players - try DIRECT CONNECT");
-        } else if (nc == 0) {
-            snprintf(status, sizeof status, "LAN: searching...%s",
-                     pc_lan_full() ? " - Lobby full" : "");
-        } else {
-            snprintf(status, sizeof status, "%d players found - press START%s",
-                     nc + 1, pc_lan_full() ? " - Lobby full" : "");
-        }
-        break;
-    case 1:
-        view->phase = LOBBY_PHASE_CONNECTING;
-        snprintf(status, sizeof status, "Connecting...");
-        break;
-    case 4:
-        view->phase = LOBBY_PHASE_CONNECTING;
-        snprintf(status, sizeof status, "Ready - waiting for host...");
-        break;
-    case 2:
-        view->phase = LOBBY_PHASE_STARTING;
-        view->countdown_frames = pc_lan_start_frame() - pc_net_frame();
-        if (view->countdown_frames < 0) {
-            view->countdown_frames = 0;
-        }
-        snprintf(status, sizeof status, "Starting...");
-        break;
-    default:
-        view->phase = LOBBY_PHASE_ERROR;
-        reason = pc_net_peer_status();
-        if (reason <= 0 || reason >= (int) ARRAY_SIZE(peer_word)) {
-            reason = 0;
-        }
-        /* Still in the lobby: Start elects again, and a peer's proposal is
-         * still joined (net_lan.c), so leaving to retry is never needed. */
-        snprintf(status, sizeof status, "Failed: %s%s%s%s",
-                 why != NULL ? why : "unknown error", reason ? " - " : "",
-                 peer_word[reason], nc ? " - START: retry" : "");
-        break;
-    }
-    memcpy(view->message, status, sizeof view->message);
-    if (strcmp(status, last_status) != 0) {
-        memcpy(last_status, status, sizeof last_status);
-        pc_log_line("lobby: %s", status);
-    }
-}
 #endif
 
 void gm_Scene_OnlineLobby_OnFrame(void)
 {
 #ifdef TARGET_PC
-    PcLanPeer peers[PC_LAN_MAX_PEERS];
     OnlineLobbyView view;
     const char* why = NULL;
     int state;
-    int n;
     u64 input = gm_GetButtonsTriggered(pc_net_active() ? pc_net_local_player() : PAD_MAX_CONTROLLERS);
 
     if (mnNameNew_PcActive()) {
@@ -2230,35 +2118,6 @@ void gm_Scene_OnlineLobby_OnFrame(void)
             gm_801A4B60();
         }
         return;
-    }
-    pc_lan_poll();
-    state = pc_lan_state(&why);
-    n = pc_lan_peers(peers, PC_LAN_MAX_PEERS);
-    lobbyFillView(&view, state, why, peers, n);
-    mnOnlineLobby_Update(&view);
-
-    if (state == 2) {
-        /* Both peers tick in lockstep once connected, so leaving on the
-         * agreed frame puts the CSS on the same synced frame everywhere. */
-        if (pc_net_frame() >= pc_lan_start_frame()) {
-            *HSD_RandSeedPtr = pc_lan_seed();
-            pc_log_line("lobby: entering CSS at frame %d, seed %u",
-                        pc_net_frame(), pc_lan_seed());
-            gm_801A4B60();
-        }
-        return;
-    }
-    if (input & (HSD_PAD_B | PAD_CANCEL)) {
-        sfxBack();
-        pc_net_peer_status_clear();
-        pc_lan_stop();
-        gm_ChangeGameModeAfterCurrentScene(GM_MENU);
-        gm_801A4B60();
-    } else if ((input & HSD_PAD_START) && (state == 0 || state == 3) &&
-               lobbyCompatible(peers, n)) {
-        sfxForward();
-        pc_net_peer_status_clear(); /* a retry from 3 is not the last session's */
-        pc_lan_start_match();
     }
 #endif
 }

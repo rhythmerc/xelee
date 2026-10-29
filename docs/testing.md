@@ -39,12 +39,13 @@ For live gameplay (requires your own disc and display):
 
 ```sh
 SDL_VIDEO_DRIVER=wayland python3 tools/net_test.py --delay 50 --loss 2 --minutes 1
-SDL_VIDEO_DRIVER=wayland python3 tools/net_test.py --scenes --minutes 2
+python3 tools/net_test_xn_menu.py --net lan --players 3 --scenario set
 ```
 
 Use the display backend appropriate to your session. Run live tests sequentially;
-competing game instances and builds affect pacing. The scene test requires both
-peers to enter CSS, SSS, VS, Results, CSS, SSS and VS at matching frame numbers.
+competing game instances and builds affect pacing. The set scenario plays three
+players on LAN through the menus: 1-minute matches out to the results, back to
+the CSS and a rematch, with the same stages and no DESYNC everywhere.
 `MELEE_NET_DEBUG=1` adds XFB wait timing and rollback HUD detail.
 Physical button-to-photon comparison still requires hardware measurement.
 

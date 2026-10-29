@@ -152,14 +152,14 @@ void pc_touch_event(const SDL_Event* e) {
 #if defined(__ANDROID__)
 #include "pc/net.h"
 #include "pc/net_match.h"
-#include "pc/net_lan.h"
+#include "pc/xeleenet.h"
 
 JNIEXPORT void JNICALL Java_dev_melee_MeleeActivity_nativeDisconnect(JNIEnv* env, jclass clazz) {
     (void)env;
     (void)clazz;
     pc_net_match_stop();
     pc_net_disconnect();
-    pc_lan_stop();
+    pc_xn_exit();
 }
 
 JNIEXPORT void JNICALL Java_dev_melee_TouchControls_nativeSetTouchPad(JNIEnv* env, jclass clazz,

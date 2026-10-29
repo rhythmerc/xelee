@@ -212,7 +212,7 @@ OS_DLLS = {
     'dxgi.dll', 'd3d11.dll', 'd3d12.dll', 'ucrtbase.dll', 'ws2_32.dll',
     'crypt32.dll', 'shlwapi.dll', 'msvcrt.dll', 'rpcrt4.dll', 'userenv.dll',
     'cfgmgr32.dll', 'dwmapi.dll', 'uxtheme.dll', 'powrprof.dll', 'dbghelp.dll',
-    # iphlpapi: GetAdaptersAddresses (src/pc/net_lan.c). Ships with Windows
+    # iphlpapi: GetAdaptersAddresses (src/pc/net_mdns.c). Ships with Windows
     # since 2000; it appeared in our import table when LAN discovery landed,
     # which is why the gate started failing on a package that is in fact fine.
     'winhttp.dll', 'iphlpapi.dll',

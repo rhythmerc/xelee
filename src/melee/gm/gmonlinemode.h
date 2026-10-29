@@ -11,7 +11,7 @@ extern GameModeState gm_Mode_Online_States[];
 
 /* Which online flavour the menu picked before entering GM_ONLINE. */
 typedef enum OnlineKind {
-    ONLINE_KIND_LAN = 0,
+    /* 0 was the old LAN lobby; LAN is ONLINE_KIND_XN on this network now. */
     ONLINE_KIND_DIRECT = 1,
     ONLINE_KIND_UNRANKED = 2,
     ONLINE_KIND_RANKED = 3,
@@ -19,7 +19,7 @@ typedef enum OnlineKind {
     ONLINE_KIND_LOGIN = 5, /* Slippi sign-in: the keyboard screen, not a match */
     ONLINE_KIND_PLACE = 6, /* XR: the stage-placement scene, then back to the menu */
     ONLINE_KIND_REGISTER = 7, /* Slippi sign-up: the keyboard and pages, not a match */
-    ONLINE_KIND_XN = 8,       /* XeleeNet: host or join a lobby by code (docs/xeleenet-plan.md) */
+    ONLINE_KIND_XN = 8,       /* XeleeNet, on the service or LAN (docs/xeleenet-plan.md, docs/lan-lobbies-plan.md) */
 } OnlineKind;
 
 void gmOnline_SetKind(OnlineKind kind);

@@ -132,7 +132,7 @@ int pc_get_net_port(void) {
 const char* pc_app_rev(void) {
     return "test-rev";
 }
-const char* pc_lan_disc_id(void) {
+const char* pc_net_disc_id(void) {
     return "test-disc";
 }
 char* SDL_GetPrefPath(const char* org, const char* app) {

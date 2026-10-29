@@ -7,8 +7,8 @@
  * match-affecting from plan §5 item 7: the memcard GameRules, the
  * item/stage switches from GamePrefs and the frozen-stadium toggle. The
  * guest overwrites its copies (restored at disconnect) so CSS/SSS/match
- * read the same values on both peers. Every session runs it: the lobby
- * drives it from pc_lan_poll()/net_match.c, and a direct MELEE_NET session
+ * read the same values on both peers. Every session runs it: the lobbies
+ * drive it (net_match.c, gmonlinemode.c's XeleeNet lobby), and a direct MELEE_NET session
  * drives it itself from handshake_direct() at the bottom of this file.
  *
  * Unlock state gets the same treatment, but written for real: both sides

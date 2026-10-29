@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "net_rank_session.h"
 #include "net.h"
-#include "net_lan.h"
 #include "monocypher.h"
 #include <math.h>
 #include <string.h>

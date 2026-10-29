@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "net_chat.h"
 #include "net.h"
-#include "net_lan.h"
 #include <SDL3/SDL_timer.h>
 #include <stdio.h>
 #include <string.h>

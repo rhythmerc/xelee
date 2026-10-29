@@ -24,22 +24,22 @@ class FixtureEnvironmentTest(unittest.TestCase):
             "MELEE_NET": "192.0.2.1:1",
             "MELEE_NET_PLAYER": "3",
             "MELEE_NET_REPLAY": "/injected/replay.rec",
-            # A stale key is worse than none: a LAN fixture that kept it would
+            # A stale key is worse than none: a lobby fixture that kept it would
             # pin a key its peer cannot derive, and every datagram between
             # them would go unauthenticated instead (src/pc/net_wire.c).
             "MELEE_NET_KEY": "stale",
         }
-        for lan in (True, False):
-            with self.subTest(lan=lan), tempfile.TemporaryDirectory() as work:
+        for lobby in (True, False):
+            with self.subTest(lobby=lobby), tempfile.TemporaryDirectory() as work:
                 with patch.dict(os.environ, polluted, clear=True), \
                      patch.object(net_test, "CACHE_ROOT", work), \
                      patch.object(net_test.subprocess, "Popen") as launch:
                     inst = net_test.Instance("a", "unused", "unused", work,
-                                             42050, 42051, {}, lan)
+                                             42050, 42051, {}, lobby)
                     inst.log.close()
                     env = launch.call_args.kwargs["env"]
                 self.assertNotIn("MELEE_NET_REPLAY", env)
-                if lan:
+                if lobby:
                     for key in polluted:
                         self.assertNotIn(key, env)
                 else:

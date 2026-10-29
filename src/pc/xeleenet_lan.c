@@ -20,7 +20,6 @@
 #include "compat.h"
 #include "pc/net_internal.h"
 #include "pc/net_mdns.h"
-#include "pc/net_lan.h" /* pc_lan_disc_id */
 #include "pc/pc.h"
 #include "xeleenet_backend.h"
 
@@ -217,7 +216,7 @@ static void set_failed(const char* reason, const char* error) {
 }
 
 static bool same_build(int proto, const char* rev, const char* disc) {
-    return proto == PC_NET_PROTO_VERSION && strcmp(rev, pc_app_rev()) == 0 && strcmp(disc, pc_lan_disc_id()) == 0;
+    return proto == PC_NET_PROTO_VERSION && strcmp(rev, pc_app_rev()) == 0 && strcmp(disc, pc_net_disc_id()) == 0;
 }
 
 static bool open_socket(uint16_t want) {
@@ -292,7 +291,7 @@ static void host_announce(void) {
     snprintf(port, sizeof port, "%u", s_lobby_port);
     snprintf(instance, sizeof instance, "xn-%.16s", s_lobby_hex);
     const char* keys[] = {"v", "rev", "disc", "id", "name", "host", "tag", "seats", "taken", "port", "s"};
-    const char* values[] = {proto, pc_app_rev(), pc_lan_disc_id(), s_lobby_hex, name, s_args.name, s_args.tag,
+    const char* values[] = {proto, pc_app_rev(), pc_net_disc_id(), s_lobby_hex, name, s_args.name, s_args.tag,
                             seats, taken, port, settings};
     pc_mdns_announce(instance, s_lobby_port, keys, values, (int)(sizeof keys / sizeof keys[0]));
 }
@@ -470,7 +469,7 @@ static bool host_begin(void) {
     SDL_UnlockMutex(s_lock);
     host_announce();
     pc_log_line("xeleenet: hosting lobby %s, code %s, %d seats on LAN %s:%u (build %s, disc %s)", s_lobby_hex,
-                s_code, s_args.seats, pc_mdns_self_ip(), s_lobby_port, pc_app_rev(), pc_lan_disc_id());
+                s_code, s_args.seats, pc_mdns_self_ip(), s_lobby_port, pc_app_rev(), pc_net_disc_id());
     return true;
 }
 
@@ -531,7 +530,7 @@ static void join_fill(LJoin* j, const uint8_t lobby[16], const uint8_t nonce[8])
     snprintf(j->name, sizeof j->name, "%s", s_args.name);
     snprintf(j->tag, sizeof j->tag, "%s", s_args.tag);
     snprintf(j->rev, sizeof j->rev, "%s", pc_app_rev());
-    snprintf(j->disc, sizeof j->disc, "%s", pc_lan_disc_id());
+    snprintf(j->disc, sizeof j->disc, "%s", pc_net_disc_id());
     j->proto = PC_NET_PROTO_VERSION;
     j->ncands = (uint8_t)s_args.ncands;
     memcpy(j->lobby, lobby, 16);
@@ -582,7 +581,7 @@ static void on_welcome(const LWelcome* w) {
     s_status = PC_XN_IN;
     SDL_UnlockMutex(s_lock);
     pc_log_line("xeleenet: joined lobby %s as P%d with %d others on LAN %s (build %s, disc %s)", s_lobby_hex,
-                w->port + 1, w->nmembers, s_host_addr, pc_app_rev(), pc_lan_disc_id());
+                w->port + 1, w->nmembers, s_host_addr, pc_app_rev(), pc_net_disc_id());
 }
 
 static bool guest_join(void) {

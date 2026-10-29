@@ -3,7 +3,6 @@
 #include "net_dht.h"
 #include "net_dht_item.h"
 #include "net.h"
-#include "net_lan.h"
 #include "net_rank_session.h"
 #include "pc.h"
 #include "pc/slippi/slp_match.h"
@@ -31,7 +30,6 @@ typedef int MatchSocket;
 extern const char* pc_get_net_name(void);
 extern int pc_get_net_port(void);
 extern int pc_match_local_port(void);
-extern const char* pc_lan_disc_id(void);
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((weak)) void pc_log_line(const char* fmt, ...) {
     (void)fmt;
@@ -109,8 +107,8 @@ static uint8_t publication_wire[PC_RANK_RECORD_BYTES];
  * Unranked and Direct are served by slp_match (ENet + JSON to mm.slippi.gg),
  * not the DHT. The two backends share the pc_net_match_* surface: a search
  * produces a peer, then pc_net_connect_slippi brings up the same game session
- * the DHT path does. LAN never comes through here (gmonlinemode calls
- * pc_lan_start directly). The Slippi backend is inert until
+ * the DHT path does. LAN never comes through here (it is XeleeNet's,
+ * src/pc/xeleenet_lan.c). The Slippi backend is inert until
  * pc_net_match_start is asked for Unranked/Direct, so the direct-dial path
  * (pc_net_init) keeps whatever transport it chose. */
 static bool s_slippi_match;         /* this search is the Slippi backend */
@@ -271,7 +269,7 @@ static bool load_identity(void) {
 
 static void digest(void) {
     char text[256];
-    int n = snprintf(text, sizeof text, "%s\n%s", pc_app_rev(), pc_lan_disc_id());
+    int n = snprintf(text, sizeof text, "%s\n%s", pc_app_rev(), pc_net_disc_id());
     /* snprintf returns the length it WOULD have written, so an over-long
      * MELEE_APP_REV (it is returned verbatim) would make the hash read past
      * this stack buffer. Hash what is actually in it. */

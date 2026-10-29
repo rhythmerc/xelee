@@ -131,7 +131,7 @@ def run(args):
             env["MELEE_NET_SIM_JITTER_MS"] = "20"
         if args.block:
             env["MELEE_NET_SIM_BLOCK"] = args.block
-        # lan=True: Instance sets no MELEE_NET of its own; the env above is the session.
+        # lobby=True: Instance sets no MELEE_NET of its own; the env above is the session.
         insts.append(nt.Instance(name, args.exe, args.disc, args.work, ports[k], 0, env, True))
         if args.xn_url and k == 0:
             # The others join with the code the host's log names.
