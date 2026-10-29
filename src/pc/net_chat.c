@@ -55,7 +55,12 @@ void pc_net_chat_poll(uint16_t buttons, bool eligible, uint64_t now) {
     chat.buttons = held;
     if (chat.line[0] && now >= chat.show_until)
         chat.line[0] = 0;
-    chat.eligible = eligible && pc_net_active();
+    {
+        const bool was = chat.eligible;
+        chat.eligible = eligible && pc_net_active();
+        if (chat.eligible != was) /* tools/net_test_xn_menu.py: never in a XeleeNet lobby */
+            pc_log_line("net: quick chat %s", chat.eligible ? "on" : "off");
+    }
     if (!chat.eligible) {
         chat.group = -1;
         return;

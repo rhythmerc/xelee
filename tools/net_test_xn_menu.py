@@ -637,6 +637,11 @@ def run(args):
         shot(host, shots, "12-match-later")
         texts = [i.text() for i in insts]
         ok = not any(nt.re.search(r"net: DESYNC", t) for t in texts)
+        # The old netplay's quick chat (its D-pad prompt) has no place in a
+        # XeleeNet lobby (a Quest find: XR's placement step left it on).
+        if any("net: quick chat on" in t for t in texts):
+            print("FAIL: quick chat came on in a XeleeNet lobby")
+            ok = False
         for i, t in zip(insts, texts):
             print(f"[{i.name}] " + "; ".join(nt.re.findall(r"xeleenet: (P\d (?:direct|through the host))", t))
                   + ("  DESYNC" if "net: DESYNC" in t else ""))

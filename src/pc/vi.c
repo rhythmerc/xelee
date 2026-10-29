@@ -35,6 +35,8 @@ extern void browser_yield(void);
 #include "pc/net.h"
 #include "pc/slp.h"
 #include "pc/net_chat.h"
+/* gmonlinemode.c (its header pulls in the decomp types) */
+bool gmOnline_XnFlow(void);
 #include <melee/if/ifnetchat.h>
 #include <melee/mn/mnpage.h>
 #include <dolphin/pad.h>
@@ -441,7 +443,8 @@ void pc_frame_boundary(void) {
 
     /* Presentation-only chat reads the physical local controller, never a
      * rewound/synchronized pad. It cannot change the game simulation. */
-    bool chat_eligible = pc_net_chat_available();
+    /* XeleeNet has no quick chat (yet), whichever way the lobby was reached. */
+    bool chat_eligible = pc_net_chat_available() && !gmOnline_XnFlow();
     PADStatus chat_pads[4] = {0};
     if (chat_eligible)
         PADRead(chat_pads);

@@ -984,7 +984,7 @@ void onExitPlace(UNUSED GameModeState* state)
             cancelled_mode = mode_after_place;
             mode_after_place = -1;
         } else if (kind_after_place != ONLINE_KIND_PLACE) {
-            online_kind = kind_after_place; /* the menu's row for Unranked, Direct or LAN */
+            gmOnline_SetKind(kind_after_place); /* the menu's row for Unranked, Direct or LAN */
             kind_after_place = ONLINE_KIND_PLACE;
         }
         gm_ChangeGameModeAfterCurrentScene(GM_MENU);
@@ -995,7 +995,10 @@ void onExitPlace(UNUSED GameModeState* state)
         mode_after_place = -1;
         gm_ChangeGameModeAfterCurrentScene(mode);
     } else if (kind_after_place != ONLINE_KIND_PLACE) {
-        online_kind = kind_after_place; /* straight on to Unranked or Direct */
+        /* Straight on to Unranked, Direct, LAN or XeleeNet, through SetKind:
+         * the kind's chat setting with it (a headset's XeleeNet kept the
+         * placement scene's chat on). */
+        gmOnline_SetKind(kind_after_place);
         kind_after_place = ONLINE_KIND_PLACE;
         gm_ChangeGameModeAfterCurrentScene(GM_ONLINE);
     } else {
