@@ -108,6 +108,10 @@ void pc_net_port_leave(int port, int32_t last);
  * entry the players run different scenes (the CSS, the Joining page). */
 void pc_net_check_from(int32_t frame);
 void pc_net_leave_quietly(int32_t last, int ms);
+/* Wait (up to `ms`) until every peer holds our input up to `last` (and, on
+ * the host, what it passes on for others): before a session ends with no
+ * goodbye, so nobody is left a frame short. False if some peer may not. */
+bool pc_net_settle(int32_t last, int ms);
 /* The controller ports in the session, ours included (bit per port); 0 offline. */
 int pc_net_port_mask(void);
 /* Connect over the Slippi transport (MELEE_NET_STACK=slippi,

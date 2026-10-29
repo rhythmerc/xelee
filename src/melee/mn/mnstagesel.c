@@ -134,6 +134,12 @@ struct StageSelUserData {
 #include "pc/xeleenet_menu.h"
 #include <sysdolphin/baselib/dobj.h>
 #include <sysdolphin/baselib/mobj.h>
+#include <sysdolphin/baselib/tobj.h>
+#include <melee/lb/lbvector.h>
+#include <aurora/aurora.h>
+#include <sysdolphin/baselib/initialize.h>
+#include <string.h>
+#include <time.h>
 
 /* A compact ranked list uses synchronized pads and makes both bans visible.
  * It does not depend on the archive's cursor geometry. */
@@ -432,6 +438,470 @@ static int netStageSel_Random(void)
     u32 r = netStageSel_Mix() * 22695477u + 1u;
     return allowed[(r >> 8) % (u32) n];
 }
+
+/* XeleeNet (docs/xeleenet-ready-plan.md P5): the host decides the end. A
+ * player's pick may change while others choose (a new STAGE_PICK); the host
+ * sends FINAL once everyone has picked, or XN_PICK_TIMER frames after the
+ * first pick, with every card already drawn (Random, and anyone still
+ * choosing, from the lobby's list) and the winning port. Every player runs
+ * the draw from FINAL's start frame, so the screens agree, and leaves through
+ * the usual scene hand-off. The host's B is a message too (BACK): whichever
+ * of the two the host sends is what everyone does. A guest's change that
+ * misses FINAL just loses. */
+#define NET_MSG_STAGE_FINAL 0x22 /* [pick[4], cell[4], timed_out, chosen, start BE32] */
+#define NET_MSG_STAGE_TIMER 0x23 /* [deadline BE32]: the pick timer runs out then */
+#define NET_MSG_STAGE_BACK 0x24  /* the host's B: everyone back to the CSS */
+#define XN_PICK_TIMER 900        /* 15 s from the first pick */
+#define XN_DRAW 120              /* the highlight across the cards */
+#define XN_REST 60               /* then on the winner */
+#define XN_LEAD 12               /* FINAL to the draw's first frame: the message's trip */
+#define XN_RESEND 15             /* a changed pick goes out at most this often */
+#define XN_THUMBS_AT 60          /* the icons' textures have settled by then */
+
+static struct {
+    bool final;     /* FINAL is in (or, on the host, out) */
+    bool leaving;   /* the scene has asked to end */
+    bool back_in;   /* the host's BACK came */
+    bool back_want; /* the host pressed B; BACK still to go out */
+    bool timer_out; /* the host's TIMER went */
+    s8 pick[4];     /* FINAL's: each port's pick (30 Random, -1 not seated) */
+    s8 cell[4];     /* and the stage its card shows */
+    u8 timed_out;
+    int chosen;
+    s32 start, deadline, sent_at;
+    int pending; /* our newest pick, not out yet */
+    int lit;
+    int frames;
+    int over; /* the cell under the cursor, for the log */
+} xn_sss;
+
+static void xnSss_Reset(void)
+{
+    memset(&xn_sss, 0, sizeof xn_sss);
+    xn_sss.chosen = -1;
+    xn_sss.start = xn_sss.deadline = xn_sss.sent_at = -1;
+    xn_sss.pending = -1;
+    xn_sss.lit = -1;
+    xn_sss.over = -1;
+}
+
+/* A stage on the lobby's list. */
+static bool xnSss_Listed(int cell)
+{
+    return cell >= 0 && cell < NUM_STAGES && mnStageSel_803F06D0[cell].stkind != 0 &&
+           (u8) gm_80164330(mnStageSel_803F06D0[cell].xA);
+}
+
+/* The host's draws come from its own generator: FINAL carries them, so
+ * nothing about them has to agree, and the synced RNG stays untouched. */
+static u32 xnSss_Rand(void)
+{
+    static u32 x;
+    if (x == 0) {
+        x = ((u32) time(NULL) * 2654435761u) ^ pc_net_seed() ^ (u32) pc_net_frame();
+        x = x != 0 ? x : 1;
+    }
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    return x;
+}
+
+static int xnSss_RandomCell(void)
+{
+    int allowed[NUM_STAGES];
+    int i, n = 0;
+    for (i = 0; i < NUM_STAGES; i++) {
+        if (xnSss_Listed(i)) {
+            allowed[n++] = i;
+        }
+    }
+    return n > 0 ? allowed[xnSss_Rand() % (u32) n] : 0;
+}
+
+/* A on a stage (or Random): ours until FINAL. */
+static void xnSss_Pick(int cell)
+{
+    int me = pc_net_local_player() & 3;
+    if (xn_sss.final || xn_sss.leaving) {
+        return;
+    }
+    sfxForward();
+    if (net_picks[me] == cell) {
+        return;
+    }
+    net_picks[me] = cell;
+    xn_sss.pending = cell;
+    pc_log_line("sss: we picked %d", cell);
+}
+
+static bool xnSss_Same(void)
+{
+    int ports = netStageSel_Ports();
+    int i, first = -1;
+    for (i = 0; i < 4; i++) {
+        if (ports & (1 << i)) {
+            if (first >= 0 && xn_sss.cell[i] != first) {
+                return false;
+            }
+            first = xn_sss.cell[i];
+        }
+    }
+    return true;
+}
+
+static void xnSss_LogFinal(const char* who)
+{
+    pc_log_line("sss: %s: picks P1=%d P2=%d P3=%d P4=%d, cards %d %d %d %d, timed out %x, "
+                "P%d's card, the draw at frame %d%s",
+                who, xn_sss.pick[0], xn_sss.pick[1], xn_sss.pick[2], xn_sss.pick[3],
+                xn_sss.cell[0], xn_sss.cell[1], xn_sss.cell[2], xn_sss.cell[3],
+                xn_sss.timed_out, xn_sss.chosen + 1, xn_sss.start,
+                xnSss_Same() ? " (one stage: no draw)" : "");
+}
+
+/* The host: everyone has picked, or the timer has run out. */
+static void xnSss_SendFinal(void)
+{
+    int ports = netStageSel_Ports();
+    int cards[4], n = 0, i;
+    u8 m[14];
+    s32 start = pc_net_frame() + XN_LEAD;
+    u8 timed_out = 0;
+    s8 pick[4], cell[4];
+    for (i = 0; i < 4; i++) {
+        pick[i] = cell[i] = -1;
+        if (!(ports & (1 << i))) {
+            continue;
+        }
+        cards[n++] = i;
+        if (net_picks[i] < 0) {
+            timed_out |= 1 << i;
+        }
+        pick[i] = xnSss_Listed(net_picks[i]) ? net_picks[i] : 30;
+        cell[i] = pick[i] < NUM_STAGES ? pick[i] : xnSss_RandomCell();
+    }
+    if (n == 0) {
+        return;
+    }
+    for (i = 0; i < 4; i++) {
+        m[i] = (u8) pick[i];
+        m[4 + i] = (u8) cell[i];
+    }
+    m[8] = timed_out;
+    m[9] = (u8) cards[xnSss_Rand() % (u32) n];
+    m[10] = (u8) (start >> 24);
+    m[11] = (u8) (start >> 16);
+    m[12] = (u8) (start >> 8);
+    m[13] = (u8) start;
+    if (!pc_net_send_reliable(NET_MSG_STAGE_FINAL, m, sizeof m)) {
+        return; /* the lane is full: again next frame */
+    }
+    memcpy(xn_sss.pick, pick, 4);
+    memcpy(xn_sss.cell, cell, 4);
+    xn_sss.timed_out = timed_out;
+    xn_sss.chosen = m[9];
+    xn_sss.start = start;
+    xn_sss.final = true;
+    xnSss_LogFinal("final");
+}
+
+static void xnSss_Poll(void)
+{
+    u8 type;
+    u8 buf[16];
+    int n, i;
+    while ((n = pc_net_recv_reliable(&type, buf, sizeof buf)) >= 0) {
+        if (type == NET_MSG_STAGE_PICK && n >= 2 && buf[1] < 4 &&
+            buf[1] != pc_net_local_player() && !xn_sss.final)
+        {
+            net_picks[buf[1]] = buf[0];
+            pc_log_line("sss: P%d picked %d", buf[1] + 1, buf[0]);
+        } else if (type == NET_MSG_STAGE_TIMER && n >= 4 && pc_net_local_player() != 0) {
+            xn_sss.deadline = (s32) ((u32) buf[0] << 24 | (u32) buf[1] << 16 | (u32) buf[2] << 8 | buf[3]);
+        } else if (type == NET_MSG_STAGE_FINAL && n >= 14 && pc_net_local_player() != 0 &&
+                   !xn_sss.final && buf[9] < 4)
+        {
+            int ports = netStageSel_Ports();
+            bool ok = (ports & (1 << buf[9])) != 0;
+            for (i = 0; i < 4; i++) {
+                xn_sss.pick[i] = (s8) buf[i];
+                xn_sss.cell[i] = (s8) buf[4 + i];
+                if ((ports & (1 << i)) && (xn_sss.cell[i] < 0 || xn_sss.cell[i] >= NUM_STAGES)) {
+                    ok = false;
+                }
+            }
+            if (!ok) {
+                pc_log_line("sss: a FINAL naming no stage or player ignored");
+                continue;
+            }
+            xn_sss.timed_out = buf[8];
+            xn_sss.chosen = buf[9];
+            xn_sss.start = (s32) ((u32) buf[10] << 24 | (u32) buf[11] << 16 | (u32) buf[12] << 8 | buf[13]);
+            xn_sss.final = true;
+            xn_sss.pending = -1;
+            for (i = 0; i < 4; i++) {
+                net_picks[i] = xn_sss.pick[i];
+            }
+            xnSss_LogFinal("final from the host");
+        } else if (type == NET_MSG_STAGE_BACK && pc_net_local_player() != 0 && !xn_sss.final) {
+            xn_sss.back_in = true;
+        }
+    }
+}
+
+/* The host's B, or its BACK arriving: true once, on the frame to leave. */
+static bool xnSss_Back(void)
+{
+    if (xn_sss.leaving || xn_sss.final) {
+        return false;
+    }
+    if (pc_net_local_player() == 0 && (HSD_PadCopyStatus[0].trigger & HSD_PAD_B)) {
+        xn_sss.back_want = true;
+    }
+    if (xn_sss.back_want && pc_net_send_reliable(NET_MSG_STAGE_BACK, NULL, 0)) {
+        xn_sss.back_want = false;
+        xn_sss.back_in = true;
+    }
+    if (xn_sss.back_in) {
+        xn_sss.leaving = true;
+        pc_log_line("sss: the host's B, everyone back to the CSS");
+        return true;
+    }
+    return false;
+}
+
+/* Which card the highlight is on, t frames into the draw: it runs round the
+ * cards a few times, slowing (cubic ease-out), and stops on the winner. */
+static int xnSss_Lit(int t, int n, int win)
+{
+    float x, e;
+    int steps = 3 * n + win;
+    if (t >= XN_DRAW) {
+        return win;
+    }
+    x = t <= 0 ? 0.0F : (float) t / XN_DRAW;
+    e = 1.0F - (1.0F - x) * (1.0F - x) * (1.0F - x);
+    return (int) (steps * e) % n;
+}
+
+/* XeleeNet's stage select draws smaller about the screen's centre
+ * (PC_XN_SSS_ZOOM), leaving the picks card room under the grid, as the CSS
+ * does (mncharsel.c cssXnCameraZoom). The menu camera's proc re-inits the
+ * camera from its desc every frame, so the zoom goes on after it. */
+static void sssXnCameraProc(HSD_GObj* gobj)
+{
+    HSD_CObj* cobj;
+    mn_8022BA1C(gobj);
+    cobj = GET_COBJ(gobj);
+    if (HSD_CObjGetProjectionType(cobj) == PROJ_PERSPECTIVE) {
+        float half = cobj->projection_param.perspective.fov * (float) M_PI / 360.0F;
+        cobj->projection_param.perspective.fov =
+            atanf(tanf(half) / PC_XN_SSS_ZOOM) * 360.0F / (float) M_PI;
+    } else if (HSD_CObjGetProjectionType(cobj) == PROJ_ORTHO) {
+        float cx = (cobj->projection_param.ortho.left + cobj->projection_param.ortho.right) / 2;
+        float cy = (cobj->projection_param.ortho.top + cobj->projection_param.ortho.bottom) / 2;
+        cobj->projection_param.ortho.left = cx + (cobj->projection_param.ortho.left - cx) / PC_XN_SSS_ZOOM;
+        cobj->projection_param.ortho.right = cx + (cobj->projection_param.ortho.right - cx) / PC_XN_SSS_ZOOM;
+        cobj->projection_param.ortho.top = cy + (cobj->projection_param.ortho.top - cy) / PC_XN_SSS_ZOOM;
+        cobj->projection_param.ortho.bottom = cy + (cobj->projection_param.ortho.bottom - cy) / PC_XN_SSS_ZOOM;
+    }
+}
+
+/* An icon's frame on screen, as fractions of it. The table's xC/x10 are the
+ * cursor's hit box, which also covers the gaps; the frame is the size
+ * Melee's own hover highlight is scaled to (x14/x18, fn_8025A560) times the
+ * highlight's size at scale 1, measured on screen. */
+#define XN_FRAME_HW 3.0F
+#define XN_FRAME_HH 2.7F
+static bool xnSss_IconOnScreen(int cell, float out[4])
+{
+    Vec3 pos, a, b, sa, sb;
+    HSD_CObj* cobj;
+    if (cell < 0 || cell >= NUM_STAGES || mnStageSel_803F06D0[cell].x0 == NULL ||
+        mnStageSel_804D6C9C == NULL)
+    {
+        return false;
+    }
+    cobj = GET_COBJ(mnStageSel_804D6C9C);
+    lb_8000B1CC(mnStageSel_803F06D0[cell].x0, NULL, &pos);
+    a = b = pos;
+    a.x -= XN_FRAME_HW * mnStageSel_803F06D0[cell].x14;
+    a.y += XN_FRAME_HH * mnStageSel_803F06D0[cell].x18;
+    b.x += XN_FRAME_HW * mnStageSel_803F06D0[cell].x14;
+    b.y -= XN_FRAME_HH * mnStageSel_803F06D0[cell].x18;
+    if (lbVector_WorldToScreen(cobj, &a, &sa, 1) == NULL ||
+        lbVector_WorldToScreen(cobj, &b, &sb, 1) == NULL)
+    {
+        return false;
+    }
+    out[0] = sa.x / 640.0F;
+    out[1] = sa.y / 480.0F;
+    out[2] = (sb.x - sa.x) / 640.0F;
+    out[3] = (sb.y - sa.y) / 480.0F;
+    return true;
+}
+
+/* Each icon's picture for the cards, once the icons' texture animations
+ * have set them: the C8 image and the palette in use. */
+static void xnSss_Thumbs(void)
+{
+    int i;
+    for (i = 0; i < NUM_STAGES; i++) {
+        HSD_JObj* j = mnStageSel_803F06D0[i].x0;
+        HSD_DObj* d;
+        HSD_TObj* t;
+        if (j == NULL || pc_xn_sss_has_thumb(i) || (j->flags & (JOBJ_INSTANCE | JOBJ_PTCL | JOBJ_SPLINE))) {
+            continue;
+        }
+        /* The picture is on the icon's joint or its first child's. */
+        if (j->u.dobj == NULL && j->child != NULL) {
+            j = j->child;
+        }
+        for (d = j->u.dobj; d != NULL; d = d->next) {
+            for (t = d->mobj != NULL ? d->mobj->tobj : NULL; t != NULL; t = t->next) {
+                HSD_ImageDesc* im = t->imagedesc;
+                HSD_Tlut* tl = t->tlut_no != (u8) -1 && t->tluttbl != NULL ? t->tluttbl[t->tlut_no] : t->tlut;
+                if (im != NULL && im->format == GX_TF_C8 && tl != NULL && tl->lut != NULL) {
+                    pc_xn_sss_thumb(i, DP(void, im->image_ptr), im->width, im->height, tl->lut,
+                                    (int) tl->fmt, tl->n_entries);
+                }
+            }
+        }
+    }
+}
+
+/* The overlay (the rings, the picks card, the draw: RmlUi,
+ * xeleenet_menu.cpp) is drawn into the stage select's own frame here, after
+ * the icons and Melee's hover frame (link 4, 0x85, made after them) and
+ * before the cursor (0x86), so the cursor stays on top of it. */
+static void xnSss_OverlayRender(HSD_GObj* gobj, int pass)
+{
+    if (HSD_GetCurrentRenderPass() == HSD_RP_SCREEN) {
+        aurora_rmlui_draw_here();
+    }
+}
+
+static void xnSss_OverlayCreate(void)
+{
+    HSD_GObj* gobj = GObj_Create(HSD_GOBJ_CLASS_FIGHTER, 5, 0x80);
+    GObj_SetupGXLink(gobj, (GObj_RenderFunc) xnSss_OverlayRender, 4, 0x85);
+}
+
+/* Once a frame in a XeleeNet lobby: the messages, our pick, the host's timer
+ * and FINAL, the draw, and the overlay's state. */
+static void xnSss_Frame(void)
+{
+    PcXnSssState st;
+    s32 f = pc_net_frame();
+    int me = pc_net_local_player() & 3;
+    int ports = netStageSel_Ports();
+    int cards[4], n = 0, win = 0, i;
+    bool any = false, all = true;
+
+    if (++xn_sss.frames == XN_THUMBS_AT) {
+        xnSss_Thumbs();
+    }
+    if (mnStageSel_804D6CAE != xn_sss.over && mnStageSel_804D6CAE < NUM_STAGES && !xn_sss.final) {
+        xn_sss.over = mnStageSel_804D6CAE;
+        pc_log_line("sss: over cell %d", xn_sss.over); /* tools/net_test_xn_menu.py steers by it */
+    }
+    xnSss_Poll();
+    if (pc_net_peer_status() != 0 && !xn_sss.leaving) {
+        xn_sss.leaving = true;
+        gm_801A4B60();
+    }
+    if (xn_sss.pending >= 0 && !xn_sss.final &&
+        (xn_sss.sent_at < 0 || f - xn_sss.sent_at >= XN_RESEND))
+    {
+        u8 b[2] = { (u8) xn_sss.pending, (u8) me };
+        if (pc_net_send_reliable(NET_MSG_STAGE_PICK, b, 2)) {
+            xn_sss.sent_at = f;
+            xn_sss.pending = -1;
+        }
+    }
+    for (i = 0; i < 4; i++) {
+        if (ports & (1 << i)) {
+            any |= net_picks[i] >= 0;
+            all &= net_picks[i] >= 0;
+        }
+    }
+    if (me == 0 && !xn_sss.final && !xn_sss.leaving && !xn_sss.back_want) {
+        if (any && xn_sss.deadline < 0) {
+            xn_sss.deadline = f + XN_PICK_TIMER;
+        }
+        if (xn_sss.deadline >= 0 && !xn_sss.timer_out) {
+            u8 m[4] = { (u8) (xn_sss.deadline >> 24), (u8) (xn_sss.deadline >> 16),
+                        (u8) (xn_sss.deadline >> 8), (u8) xn_sss.deadline };
+            xn_sss.timer_out = pc_net_send_reliable(NET_MSG_STAGE_TIMER, m, sizeof m);
+        }
+        if (all || (xn_sss.deadline >= 0 && f >= xn_sss.deadline)) {
+            xnSss_SendFinal();
+        }
+    }
+
+    memset(&st, 0, sizeof st);
+    st.ports = (u8) ports;
+    st.chosen = -1;
+    st.lit = -1;
+    st.t = -1;
+    st.draw = XN_DRAW;
+    st.rest = XN_REST;
+    st.timer = xn_sss.deadline >= 0 && !xn_sss.final ? (xn_sss.deadline > f ? xn_sss.deadline - f : 0) : -1;
+    st.timer_total = XN_PICK_TIMER;
+    for (i = 0; i < 4; i++) {
+        int p = (ports & (1 << i)) ? net_picks[i] : -1;
+        st.pick[i] = (s8) p;
+        st.pick_id[i] = p >= 0 && p < NUM_STAGES ? (s8) mnStageSel_803F06D0[p].xA : -1;
+        st.outline_ok[i] = p >= 0 && p < NUM_STAGES && !xn_sss.final && xnSss_IconOnScreen(p, st.outline[i]);
+        /* The upper grid's frames are square at the bottom right; Icicle
+         * Mountain, Flat Zone and the bottom row cut all four corners. */
+        st.outline_bevels[i] = p < 22 ? 0xB : 0xF;
+    }
+    if (xn_sss.final) {
+        bool same = xnSss_Same();
+        int t = f - xn_sss.start;
+        for (i = 0; i < 4; i++) {
+            if (ports & (1 << i)) {
+                if (i == xn_sss.chosen) {
+                    win = n;
+                }
+                cards[n++] = i;
+            }
+            st.cell[i] = xn_sss.cell[i];
+            st.cell_id[i] = xn_sss.cell[i] >= 0 && xn_sss.cell[i] < NUM_STAGES
+                                ? (s8) mnStageSel_803F06D0[xn_sss.cell[i]].xA
+                                : -1;
+            if (xn_sss.pick[i] >= NUM_STAGES) {
+                st.random |= 1 << i;
+            }
+        }
+        st.final = true;
+        st.timed_out = xn_sss.timed_out;
+        st.chosen = xn_sss.chosen;
+        /* Every card the same stage: no draw, straight to the result. */
+        st.draw = same ? 0 : XN_DRAW;
+        st.t = t;
+        if (n > 0 && t >= 0) {
+            int lit = same ? cards[win] : cards[xnSss_Lit(t, n, win)];
+            if (lit != xn_sss.lit) {
+                if (t >= st.draw) {
+                    sfxForward();
+                } else {
+                    sfxMove();
+                }
+                xn_sss.lit = lit;
+            }
+            st.lit = lit;
+        }
+        if (t >= st.draw + XN_REST && !xn_sss.leaving && xn_sss.chosen >= 0) {
+            mnStageSel_804D6CAE = (u8) xn_sss.cell[xn_sss.chosen];
+            mnStageSel_804D6CAF = 2;
+            xn_sss.leaving = true;
+        }
+    }
+    pc_xn_sss_picks(&st);
+}
 #endif
 
 /// @todo .sdata2 order hack
@@ -539,6 +1009,10 @@ void mnStageSel_80259C28(void)
         )
         {
 #ifdef TARGET_PC
+            if (gmOnline_XnFlow() && netStageSel_Active()) {
+                xnSss_Pick(mnStageSel_804D6CAE); /* the cursor stays: it may change */
+                return;
+            }
             if (netStageSel_Active() && !pc_rank_session_active()) {
                 netStageSel_SendPick(mnStageSel_804D6CAE);
             }
@@ -554,6 +1028,10 @@ void mnStageSel_80259C28(void)
         return;
     }
 #ifdef TARGET_PC
+    if (gmOnline_XnFlow() && netStageSel_Active()) {
+        xnSss_Pick(30); /* Random: the host draws it from the list */
+        return;
+    }
     if (netStageSel_Active() && !pc_rank_session_active()) {
         /* Send the cell (30 = random) and defer the roll to the resolve so
          * both peers roll from the same RNG state. */
@@ -732,7 +1210,12 @@ void fn_8025A310(HSD_GObj* gobj)
     u32 unused;
 
     jobj = gobj->hsd_obj;
-    if (mnStageSel_804D6CAF != 0) {
+    if (mnStageSel_804D6CAF != 0
+#ifdef TARGET_PC
+        || (gmOnline_XnFlow() && xn_sss.final) /* the draw's panel is up */
+#endif
+    )
+    {
         HSD_JObjSetFlags(jobj, JOBJ_HIDDEN);
         return;
     }
@@ -977,6 +1460,7 @@ void mnStageSel_Scene_OnEnter(void* arg0)
             if (!pc_rank_session_active()) {
                 mnStageSel_804D50A0 = pc_net_local_player();
                 netStageSel_Reset();
+                xnSss_Reset();
                 {
                     int cell = netStageSel_SlippiCell();
                     if (cell >= 0) {
@@ -998,7 +1482,11 @@ void mnStageSel_Scene_OnEnter(void* arg0)
             HSD_GObjObject_80390A70(gobj, HSD_GObj_CameraKind, cobj);
             GObj_SetupGXLinkMax(gobj, HSD_GObj_803910D8, 0);
             gobj->gxlink_prios = 0x11;
+#ifdef TARGET_PC
+            HSD_GObj_SetupProc(gobj, gmOnline_XnFlow() ? sssXnCameraProc : mn_8022BA1C, 5);
+#else
             HSD_GObj_SetupProc(gobj, mn_8022BA1C, 5);
+#endif
         }
 
         {
@@ -1310,6 +1798,7 @@ void mnStageSel_Scene_OnEnter(void* arg0)
         lbAudioAx_80023F28(gmMainLib_8015ECB0());
 #ifdef TARGET_PC
         if (pc_rank_session_active()) rankStageCreate();
+        if (gmOnline_XnFlow()) xnSss_OverlayCreate();
 #endif
     }
 }
@@ -1332,6 +1821,9 @@ void mnStageSel_Scene_OnFrame(void)
 #ifdef TARGET_PC
     frozenToggleFrame();
     sss_mark_off_list();
+    if (gmOnline_XnFlow() && netStageSel_Active()) {
+        xnSss_Frame();
+    }
 #endif
     if (sss_data->force_stage_id >= 0) {
         mnStageSel_804D6CAF = 2;
@@ -1374,8 +1866,13 @@ void mnStageSel_Scene_OnFrame(void)
         mnStageSel_804D6CAD = get_pad(mnStageSel_804D50A0)->stickY;
 #ifdef TARGET_PC
         if (gmOnline_XnFlow()) {
-            /* XeleeNet: the host alone takes everyone back to the CSS. */
-            b_pressed = (HSD_PadCopyStatus[0].trigger & 0x200) != 0;
+            /* XeleeNet: the host alone takes everyone back to the CSS, by
+             * message (xnSss_Back, below). Once the draw is made, the
+             * cursor stops too. */
+            if (xn_sss.final) {
+                mnStageSel_804D6CA0 = 0;
+                mnStageSel_804D6CAC = mnStageSel_804D6CAD = 0;
+            }
         } else if (netStageSel_Active() && !pc_rank_session_active()) {
             b_pressed = (HSD_PadCopyStatus[0].trigger & 0x200) ||
                         (HSD_PadCopyStatus[1].trigger & 0x200);
@@ -1403,6 +1900,11 @@ void mnStageSel_Scene_OnFrame(void)
         mnStageSel_804D6CA4 -= 1;
         return;
     }
+#ifdef TARGET_PC
+    if (gmOnline_XnFlow() && netStageSel_Active()) {
+        b_pressed = xnSss_Back();
+    }
+#endif
     if (sss_data->x1 == 0 && b_pressed && mnStageSel_804D6CAF == 0)
     {
         sfxBack();
@@ -1416,7 +1918,9 @@ void mnStageSel_Scene_OnFrame(void)
                 gm_801A4B60();
                 return;
             }
-            if (!net_slippi_fixed) {
+            if (gmOnline_XnFlow()) {
+                /* FINAL's card, set by xnSss_Frame */
+            } else if (!net_slippi_fixed) {
                 if (!netStageSel_AllPicked()) {
                     return; /* someone still choosing; keep showing our pick */
                 }

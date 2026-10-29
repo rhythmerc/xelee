@@ -274,7 +274,67 @@ Test: three instances, P3 holds B. P1 and P2 stay in a CSS with two doors and
 play a match with no DESYNC. P3 can host or join again right away. Separately,
 P1 holds B: P2 and P3 land on the XeleeNet menu with the notice.
 
-### P5 · The picks card, the draw and the timer
+### P5 · The picks card, the draw and the timer — done 2026-10-29
+
+Built as planned, with these differences:
+
+- **FINAL carries the outcome.** The host draws every Random card (and
+  anyone still choosing) from the lobby's list, and the winning card, from
+  its own generator; FINAL sends `[pick[4], cell[4], timed_out, winner,
+  start]` (`NET_MSG_STAGE_FINAL` 0x22). Nobody resolves anything. The
+  seeded hash would have given the same stage for the same picks every game,
+  since the session seed doesn't change.
+- **One draw on every screen.** Menus run in lockstep, so FINAL names the
+  draw's first frame (12 frames ahead, for the message's trip). Every player
+  plays the highlight from that frame, and a late FINAL starts the draw
+  partway in. Everyone asks to leave on the same frame; the hand-off still
+  guards it.
+- **The host's B is a message** (`NET_MSG_STAGE_BACK` 0x24). FINAL is the
+  host's own state, so reading its B from the shared pads could send guests
+  back after the host had made the draw. The host sends one or the other.
+- **The timer is on the card.** The host sends the deadline when the first
+  pick lands (`NET_MSG_STAGE_TIMER` 0x23), and the card counts it down.
+- **The card is a strip under the grid:** a tile per player with their
+  colour round the picture, a tick, the name and the stage. The stage select
+  draws at 0.88 about its centre (`PC_XN_SSS_ZOOM`, as the CSS does) to make
+  the room, clear of the hovered stage's name and series (bottom left).
+- **The rings on the grid** follow the icons' frames: sized by the scale
+  Melee gives its hover frame, with the frame's corner cuts (the upper grid's
+  are square at the bottom right). RmlUi has no polygons, so each ring is a
+  texture made to size (`xnring://`). The overlay draws inside the stage
+  select's frame, under the cursor; the cursor hides during the draw.
+- **Names** fit 15 characters on the card and in the draw; the service
+  still caps them at 12 (a TODO in `common.js` and `xeleenet.c`).
+- **Thumbnails are the grid's own icons.** Their C8 textures and palettes
+  are decoded once, a second into the first stage select, and served to
+  RmlUi through Aurora's texture provider as `xnstage://<cell>`.
+- **A changed pick goes out at most every 15 frames**, the newest one only,
+  so pick spam can't fill the reliable lane the scene hand-off needs.
+- **Fixed on the way (joins):** `sss-repick`'s added delay showed that a
+  join's session switch could strand the host. A player stops sending at the
+  switch frame, so if its last packets are lost, nothing resends them, and
+  the host waits a frame short until its silence timeout. Every player now
+  waits (up to 1.5 s; 0 ms on loopback) until the others hold its input
+  through the switch frame (`pc_net_settle`, split out of
+  `pc_net_leave_quietly`).
+
+Tests: `tools/net_test_xn_menu.py`, 3 players:
+- `--scenario sss-repick`: P2 (80 ms one-way delay) changes its pick twice,
+  then once more, racing P3's last pick. Every player draws from the same
+  FINAL.
+- `--scenario sss-timeout`: P3 never picks; the host ends the picking about
+  15 s after the first pick, with P3 as Random.
+- `--scenario sss-same`: everyone picks Battlefield, and there's no draw.
+
+Not covered:
+- The headset (item 5): the card and the draw are untested on the menu quad.
+- `tools/xn_preview.py` has no stage-select pages: nothing boots into the
+  stage select offline. The test run's screenshots stand in.
+- Under the simulator's delay, the host's settle at a join waits the full
+  1.5 s: the simulator drops held packets when a session starts, the other
+  players' last acks among them.
+
+The plan as written:
 
 1. **Host-authoritative final picks:**
    - Guests may change their pick while others choose (A on another stage, a

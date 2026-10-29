@@ -34,6 +34,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -1599,13 +1601,124 @@ struct Banner {
     }
 };
 
-// ---- the stage select's overlay: the list's name, the legend
+// ---- the stage select's overlay: the list's name, the legend, the picks
+// card, the picks outlined on the grid, and the draw (P5)
+
+// The icons' pictures (pc_xn_sss_thumb), decoded once and served to RmlUi as
+// xnstage://<cell>.
+struct Thumb {
+    std::vector<uint8_t> rgba;
+    uint32_t w = 0, h = 0;
+};
+std::array<Thumb, 32> s_thumbs;
+
+// A pick's ring round its icon (xnring://W_H_T_C_BEVELS_RRGGBB): the frame's
+// shape, a rectangle with the corners in BEVELS (bit 0 top left, then
+// clockwise) cut at 45 degrees by C px, as a line T px wide, antialiased.
+// RmlUi has no polygons; a texture per size is what keeps it crisp.
+struct Ring {
+    std::vector<uint8_t> rgba;
+    uint32_t w = 0, h = 0;
+};
+std::vector<std::pair<std::string, Ring>> s_rings;
+
+std::optional<aurora::rmlui::RuntimeTexture> ring_texture(std::string_view source) {
+    const std::string key(source);
+    for (const auto& [k, r] : s_rings)
+        if (k == key) {
+            aurora::rmlui::RuntimeTexture t;
+            t.width = r.w, t.height = r.h, t.rgba8 = std::as_bytes(std::span(r.rgba));
+            return t;
+        }
+    int w = 0, h = 0, bevels = 0;
+    float th = 0, c = 0;
+    unsigned rgb = 0;
+    const size_t at = key.find("://");
+    if (at == std::string::npos ||
+        std::sscanf(key.c_str() + at + 3, "%d_%d_%f_%f_%d_%x", &w, &h, &th, &c, &bevels, &rgb) != 6 || w <= 0 ||
+        h <= 0 || w > 2048 || h > 2048)
+        return std::nullopt;
+    Ring r;
+    r.w = uint32_t(w), r.h = uint32_t(h);
+    r.rgba.assign(size_t(w) * h * 4, 0);
+    // Signed distance outside a convex shape, inset by `in`: the furthest of
+    // its edges' half-planes (the corner cuts' normals are diagonal).
+    const float hw = w / 2.f, hh = h / 2.f, s2 = 0.70710678f;
+    const auto dist = [&](float x, float y, float in) {
+        float d = std::max(std::fabs(x) - (hw - in), std::fabs(y) - (hh - in));
+        for (int k = 0; k < 4; k++) {
+            if (!(bevels & (1 << k)))
+                continue;
+            const float sx = k == 0 || k == 3 ? -1.f : 1.f, sy = k < 2 ? -1.f : 1.f;
+            d = std::max(d, (sx * x + sy * y - (hw + hh - c)) * s2 + in);
+        }
+        return d;
+    };
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            const float px = x + 0.5f - hw, py = y + 0.5f - hh;
+            const float outer = std::clamp(0.5f - dist(px, py, 0.f), 0.f, 1.f);
+            const float inner = std::clamp(0.5f + dist(px, py, th), 0.f, 1.f);
+            uint8_t* o = &r.rgba[(size_t(y) * w + x) * 4];
+            o[0] = uint8_t(rgb >> 16), o[1] = uint8_t(rgb >> 8), o[2] = uint8_t(rgb);
+            o[3] = uint8_t(255.f * outer * inner + 0.5f);
+        }
+    if (s_rings.size() > 64)
+        s_rings.erase(s_rings.begin());
+    s_rings.emplace_back(key, std::move(r));
+    const Ring& kept = s_rings.back().second;
+    aurora::rmlui::RuntimeTexture t;
+    t.width = kept.w, t.height = kept.h, t.rgba8 = std::as_bytes(std::span(kept.rgba));
+    return t;
+}
+
+// A GX palette entry (big-endian): IA8, RGB565 or RGB5A3.
+std::array<uint8_t, 4> tlut_rgba(const uint8_t* e, int fmt) {
+    const unsigned v = unsigned(e[0]) << 8 | e[1];
+    switch (fmt) {
+    case 0: // IA8: alpha, then intensity
+        return {e[1], e[1], e[1], e[0]};
+    case 1: // RGB565
+        return {uint8_t((v >> 11 & 31) * 255 / 31), uint8_t((v >> 5 & 63) * 255 / 63), uint8_t((v & 31) * 255 / 31),
+                255};
+    default: // RGB5A3
+        if (v & 0x8000)
+            return {uint8_t((v >> 10 & 31) * 255 / 31), uint8_t((v >> 5 & 31) * 255 / 31),
+                    uint8_t((v & 31) * 255 / 31), 255};
+        return {uint8_t((v >> 8 & 15) * 17), uint8_t((v >> 4 & 15) * 17), uint8_t((v & 15) * 17),
+                uint8_t((v >> 12 & 7) * 255 / 7)};
+    }
+}
+
+std::string stage_name_key(int id) {
+    for (const Stage& st : kStages)
+        if (st.bit == id)
+            return st.name;
+    return "";
+}
+
+// The picks card's top, as a fraction of the screen: under the zoomed grid.
+constexpr float kCardTop = 0.7375f;
+// An icon frame's corner cut, as a fraction of its width (measured).
+constexpr float kFrameCut = 0.07f;
+
+// The players' colours, as Melee's ports.
+const char* const kPortColor[4] = {"#e8463c", "#4a78f0", "#f0c226", "#3dbb5a"};
+
+std::string short_name(const std::string& n) {
+    const size_t hash = n.find('#');
+    return hash == std::string::npos ? n : n.substr(0, hash);
+}
+
+void register_sss_textures();
 
 struct SssOverlay {
     Rml::ElementDocument* document = nullptr;
     bool shown = false;
     std::string last;
     unsigned mask = 0;
+    PcXnSssState st{};
+    uint64_t st_at = 0; // when mnstagesel.c last told it
 
     void show(bool on) {
         if (on && document == nullptr) {
@@ -1613,6 +1726,7 @@ struct SssOverlay {
             if (context == nullptr)
                 return;
             load_fonts();
+            register_sss_textures(); // before anything asks for a ring or a picture
             document = context->LoadDocument(std::string(pc_resources_dir()) + "xeleenet-sss.rml");
             if (document == nullptr) {
                 pc_log_line("xeleenet: could not load xeleenet-sss.rml");
@@ -1623,10 +1737,24 @@ struct SssOverlay {
             return;
         shown = on;
         last.clear();
+        if (!on)
+            st_at = 0;
         if (on)
             document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
         else
             document->Hide();
+    }
+
+    // A card's picture: the icon's, a Random die, or a dashed box while
+    // they choose.
+    static std::string thumb(int cell, bool random, const char* cls) {
+        if (random)
+            return std::string("<div class=\"") + cls + " rnd\">?</div>";
+        if (cell < 0)
+            return std::string("<div class=\"") + cls + " pend\"></div>";
+        if (cell < int(s_thumbs.size()) && !s_thumbs[cell].rgba.empty())
+            return std::string("<img class=\"") + cls + "\" src=\"xnstage://" + std::to_string(cell) + "\"/>";
+        return std::string("<div class=\"") + cls + "\"></div>";
     }
 
     void update() {
@@ -1644,16 +1772,166 @@ struct SssOverlay {
         r += "<div id=\"top\" style=\"transform: scale(" + fmt(scale) + "); left: " + fmt(d.x - 624.f * scale) +
              "px; top: " + fmt(22.f * scale) + "px;\"><div class=\"pill\">" +
              enc(tr("xeleenet.sss.list", {{"list", stage_list_label(mask & kAllStages)}})) + "</div></div>";
-        // Only the host takes everyone back to the CSS (mnstagesel.c).
-        std::string keys = legend_key("stick", "xeleenet.legend.move") + legend_key("a", "xeleenet.legend.pick");
-        if (pc_net_local_player() == 0)
-            keys += legend_key("b", "xeleenet.legend.everyone_back");
-        r += "<div id=\"bottom\" style=\"transform: scale(" + fmt(scale) + "); left: " + fmt(d.x / 2 - 560.f * scale) +
-             "px; top: " + fmt(d.y - 70.f * scale) + "px;\"><div class=\"keys\">" + keys + "</div></div>";
+        const bool picks = st_at != 0 && SDL_GetTicks() - st_at < 500;
+        const int me = pc_net_local_player();
+        PcXnPunchView v;
+        view(&v);
+        std::array<std::string, 4> names;
+        for (int i = 0; i < v.nplayers; i++)
+            if (v.players[i].port >= 0 && v.players[i].port < 4)
+                names[v.players[i].port] = short_name(v.players[i].name);
+        for (int i = 0; i < 4; i++)
+            if (names[i].empty())
+                names[i] = "P" + std::to_string(i + 1);
+        if (picks && !st.final)
+            r += outlines(d);
+        if (picks && !st.final)
+            r += card(d, names, me);
+        if (picks && st.final)
+            r += draw(d, names);
+        // Only the host takes everyone back to the CSS (mnstagesel.c); once
+        // the draw is made, nobody has anything to press.
+        if (!(picks && st.final)) {
+            const bool mine = picks && me >= 0 && me < 4 && st.pick[me] >= 0;
+            std::string keys = legend_key("stick", "xeleenet.legend.move") +
+                               legend_key("a", mine ? "xeleenet.legend.change_pick" : "xeleenet.legend.pick");
+            if (me == 0)
+                keys += legend_key("b", "xeleenet.legend.everyone_back");
+            r += "<div id=\"bottom\" style=\"transform: scale(" + fmt(scale) + "); left: " +
+                 fmt(d.x / 2 - 560.f * scale) + "px; top: " + fmt(d.y - 62.f * scale) +
+                 "px;\"><div class=\"keys\">" + keys + "</div></div>";
+        }
         if (r != last) {
             last = r;
             root->SetInnerRML(r);
         }
+    }
+
+    // Each pick ringed on the grid in its player's colour; a stage two
+    // picked gets two rings, one outside the other.
+    std::string outlines(const Rml::Vector2i d) const {
+        std::string r;
+        const float k = d.y / 720.f;
+        for (int i = 0; i < 4; i++) {
+            if (!(st.ports & (1u << i)) || !st.outline_ok[i])
+                continue;
+            int j = 0;
+            for (int o = 0; o < i; o++)
+                j += (st.ports & (1u << o)) && st.outline_ok[o] && st.pick[o] == st.pick[i];
+            // Just outside the frame, its corner cuts kept parallel (a cut
+            // grows by (sqrt 2 - 1) of the outset).
+            const float pad = (1.5f + 5.f * j) * k, bw = 3.5f * k;
+            const float fw = st.outline[i][2] * d.x;
+            const int x = int(std::lround(st.outline[i][0] * d.x - pad)), y = int(std::lround(st.outline[i][1] * d.y - pad));
+            const int w = int(std::lround(fw + 2 * pad)), h = int(std::lround(st.outline[i][3] * d.y + 2 * pad));
+            const float cut = kFrameCut * fw + 0.4142f * pad;
+            char src[96];
+            std::snprintf(src, sizeof src, "xnring://%d_%d_%.1f_%.1f_%d_%s", w, h, bw, cut, st.outline_bevels[i],
+                          kPortColor[i] + 1);
+            r += "<img class=\"ol\" src=\"" + std::string(src) + "\" style=\"left: " + std::to_string(x) +
+                 "px; top: " + std::to_string(y) + "px; width: " + std::to_string(w) + "px; height: " +
+                 std::to_string(h) + "px;\"/>";
+        }
+        return r;
+    }
+
+    // The picks card (wireframe S2): a strip under the grid, in the room the
+    // zoom leaves (PC_XN_SSS_ZOOM), clear of the hovered stage's name (bottom
+    // left). A tile per player, their colour round the picture, and the pick
+    // timer once it runs.
+    std::string card(const Rml::Vector2i d, const std::array<std::string, 4>& names, int me) const {
+        bool any = st.timer >= 0;
+        for (int i = 0; i < 4; i++)
+            any |= (st.ports & (1u << i)) && st.pick[i] >= 0;
+        if (!any)
+            return "";
+        const float k = d.y / 720.f;
+        int n = 0;
+        for (int i = 0; i < 4; i++)
+            n += (st.ports >> i) & 1;
+        const float cw = 24.f + n * 124.f - 4.f;
+        std::string r = "<div id=\"card\" style=\"transform: scale(" + fmt(k) + "); width: " + fmt(cw) +
+                        "px; left: " + fmt(d.x / 2 - cw * k / 2) + "px; top: " + fmt(kCardTop * d.y) +
+                        "px;\"><div class=\"ctitle\">" +
+                        enc(tr("xeleenet.sss.picks_title"));
+        if (st.timer >= 0) {
+            const int secs = (st.timer + 59) / 60;
+            r += "<div class=\"ctimer" + std::string(secs <= 5 ? " low" : "") + "\">" +
+                 enc(tr("xeleenet.sss.timer", {{"n", secs}})) + "</div>";
+        }
+        r += "</div><div class=\"cdrain\">";
+        if (st.timer >= 0 && st.timer_total > 0)
+            r += "<div style=\"width: " + fmt(100.f * st.timer / st.timer_total) + "%;\"></div>";
+        r += "</div>";
+        int c = 0;
+        for (int i = 0; i < 4; i++) {
+            if (!(st.ports & (1u << i)))
+                continue;
+            const int p = st.pick[i];
+            r += "<div class=\"ctile\" style=\"left: " + fmt(12.f + c++ * 124.f) + "px;\"><div class=\"cpic" +
+                 std::string(p < 0 ? " pend" : "") + "\" style=\"border-color: " +
+                 std::string(p < 0 ? "#6f6852" : kPortColor[i]) + ";\">" +
+                 thumb(p >= 0 && p < 30 ? p : -1, p >= 29, "cthumb") +
+                 (p >= 0 ? "<div class=\"ccheck\"><div></div></div>" : "") + "</div><div class=\"cname\">" +
+                 enc(i == me ? tr("xeleenet.sss.you", {{"name", names[i]}}) : names[i]) + "</div>";
+            if (p < 0)
+                r += "<div class=\"cstage pend\">" + enc(tr("xeleenet.sss.choosing")) + "</div>";
+            else
+                r += "<div class=\"cstage\">" +
+                     enc(st.pick_id[i] >= 0 ? tr(stage_name_key(st.pick_id[i]).c_str())
+                                            : tr("xeleenet.sss.random")) +
+                     "</div>";
+            r += "</div>";
+        }
+        return r + "</div>";
+    }
+
+    // The draw (wireframe S3, S4): the cards side by side, the highlight
+    // running across them, then resting on the winner with the rest faded.
+    // When every card is the same stage, just that one.
+    std::string draw(const Rml::Vector2i d, const std::array<std::string, 4>& names) const {
+        const float k = d.y / 720.f;
+        const bool same = st.draw == 0;
+        const bool landed = st.t >= st.draw;
+        std::vector<int> ports;
+        for (int i = 0; i < 4; i++)
+            if ((st.ports & (1u << i)) && (!same || i == st.chosen))
+                ports.push_back(i);
+        const int n = int(ports.size());
+        const float cw = 150.f, gap = 18.f;
+        const float pw = std::max(380.f, n * cw + (n - 1) * gap + 56.f), ph = 300.f;
+        const float padx = (pw - n * cw - (n - 1) * gap) / 2;
+        std::string r = "<div id=\"dim\"></div><div id=\"draw\" style=\"transform: scale(" + fmt(k) +
+                        "); width: " + fmt(pw) + "px; left: " + fmt(d.x / 2 - pw * k / 2) +
+                        "px; top: " + fmt(d.y / 2 - ph * k / 2) + "px;\"><div class=\"dtitle\">" +
+                        enc(landed ? tr("xeleenet.sss.landed") : tr("xeleenet.sss.drawing", {{"n", n}})) +
+                        "</div><div class=\"dcards\">";
+        for (int c = 0; c < n; c++) {
+            const int i = ports[c];
+            const bool lit = st.t >= 0 && st.lit == i;
+            const int cell = st.cell[i];
+            std::string tag;
+            if (st.timed_out & (1u << i))
+                tag = "<div class=\"dtag\">" + enc(tr("xeleenet.sss.time_tag")) + "</div>";
+            else if (st.random & (1u << i))
+                tag = "<div class=\"dtag\">" + enc(tr("xeleenet.sss.random_tag")) + "</div>";
+            r += "<div class=\"dcard" + std::string(lit ? " lit" : "") +
+                 std::string(landed && !lit ? " out" : "") + "\" style=\"left: " + fmt(padx + c * (cw + gap)) +
+                 "px;\">" + thumb(cell, false, "dthumb") + tag + "<div class=\"dstage\">" +
+                 enc(st.cell_id[i] >= 0 ? tr(stage_name_key(st.cell_id[i]).c_str()) : "") +
+                 "</div><div class=\"dwho\" style=\"background-color: " + kPortColor[i] + ";\">" +
+                 enc(same ? tr("xeleenet.sss.everyone") : names[i]) + "</div></div>";
+        }
+        r += "</div>";
+        std::string caption;
+        if (landed && st.chosen >= 0 && st.chosen < 4) {
+            const std::string stage =
+                st.cell_id[st.chosen] >= 0 ? tr(stage_name_key(st.cell_id[st.chosen]).c_str()) : "";
+            caption = same ? tr("xeleenet.sss.whose_all", {{"stage", stage}})
+                           : tr("xeleenet.sss.whose", {{"stage", stage}, {"name", names[st.chosen]}});
+        }
+        r += "<div class=\"dcap\">" + enc(caption) + "</div></div>";
+        return r;
     }
 };
 
@@ -1871,3 +2149,61 @@ extern "C" void pc_xn_sss_frame(uint32_t mask) {
 }
 
 extern "C" void pc_xn_sss_show(bool show) { s_sss.show(show); }
+
+extern "C" void pc_xn_sss_picks(const PcXnSssState* state) {
+    s_sss.st = *state;
+    s_sss.st_at = SDL_GetTicks();
+}
+
+extern "C" bool pc_xn_sss_has_thumb(int cell) {
+    return cell >= 0 && cell < int(s_thumbs.size()) && !s_thumbs[cell].rgba.empty();
+}
+
+namespace {
+void register_sss_textures() {
+    static bool registered;
+    if (!registered) {
+        registered = true;
+        aurora::rmlui::register_texture_provider("xnring", ring_texture);
+        aurora::rmlui::register_texture_provider("xnstage", [](std::string_view source)
+                                                     -> std::optional<aurora::rmlui::RuntimeTexture> {
+            const size_t at = source.find("://");
+            if (at == std::string_view::npos)
+                return std::nullopt;
+            const int c = std::atoi(std::string(source.substr(at + 3)).c_str());
+            if (c < 0 || c >= int(s_thumbs.size()) || s_thumbs[c].rgba.empty())
+                return std::nullopt;
+            aurora::rmlui::RuntimeTexture t;
+            t.width = s_thumbs[c].w;
+            t.height = s_thumbs[c].h;
+            t.rgba8 = std::as_bytes(std::span(s_thumbs[c].rgba));
+            t.generateMipmaps = true;
+            return t;
+        });
+    }
+}
+} // namespace
+
+extern "C" void pc_xn_sss_thumb(int cell, const void* c8, int w, int h, const void* tlut, int tlut_fmt, int entries) {
+    if (cell < 0 || cell >= int(s_thumbs.size()) || c8 == nullptr || tlut == nullptr || w <= 0 || h <= 0 ||
+        w % 8 != 0 || h % 4 != 0 || entries <= 0)
+        return;
+    register_sss_textures();
+    // C8: 8x4 blocks of palette indices, row by row.
+    const auto* idx = static_cast<const uint8_t*>(c8);
+    const auto* lut = static_cast<const uint8_t*>(tlut);
+    Thumb& t = s_thumbs[cell];
+    t.w = uint32_t(w), t.h = uint32_t(h);
+    t.rgba.assign(size_t(w) * h * 4, 0);
+    size_t at = 0;
+    for (int by = 0; by < h; by += 4)
+        for (int bx = 0; bx < w; bx += 8)
+            for (int y = 0; y < 4; y++)
+                for (int x = 0; x < 8; x++) {
+                    const int e = idx[at++];
+                    if (e >= entries)
+                        continue;
+                    const auto px = tlut_rgba(lut + 2 * e, tlut_fmt);
+                    std::memcpy(&t.rgba[(size_t(by + y) * w + bx + x) * 4], px.data(), 4);
+                }
+}

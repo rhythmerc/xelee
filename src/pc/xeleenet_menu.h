@@ -82,6 +82,8 @@ void pc_xn_banner_show(bool show);
 /* XeleeNet's CSS draws smaller about the screen's centre by this (its camera
  * pulled back, mncharsel.c), for the notice slot and the legend's room. */
 #define PC_XN_CSS_ZOOM 0.84f
+/* And the stage select, for the picks card's room under the grid (P5). */
+#define PC_XN_SSS_ZOOM 0.88f
 
 /* XeleeNet's CSS Ready (mncharsel.c), once a frame, for the overlay over it:
  * the READY count, the notice slot, the doors' tags and the legend. */
@@ -111,6 +113,32 @@ void pc_xn_menu_hide_lobby(const char* code);
  * out. */
 void pc_xn_sss_frame(uint32_t mask);
 void pc_xn_sss_show(bool show);
+
+/* The stage select's picks (P5 of docs/xeleenet-ready-plan.md), once a frame
+ * from mnstagesel.c, for the picks card, the outlines on the grid and the
+ * draw. Cells index the stage select's table, 30 being Random; ids are the
+ * cells' Random Stage Switch ids, which name the stages (kStages). */
+typedef struct PcXnSssState {
+    uint8_t ports;          /* the seated players' port bits */
+    int8_t pick[4];         /* each one's pick (a cell or 30), -1 still choosing */
+    int8_t pick_id[4];      /* its stage's id, -1 for Random */
+    bool outline_ok[4];     /* the pick's icon frame on screen: x, y, w, h as fractions */
+    float outline[4][4];
+    uint8_t outline_bevels[4]; /* which of its corners are cut: bit 0 top left, then clockwise */
+    int timer, timer_total; /* frames left to pick, -1 before the first pick */
+    /* The draw, once the host's FINAL is in: */
+    bool final;
+    int8_t cell[4], cell_id[4]; /* what each card shows, Random drawn */
+    uint8_t random, timed_out;  /* cards that were Random, and of those who ran out of time */
+    int chosen;                 /* the port whose card won */
+    int t, draw, rest;          /* frames into the draw (<0 before), its length, the rest after */
+    int lit;                    /* the port whose card is lit */
+} PcXnSssState;
+void pc_xn_sss_picks(const PcXnSssState* state);
+/* An icon's picture for the cards (GX C8 with its palette, as the stage
+ * select draws it), decoded once and served to RmlUi as xnstage://<cell>. */
+void pc_xn_sss_thumb(int cell, const void* c8, int w, int h, const void* tlut, int tlut_fmt, int entries);
+bool pc_xn_sss_has_thumb(int cell);
 
 #ifdef __cplusplus
 }

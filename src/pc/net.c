@@ -3010,10 +3010,9 @@ void pc_net_port_leave(int port, int32_t last) {
         net.frame);
 }
 
-void pc_net_leave_quietly(int32_t last, int ms) {
+bool pc_net_settle(int32_t last, int ms) {
     if (!net.active || s_slippi_on) {
-        pc_net_disconnect();
-        return;
+        return false;
     }
     const uint64_t t0 = SDL_GetTicksNS();
     uint64_t last_send = 0;
@@ -3045,8 +3044,17 @@ void pc_net_leave_quietly(int32_t last, int ms) {
         }
         SDL_DelayNS(500000);
     }
-    pc_log_line("net: leaving after frame %d; every peer %s it after %.0f ms", last,
+    pc_log_line("net: settled through frame %d: every peer %s it after %.0f ms", last,
         all ? "holds" : "may not hold", (SDL_GetTicksNS() - t0) / 1e6);
+    return all;
+}
+
+void pc_net_leave_quietly(int32_t last, int ms) {
+    if (!net.active || s_slippi_on) {
+        pc_net_disconnect();
+        return;
+    }
+    pc_net_settle(last, ms);
     sock_t sock = session_stop(true);
     if (sock != SOCK_INVALID) {
         sock_close(sock);

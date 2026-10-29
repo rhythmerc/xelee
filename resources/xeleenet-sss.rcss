@@ -14,3 +14,61 @@ div, span { display: block; }
 #bottom { position: absolute; width: 1120px; height: 46px; text-align: center; transform-origin: 0 0; }
 #bottom .keys { display: inline-block; height: 46px; padding: 0 14px; border: 1px #f0c22650; border-radius: 23px;
                 background-color: #0c0b08d8; }
+
+/* P5: each pick ringed on the grid in its player's colour. */
+.ol { position: absolute; } /* a ring texture, xnring:// (xeleenet_menu.cpp) */
+
+/* The picks card, laid out at 720 tall and scaled from its top left: a
+ * strip of tiles, one per player. */
+#card { position: absolute; height: 118px; transform-origin: 0 0;
+        border: 2px #f0c226; border-radius: 10px; background-color: #0c0b16f4; }
+#card .ctitle { position: absolute; left: 12px; right: 12px; top: 4px; height: 16px; font-size: 11px; font-weight: 800;
+                letter-spacing: 2px; color: #c9b77c; line-height: 16px; }
+#card .ctimer { position: absolute; right: 0; top: -1px; font-size: 14px; font-weight: 900; letter-spacing: 0;
+                color: #fff0b0; }
+#card .ctimer.low { color: #ff8a7a; }
+#card .cdrain { position: absolute; left: 12px; right: 12px; top: 21px; height: 2px; }
+#card .cdrain div { height: 2px; background-color: #f0c226; }
+/* Wide enough for a 15-character name. */
+#card .ctile { position: absolute; top: 33px; width: 120px; height: 80px; }
+#card .cpic { position: absolute; left: 30px; top: 0; width: 54px; height: 48px; border: 3px #ffffff;
+              border-radius: 5px; }
+#card .cpic.pend { border-width: 1px; }
+#card .cthumb { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border-radius: 3px;
+                background-color: #24233a; }
+#card .cpic.pend .cthumb { background-color: #00000000; }
+#card .cthumb.rnd, #draw .dthumb.rnd { font-weight: 900; text-align: center; color: #f0e4b8; background-color: #3a2f6a; }
+#card .cthumb.rnd { font-size: 22px; line-height: 40px; }
+/* The tick on the picture's corner: two sides of a box, turned, in a disc. */
+#card .ccheck { position: absolute; right: -7px; top: -6px; width: 16px; height: 16px; border-radius: 8px;
+                background-color: #2f9e4a; }
+#card .ccheck div { position: absolute; left: 5px; top: 2px; width: 4px; height: 8px; transform: rotate(45deg);
+                    border-right: 2px #ffffff; border-bottom: 2px #ffffff; }
+#card .cname { position: absolute; left: 0; right: 0; top: 50px; height: 14px; text-align: center; font-size: 11px;
+               font-weight: 800; line-height: 14px; color: #fff8e0; overflow: hidden; white-space: nowrap; }
+#card .cstage { position: absolute; left: -2px; right: -2px; top: 63px; height: 13px; text-align: center;
+                font-size: 10px; line-height: 13px; color: #d9d2bb; overflow: hidden; white-space: nowrap; }
+#card .cstage.pend { color: #9aa1ad; } /* no italic face is loaded */
+
+/* The draw: the screen dimmed, the cards side by side in a panel. */
+#dim { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #05060f8c; }
+#draw { position: absolute; height: 300px; transform-origin: 0 0; border: 2px #f0c226; border-radius: 14px;
+        background-color: #0c0b16f8; }
+#draw .dtitle { position: absolute; left: 0; right: 0; top: 18px; text-align: center; font-size: 13px; font-weight: 800;
+                letter-spacing: 2px; color: #c9b77c; }
+#draw .dcard { position: absolute; top: 54px; width: 150px; height: 190px; }
+#draw .dcard.out { opacity: 0.28; }
+#draw .dthumb { position: absolute; left: 0; top: 0; width: 150px; height: 131px; border-radius: 8px;
+                border: 4px #00000000; background-color: #24233a; }
+#draw .dthumb.rnd { font-size: 60px; line-height: 123px; }
+#draw .dcard.lit .dthumb { border: 4px #fff4c4; }
+#draw .dtag { position: absolute; left: 8px; top: 8px; height: 18px; padding: 0 8px; border-radius: 9px;
+              font-size: 10px; font-weight: 800; line-height: 18px; color: #fff8e0; background-color: #000000b0; }
+#draw .dstage { position: absolute; left: -10px; right: -10px; top: 138px; text-align: center; font-size: 14px;
+                font-weight: 800; color: #fff8e0; white-space: nowrap; }
+/* Wide enough for a 15-character name. */
+#draw .dwho { position: absolute; left: 3px; width: 144px; top: 162px; height: 20px; border-radius: 10px;
+              text-align: center; font-size: 11px; font-weight: 800; line-height: 20px; color: #ffffff;
+              overflow: hidden; white-space: nowrap; }
+#draw .dcap { position: absolute; left: 0; right: 0; top: 258px; text-align: center; font-size: 16px; font-weight: 900;
+              color: #ffe066; }

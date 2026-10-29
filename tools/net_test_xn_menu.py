@@ -34,6 +34,8 @@ KEYS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # xeleenet_menu.cpp kCodeKeys
 COLS = 9                                   # its kKeysAcross
 TO_ONLINE = [("Down", 7), ("Down", 7), ("X", 7)]  # main menu > Online Mode
 STEP = 0.35
+# Players' names as people pick them; one at the service's cap (12).
+NAMES = ["RHYTHM", "PIXEL", "WAVEDASH KID", "KOOPA"]
 
 
 def shot(inst, shots, name):
@@ -207,6 +209,128 @@ def sss_host_b(insts, shots):
     return True
 
 
+# The stage select's cells (mnstagesel.c's table) on the Competitive list.
+BF, FD, DL, PS = 24, 25, 26, 18  # Pokemon Stadium: the upper grid, straight up from Dream Land
+
+
+def over(inst):
+    """The listed cell the cursor was last over (mnstagesel.c logs it)."""
+    m = nt.re.findall(r"sss: over cell (\d+)", inst.text())
+    return int(m[-1]) if m else -1
+
+
+def steer(inst, key, cell, tries=40):
+    """Tap the stick toward `key` until the cursor is over `cell`. The cursor
+    starts under the bottom row: straight up is Battlefield, and Final
+    Destination and Dream Land follow to its right."""
+    for _ in range(tries):
+        if over(inst) == cell:
+            return True
+        nt.press((inst,), key, 3, 0.15)
+    print(f"[{inst.name}] FAIL: the cursor never reached cell {cell} (over {over(inst)})")
+    return False
+
+
+def finals(inst):
+    """Each FINAL line's picks and cards, as this player logged it."""
+    return nt.re.findall(r"sss: final(?: from the host)?: (picks .*?, cards [-\d ]+), timed out (\w+), "
+                         r"P(\d)'s card", inst.text())
+
+
+def sss_picks(insts, shots, scenario):
+    """The picks card, the draw and the timer (P5 of
+    docs/xeleenet-ready-plan.md). sss-same: everyone picks Battlefield and
+    there's no draw. sss-repick: P2 changes its pick twice before the last
+    pick, then once more racing P3's (P2 has added delay); everyone draws from
+    the same FINAL. sss-timeout: P3 never picks, and the host ends the picking
+    15 s after the first pick with P3 as Random."""
+    host, b = insts[0], insts[1]
+    c = insts[2] if len(insts) > 2 else None
+    time.sleep(1.0)
+    if scenario == "sss-same":
+        for i in insts:
+            if not steer(i, "Up", BF):
+                return False
+            nt.press((i,), "X", 7, 0.3)
+        time.sleep(0.6)
+        shot(host, shots, "10c-sss-draw-same")
+    elif scenario == "sss-repick":
+        if c is None:
+            print("FAIL: sss-repick wants three players")
+            return False
+        # P2: Battlefield, then Final Destination, then Dream Land.
+        if not steer(b, "Up", BF):
+            return False
+        nt.press((b,), "X", 7, 0.5)
+        shot(b, shots, "10c-sss-card-p2")
+        for cell in (FD, DL):
+            if not steer(b, "Right", cell):
+                return False
+            nt.press((b,), "X", 7, 0.5)
+        # The host picks Battlefield; then P3's Random and P2's last change
+        # (back to Final Destination) go in together.
+        if not steer(host, "Up", BF):
+            return False
+        nt.press((host,), "X", 7, 0.8)
+        shot(host, shots, "10d-sss-card-host")
+        if not steer(b, "Left", FD):
+            return False
+        b.key("X 120")
+        c.key("Return 120")
+        time.sleep(0.9)
+        shot(host, shots, "10e-sss-draw")
+        time.sleep(1.1)
+        shot(host, shots, "10f-sss-landed")
+    elif scenario == "sss-timeout":
+        if c is None:
+            print("FAIL: sss-timeout wants three players")
+            return False
+        for i in (host, b):
+            if not steer(i, "Up", BF):
+                return False
+        nt.press((host,), "X", 7, 0.2)
+        t0 = time.time()
+        # A frame of the upper grid's shape: along to Dream Land, then up.
+        if not all(steer(b, key, cell) for key, cell in (("Right", FD), ("Right", DL), ("Up", PS))):
+            return False
+        nt.press((b,), "X", 7, 0.5)
+        time.sleep(4)
+        shot(c, shots, "10c-sss-card-timer")
+        if not host.wait_log(r"sss: final: ", 30):
+            print("FAIL: the pick timer never ended the picking")
+            return False
+        took = time.time() - t0
+        print(f"net_test_xn_menu: the timer ended the picking {took:.1f} s after the first pick", flush=True)
+        if not 13 <= took <= 19:
+            print("FAIL: not 15 s after the first pick")
+            return False
+    if not all(i.wait_log(r"sss: resolved cell", 40) for i in insts):
+        print("FAIL: the SSS never resolved a stage everywhere")
+        return False
+    got = {i.name: finals(i)[-1:] for i in insts}
+    print(f"net_test_xn_menu: FINAL {got}", flush=True)
+    if len({tuple(v) for v in got.values()}) != 1 or not got[host.name]:
+        print("FAIL: the players drew from different FINALs")
+        return False
+    picks, timed_out, chosen = got[host.name][0]
+    if scenario == "sss-same":
+        if "(one stage: no draw)" not in host.text() or f"cards {BF} {BF}" not in picks:
+            print("FAIL: everyone picked Battlefield, but there was a draw")
+            return False
+    elif scenario == "sss-repick":
+        p2 = int(nt.re.search(r"P2=(-?\d+)", picks).group(1))
+        if p2 not in (FD, DL):
+            print(f"FAIL: P2's FINAL pick {p2} is neither its last change nor the one before")
+            return False
+        print(f"net_test_xn_menu: P2's pick in FINAL {p2} ({'the race won' if p2 == FD else 'the race lost'})",
+              flush=True)
+    elif scenario == "sss-timeout":
+        if int(timed_out, 16) != 4 or "P3=30" not in picks:
+            print("FAIL: P3 didn't count as Random after the timer")
+            return False
+    return True
+
+
 def menu_loads(inst):
     return len(nt.re.findall(nt.SCENE_FILE["menu"], inst.text()))
 
@@ -323,12 +447,14 @@ def run(args):
         os.makedirs(ident)
         env = {
             "MELEE_XN_URL": args.url,
-            "MELEE_XN_NAME": f"PLAYER {k + 1}",
+            "MELEE_XN_NAME": NAMES[k],
             "MELEE_XN_IDENTITY": ident,
             "MELEE_NET_EXIT_AFTER_FRAMES": str(int(args.seconds * 60) + 30000),
         }
         if args.block:
             env["MELEE_NET_SIM_BLOCK"] = args.block
+        if args.scenario == "sss-repick" and k == 1:
+            env["MELEE_NET_SIM_DELAY_MS"] = "80"  # P2's last change races P3's pick
         insts.append(nt.Instance(name, args.exe, args.disc, args.work, ports[k], 0, env, True))
     ok = False
     try:
@@ -404,7 +530,10 @@ def run(args):
         shot(host, shots, "10-sss")
         if args.scenario == "sss-host-b" and not sss_host_b(insts, shots):
             return False
-        if not nt.press_until(insts, "Return", 9, r"sss: resolved cell", tries=8, each=6.0):
+        if args.scenario.startswith("sss-") and args.scenario != "sss-host-b":
+            if not sss_picks(insts, shots, args.scenario):
+                return False
+        elif not nt.press_until(insts, "Return", 9, r"sss: resolved cell", tries=8, each=6.0):
             print("FAIL: the SSS never resolved a stage everywhere")
             return False
         cells = {i.name: nt.re.findall(r"sss: resolved cell (\d+)", i.text())[-1:] for i in insts}
@@ -442,11 +571,16 @@ def main():
     ap.add_argument("--players", type=int, choices=(2, 3, 4), default=3)
     ap.add_argument("--seconds", type=float, default=40, help="of match after it loads")
     ap.add_argument("--block", default="")
-    ap.add_argument("--scenario", default="", choices=("", "sss-host-b", "ready", "leave-guest", "leave-host"),
+    ap.add_argument("--scenario", default="",
+                    choices=("", "sss-host-b", "ready", "leave-guest", "leave-host", "sss-repick", "sss-timeout",
+                             "sss-same"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
-                         "leave-host: the host holds B and closes the lobby")
+                         "leave-host: the host holds B and closes the lobby; "
+                         "sss-repick: picks change, one racing the last pick; "
+                         "sss-timeout: P3 never picks, the 15 s timer ends it; "
+                         "sss-same: everyone picks Battlefield, no draw")
     ap.add_argument("--url", default="", help="a running service instead of a local wrangler dev")
     ap.add_argument("--exe", default=os.path.join(HERE, "..", "build", "linux", "melee"))
     ap.add_argument("--disc", default=os.path.expanduser(

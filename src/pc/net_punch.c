@@ -355,7 +355,13 @@ static void begin_session(uint32_t seed) {
             ip_text(l->ip, l->port));
     }
     /* The first session takes our socket; a later one (someone joined) takes
-     * it back from the running session, with no goodbye: every peer restarts. */
+     * it back from the running session, with no goodbye: every peer restarts.
+     * First every peer must hold our input up to the switch: once we stop,
+     * nothing resends what was lost, and a peer a frame short waits there
+     * until its silence timeout (an 80 ms one-way delay showed it). */
+    if (s_sock == SOCK_INVALID && pc_net_active()) {
+        pc_net_settle(pc_net_frame(), 1500); /* the switch frame, host or guest */
+    }
     sock_t sock = s_sock != SOCK_INVALID ? s_sock : (sock_t)pc_net_release_socket();
     s_sock = SOCK_INVALID;
     if (sock == SOCK_INVALID || !pc_net_connect_links((intptr_t)sock, links, n, s_local, seed)) {

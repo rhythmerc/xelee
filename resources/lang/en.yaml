@@ -311,6 +311,7 @@ xeleenet:
     confirm: OK                      # A on the preset bar: on to the rules
     move: Move
     pick: Pick
+    change_pick: Change pick           # the stage select, once you've picked
     everyone_back: Everyone back to CSS   # the stage select, the host's only
     select: Select
     open: Open lobby
@@ -334,6 +335,19 @@ xeleenet:
   # The stage select's overlay: the lobby's stage list, top right.
   sss:
     list: "Lobby list: {list}"
+    # The picks card, once someone has picked (P5), and the draw after.
+    picks_title: STAGE PICKS
+    timer: "{n}s"
+    you: "{name} (you)"
+    choosing: "Choosing…"
+    random: Random
+    drawing: "DRAWING ONE OF {n} PICKS"
+    landed: STAGE
+    random_tag: RANDOM
+    time_tag: "TIME UP · RANDOM"
+    everyone: EVERYONE
+    whose: "{stage} · {name}'s pick"
+    whose_all: "{stage} · everyone's pick"
 
   # The CSS (the lobby): the READY count, the notices under the banner, the
   # doors' tags.

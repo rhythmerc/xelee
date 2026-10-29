@@ -510,6 +510,7 @@ bool pc_xn_start(const char* url, const PcNetIdentity* id, const char* name, con
         s_args.url[--ul] = '\0';
     }
     s_args.id = *id;
+    /* TODO: 15, with the service's cap (tools/xeleenet/src/common.js playerName). */
     snprintf(s_args.name, sizeof s_args.name, "%.12s", name);
     snprintf(s_args.code, sizeof s_args.code, "%s", code != NULL ? code : "");
     s_args.seats = seats;

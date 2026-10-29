@@ -169,6 +169,7 @@ function checkName(value, max, what, env) {
   return text;
 }
 
+// TODO: make the cap 15; the stage select's draw already fits 15 (xeleenet-sss.rcss).
 export const playerName = (v, env) => checkName(v, 12, "Name", env);
 export const lobbyName = (v, env) => checkName(v, 20, "Lobby name", env);
 
