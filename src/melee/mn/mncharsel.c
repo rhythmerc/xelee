@@ -3913,8 +3913,9 @@ void fn_80262F44(HSD_GObj* gobj)
     }
 
 #ifdef TARGET_PC
-    if (gmOnline_SlippiFlow()) {
-        /* Slippi replaces the READY TO FIGHT banner with its own prompt. */
+    if (gmOnline_SlippiFlow() || gmOnline_XnFlow()) {
+        /* Slippi replaces the READY TO FIGHT banner with its own prompt;
+         * XeleeNet with each player's Ready (cssXnReadyFrame). */
         HSD_JObjSetFlagsAll(jobj, JOBJ_HIDDEN);
     }
 #endif
@@ -5555,6 +5556,112 @@ s32 mnCharSel_802640A0(void)
     return lbAudioAx_80023F28(gmMainLib_8015ECB0());
 }
 
+#ifdef TARGET_PC
+/* XeleeNet's Ready (docs/xeleenet-ready-plan.md P2): picking no longer starts
+ * anything. Each player's START on their own pick marks them Ready; B takes
+ * it back. Once every human door is Ready (and Melee's own check passes: all
+ * picked, the teams valid), a countdown runs and the CSS goes on as START
+ * did. Read from the pads every player shares, on the same frames, so every
+ * player keeps the same Ready without a message. */
+#define CSS_XN_COUNTDOWN 120 /* frames: 2 s */
+#define CSS_XN_WAITING 600   /* frames everyone else has been Ready */
+static u8 css_xn_ready;                       /* port bits */
+static u8 css_xn_icon[4], css_xn_costume[4];  /* the pick Ready was given on */
+static int css_xn_count = -1;                 /* frames to go; -1: none */
+static int css_xn_others;                     /* frames all but one Ready */
+
+static bool cssXnPicked(int i)
+{
+    return mnCharSel_803F0DFC.doors[i].p_kind == 0 &&
+           mnCharSel_803F0DFC.doors[i].sel_icon < 0x19 &&
+           mnCharSel_804A0BC0[i] != NULL && mnCharSel_804A0BC0[i]->x5 != 1;
+}
+
+static void cssXnReadyReset(void)
+{
+    css_xn_ready = 0;
+    css_xn_count = -1;
+    css_xn_others = 0;
+}
+
+/* Before the procs read the pads (Scene_OnFrame): START and a Ready player's
+ * B are taken out of the pads, so the CSS never starts on START and a B that
+ * takes Ready back doesn't also un-pick. */
+static void cssXnReadyFrame(void)
+{
+    u8 humans = 0;
+    int i;
+    for (i = 0; i < 4 && i < (s32) mnCharSel_804D6CF5; i++) {
+        HSD_PadStatus* pad = &HSD_PadCopyStatus[i];
+        const u8 bit = 1 << i;
+        if (mnCharSel_803F0DFC.doors[i].p_kind != 0) {
+            css_xn_ready &= ~bit;
+            continue;
+        }
+        humans |= bit;
+        if ((css_xn_ready & bit) &&
+            (!cssXnPicked(i) || mnCharSel_803F0DFC.doors[i].sel_icon != css_xn_icon[i] ||
+             mnCharSel_803F0DFC.doors[i].costume != css_xn_costume[i]))
+        {
+            css_xn_ready &= ~bit;
+            pc_log_line("css: P%d not ready (the pick changed)", i + 1);
+        }
+        if ((pad->trigger & HSD_PAD_B) && (css_xn_ready & bit)) {
+            pad->trigger &= ~HSD_PAD_B;
+            css_xn_ready &= ~bit;
+            sfxBack();
+            pc_log_line("css: P%d not ready", i + 1);
+        }
+        if (pad->trigger & HSD_PAD_START) {
+            pad->trigger &= ~HSD_PAD_START;
+            if (css_xn_ready & bit) {
+                /* Ready already: START again changes nothing. */
+            } else if (cssXnPicked(i)) {
+                css_xn_ready |= bit;
+                css_xn_icon[i] = mnCharSel_803F0DFC.doors[i].sel_icon;
+                css_xn_costume[i] = mnCharSel_803F0DFC.doors[i].costume;
+                sfxForward();
+                pc_log_line("css: P%d ready", i + 1);
+            } else {
+                lbAudioAx_80024030(3);
+                pc_log_line("css: P%d START with no pick (icon %d, hand %d, kind %d)", i + 1,
+                            mnCharSel_803F0DFC.doors[i].sel_icon,
+                            mnCharSel_804A0BC0[i] != NULL ? mnCharSel_804A0BC0[i]->x5 : -1,
+                            mnCharSel_803F0DFC.doors[i].p_kind);
+            }
+        }
+    }
+    /* mnCharSel_804D6CF7: Melee's READY TO FIGHT test (fn_80262F44), last
+     * frame's: everyone picked and the teams valid. */
+    if (humans != 0 && (css_xn_ready & humans) == humans && mnCharSel_804D6CF7 != 0) {
+        if (css_xn_count < 0) {
+            css_xn_count = CSS_XN_COUNTDOWN;
+            pc_log_line("css: everyone ready; the stage select in %d frames", CSS_XN_COUNTDOWN);
+        } else if (css_xn_count > 0) {
+            css_xn_count--;
+        }
+        if (css_xn_count == 0 && mnCharSel_804D6CF2 == 0) {
+            mnCharSel_804D6CF6 = 1; /* as START did (fn_80262F44) */
+            mnCharSel_804D6CF2 = 0xFF;
+        }
+    } else {
+        if (css_xn_count > 0) {
+            pc_log_line("css: the countdown stopped");
+        }
+        css_xn_count = -1;
+    }
+    {
+        /* All but one Ready: how long the last one has been waited on. */
+        u8 left = humans & ~css_xn_ready;
+        bool one = humans != 0 && left != 0 && (left & (left - 1)) == 0 && humans != left;
+        css_xn_others = one ? css_xn_others + 1 : 0;
+        if (css_xn_others == CSS_XN_WAITING) {
+            pc_log_line("css: everyone is waiting on one player (%02x)", left);
+        }
+    }
+}
+#endif
+
 void mnCharSel_Scene_OnEnter(void* arg0)
 {
     PAD_STACK(8);
@@ -5562,6 +5669,9 @@ void mnCharSel_Scene_OnEnter(void* arg0)
     lbCardNew_AllocWorkArea();
     lbCardGame_LoadArchive(0);
     mnCharSel_804D6CB0 = (CSSData*) arg0;
+#ifdef TARGET_PC
+    cssXnReadyReset(); /* every visit, a reload's included, starts unready */
+#endif
 
     mnCharSel_804D6CF0 = mnCharSel_804D6CB0->unk_0x0 - 1;
 
@@ -5850,6 +5960,9 @@ void mnCharSel_Scene_OnFrame(void)
     if (gmOnline_XnCssFrame()) {
         gm_801A4B60(); /* XeleeNet: a new player set; the CSS reloads */
         return;
+    }
+    if (gmOnline_XnFlow()) {
+        cssXnReadyFrame();
     }
     {
         static bool dumped;

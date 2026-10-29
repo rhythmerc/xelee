@@ -102,7 +102,17 @@ Test: in a 3-player `net_test_xn_menu` run, one guest presses A on an off-list
 stage (no pick), and a guest's B does nothing. The host's B returns everyone to
 the CSS, and the run goes on to a match.
 
-### P2 · Ready on the CSS
+### P2 · Ready on the CSS — done 2026-10-28
+
+Built in mncharsel.c (`cssXnReadyFrame`, from the CSS frame hook before the
+cursor procs) rather than gmonlinemode.c: the state sits beside the doors it
+reads. `net_test_xn_menu.py --scenario ready` passes; the default 3-player run
+readies everyone. Seen once, not reproduced: a 3-player run whose host hung
+entering the stage select on "Can't load SFX file; bank(id=2) buffer
+overflow" and an ARAM transfer stuck past 5 s (log kept as
+build/xn3p-hang-a.log).
+
+The plan as written:
 
 1. **State:** `xn_ready` (a port mask), `xn_ready_since[4]`, `xn_all_ready_at`
    (frame) and `xn_hold_b[4]` (frames held), all in gmonlinemode.c.

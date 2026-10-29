@@ -92,8 +92,8 @@ def type_code(inst, code):
 
 
 def drive_css(insts):
-    """nt.drive_css for N: every hand sweeps a row of portraits, then the
-    host's Start."""
+    """nt.drive_css for N: every hand sweeps a row of portraits, then every
+    player's START (Ready)."""
     settle = nt.settle
     settle(insts, nt.MENU_SETTLE)
     for row, down in enumerate(nt.CSS_ROWS):
@@ -103,11 +103,59 @@ def drive_css(insts):
         for _ in range(nt.CSS_COLS):
             nt.press(insts, "X", 7, 0.5)
             nt.press(insts, "Right", nt.CSS_STEP, 0.4)
-        if nt.press_until(insts, "Return", 9, nt.SCENE_FILE["sss"], tries=2, each=8.0,
-                          on=(insts[0],)):
+        # Every player readies with START (the CSS's Ready); the stage select
+        # follows a 2 s countdown.
+        if nt.press_until(insts, "Return", 9, nt.SCENE_FILE["sss"], tries=2, each=8.0):
             return True
         print(f"net_test_xn_menu: no pick on CSS row {row}", flush=True)
     return False
+
+
+def sss_loads(inst):
+    return len(nt.re.findall(nt.SCENE_FILE["sss"], inst.text()))
+
+
+def ready_scenario(insts, shots):
+    """Ready on the CSS (P2 of docs/xeleenet-ready-plan.md): one player's
+    START doesn't start; everyone's starts a countdown; a B in it stops it;
+    the stage select follows everyone's START, on every player."""
+    host, guest = insts[0], insts[1]
+    nt.settle(insts, nt.MENU_SETTLE)
+    for down in nt.CSS_ROWS[:2]:  # the first row's sweep often misses (drive_css)
+        nt.press(insts, "Left+Up", nt.CSS_PIN, 1.2)
+        nt.press(insts, "Down", down, 0.8)
+        nt.press(insts, "Right", nt.CSS_FIRST, 0.6)
+        for _ in range(nt.CSS_COLS):  # every portrait of the row: the last pick stands
+            nt.press(insts, "X", 7, 0.5)
+            nt.press(insts, "Right", nt.CSS_STEP, 0.4)
+    before = [sss_loads(i) for i in insts]
+    nt.press((host,), "Return", 9, 4.0)
+    if [sss_loads(i) for i in insts] != before:
+        print("FAIL: one player's START left the CSS")
+        return False
+    if not all("css: P1 ready" in i.text() for i in insts):
+        print("FAIL: not every player saw P1 ready")
+        return False
+    print("net_test_xn_menu: the host alone ready, the CSS stayed", flush=True)
+    shot(host, shots, "9b-css-host-ready")
+    nt.press((guest,), "Return", 9, 0.5)
+    nt.press((guest,), "Z", 9, 3.5)  # inside the 2 s countdown
+    if [sss_loads(i) for i in insts] != before:
+        print("FAIL: B in the countdown didn't stop it")
+        return False
+    if not all("css: the countdown stopped" in i.text() for i in insts):
+        print("FAIL: not every player saw the countdown stop")
+        return False
+    print("net_test_xn_menu: B stopped the countdown", flush=True)
+    nt.press((guest,), "Return", 9, 0.5)
+    deadline = time.time() + 15
+    while time.time() < deadline and not all(sss_loads(i) > n for i, n in zip(insts, before)):
+        time.sleep(0.5)
+    if not all(sss_loads(i) > n for i, n in zip(insts, before)):
+        print("FAIL: everyone ready, but no stage select")
+        return False
+    print("net_test_xn_menu: everyone ready, the stage select on every player", flush=True)
+    return True
 
 
 def css_loads(inst):
@@ -236,7 +284,10 @@ def run(args):
             return False
         time.sleep(4)
         shot(host, shots, "9-css")
-        if not drive_css(insts):
+        if args.scenario == "ready":
+            if not ready_scenario(insts, shots):
+                return False
+        elif not drive_css(insts):
             print("FAIL: no CSS pick reached the SSS")
             return False
         time.sleep(2)
@@ -281,8 +332,9 @@ def main():
     ap.add_argument("--players", type=int, choices=(2, 3, 4), default=3)
     ap.add_argument("--seconds", type=float, default=40, help="of match after it loads")
     ap.add_argument("--block", default="")
-    ap.add_argument("--scenario", default="", choices=("", "sss-host-b"),
-                    help="sss-host-b: guest B and off-list picks refused, host B back to the CSS")
+    ap.add_argument("--scenario", default="", choices=("", "sss-host-b", "ready"),
+                    help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
+                         "ready: Ready on the CSS (one START, the countdown, B stops it)")
     ap.add_argument("--url", default="", help="a running service instead of a local wrangler dev")
     ap.add_argument("--exe", default=os.path.join(HERE, "..", "build", "linux", "melee"))
     ap.add_argument("--disc", default=os.path.expanduser(
