@@ -1487,13 +1487,11 @@ static inline void make_bg_model(HSD_JObj** out)
     *out = gobj->hsd_obj;
 #ifdef TARGET_PC
     /* XeleeNet: the circle under RANDOM makes room for the picks card. It's
-     * the border's own mesh (its one child is the frame's lines, which
-     * stay). */
-    if (gmOnline_XnFlow()) {
-        HSD_DObj* d;
-        for (d = jobj->u.dobj; d != NULL; d = d->next) {
-            HSD_DObjSetFlags(d, DOBJ_HIDDEN);
-        }
+     * the border's first mesh; the second is the STAGE SELECT lettering
+     * (bottom right) and the border's one child the frame's lines, both
+     * kept. */
+    if (gmOnline_XnFlow() && jobj->u.dobj != NULL) {
+        HSD_DObjSetFlags(jobj->u.dobj, DOBJ_HIDDEN);
     }
 #endif
 }

@@ -306,7 +306,8 @@ Built as planned, with these differences:
 - **The timer is on the card.** The host sends the deadline when the first
   pick lands (`NET_MSG_STAGE_TIMER` 0x23), and the card counts it down.
 - **The card sits in the corner under RANDOM,** where Melee's circle is
-  hidden in a lobby (the border model's own mesh; its frame lines stay), as far
+  hidden in a lobby (the border model's first mesh; the STAGE SELECT lettering
+  and the frame's lines stay), as far
   in from the frame's left line as from its bottom. Two or three players get
   a row each (colour, picture, tick, name, stage; with three, names are cut
   to 12 characters, "(you)" kept whole); four get a 2x2 grid of pictures.

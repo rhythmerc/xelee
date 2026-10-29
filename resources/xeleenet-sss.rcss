@@ -3,17 +3,20 @@
  * at 720 px tall and scaled (mnstagesel.c dims the stages off the list). F5 in
  * the game reloads this file. */
 * { box-sizing: border-box; }
-body { width: 100%; height: 100%; margin: 0; font-family: "Noto Sans"; color: #fff8e0; background-color: #00000000; }
+body { width: 100%; height: 100%; margin: 0; font-family: "Noto Sans"; color: #f0f0f4; background-color: #00000000; }
 div, span { display: block; }
 #root { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 /* Boxes of fixed width at the 720 px layout: the pill right-aligned in one,
  * the legend centred in the other (inline blocks size to their content). */
 #top { position: absolute; width: 600px; height: 40px; text-align: right; transform-origin: 0 0; }
+/* The stage select's own colours throughout: the frame's translucent white,
+ * no gold. */
 #top .pill { display: inline-block; height: 36px; padding: 0 18px; font-size: 17px; font-weight: bold; line-height: 34px;
-             color: #f0e4b8; border: 2px #f0c226b0; border-radius: 18px; background-color: #0b0b10e0; }
+             color: #ececf0; border: 2px #ffffff55; border-radius: 18px; background-color: #0c0b16e0; }
 #bottom { position: absolute; width: 1120px; height: 46px; text-align: center; transform-origin: 0 0; }
-#bottom .keys { display: inline-block; height: 46px; padding: 0 14px; border: 1px #f0c22650; border-radius: 23px;
-                background-color: #0c0b08d8; }
+#bottom .keys { display: inline-block; height: 46px; padding: 0 14px; border: 1px #ffffff40; border-radius: 23px;
+                background-color: #0c0b16d8; }
+#bottom .lg { color: #e6e6ea; }
 
 /* P5: each pick ringed on the grid in its player's colour. */
 .ol { position: absolute; } /* a ring texture, xnring:// (xeleenet_menu.cpp) */
@@ -52,33 +55,33 @@ div, span { display: block; }
 #card .cpic.pend > .cthumb { background-color: #00000000; }
 /* The stage our cursor is on, before we pick. */
 #card .ghost { position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0.35; }
-#card .cthumb.rnd, #draw .dthumb.rnd { font-weight: 900; text-align: center; color: #f0e4b8; background-color: #3a2f6a; }
+#card .cthumb.rnd, #draw .dthumb.rnd { font-weight: 900; text-align: center; color: #ececf0; background-color: #3a2f6a; }
 #card .cthumb.rnd { font-size: 24px; line-height: 44px; }
 #card .cname { position: absolute; left: 82px; right: 0; top: 8px; height: 18px; font-size: 13px; font-weight: 800;
-               line-height: 18px; color: #fff8e0; overflow: hidden; white-space: nowrap; }
+               line-height: 18px; color: #f0f0f4; overflow: hidden; white-space: nowrap; }
 #card .cstage { position: absolute; left: 82px; right: 0; top: 29px; height: 16px; font-size: 12px; line-height: 16px;
                 color: #d9d2bb; overflow: hidden; white-space: nowrap; }
 #card .cstage.pend { color: #9aa1ad; }
 
 /* The draw: the screen dimmed, the cards side by side in a panel. */
 #dim { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #05060f8c; }
-#draw { position: absolute; height: 300px; transform-origin: 0 0; border: 2px #f0c226; border-radius: 14px;
+#draw { position: absolute; height: 300px; transform-origin: 0 0; border: 2px #ffffff55; border-radius: 14px;
         background-color: #0c0b16f8; }
 #draw .dtitle { position: absolute; left: 0; right: 0; top: 18px; text-align: center; font-size: 13px; font-weight: 800;
-                letter-spacing: 2px; color: #c9b77c; }
+                letter-spacing: 2px; color: #c4c4cc; }
 #draw .dcard { position: absolute; top: 54px; width: 150px; height: 190px; }
 #draw .dcard.out { opacity: 0.28; }
 #draw .dthumb { position: absolute; left: 0; top: 0; width: 150px; height: 131px; border-radius: 8px;
                 border: 4px #00000000; background-color: #24233a; }
 #draw .dthumb.rnd { font-size: 60px; line-height: 123px; }
-#draw .dcard.lit .dthumb { border: 4px #fff4c4; }
+#draw .dcard.lit .dthumb { border: 4px #ffffff; }
 #draw .dtag { position: absolute; left: 8px; top: 8px; height: 18px; padding: 0 8px; border-radius: 9px;
-              font-size: 10px; font-weight: 800; line-height: 18px; color: #fff8e0; background-color: #000000b0; }
+              font-size: 10px; font-weight: 800; line-height: 18px; color: #f0f0f4; background-color: #000000b0; }
 #draw .dstage { position: absolute; left: -10px; right: -10px; top: 138px; text-align: center; font-size: 14px;
-                font-weight: 800; color: #fff8e0; white-space: nowrap; }
+                font-weight: 800; color: #f0f0f4; white-space: nowrap; }
 /* Wide enough for a 15-character name. */
 #draw .dwho { position: absolute; left: 3px; width: 144px; top: 162px; height: 20px; border-radius: 10px;
               text-align: center; font-size: 11px; font-weight: 800; line-height: 20px; color: #ffffff;
               overflow: hidden; white-space: nowrap; }
 #draw .dcap { position: absolute; left: 0; right: 0; top: 258px; text-align: center; font-size: 16px; font-weight: 900;
-              color: #ffe066; }
+              color: #ffffff; }
