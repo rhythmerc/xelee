@@ -1694,12 +1694,13 @@ static void xnLobbyFrame(void)
 
 bool gmOnline_XnFlow(void)
 {
-    /* tools/xn_preview.py's banner and css-* shots boot VS. Mode's CSS: it
-     * stands in. */
+    /* tools/xn_preview.py's banner, lan-banner and css-* shots boot VS.
+     * Mode's CSS: it stands in. */
     static int preview = -1;
     if (preview < 0) {
         const char* p = getenv("MELEE_XN_PREVIEW");
-        preview = p != NULL && (strcmp(p, "banner") == 0 || strncmp(p, "css-", 4) == 0 ||
+        preview = p != NULL && (strcmp(p, "banner") == 0 || strcmp(p, "lan-banner") == 0 ||
+                                strncmp(p, "css-", 4) == 0 ||
                                 strncmp(p, "sss-", 4) == 0);
     }
     return preview ||
