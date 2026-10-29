@@ -4,8 +4,8 @@ look (src/pc/xeleenet_menu.cpp, resources/xeleenet*.rcss).
 
     tools/xn_preview.py [PAGE ...] [--share] [--out build/xn-preview]
 
-PAGE is host, more, stages, lobbies, code, joining, progress, failed or banner
-(all of them by default). Each boots the game straight into the page
+PAGE is host, more, stages, lobbies, code, joining, progress, failed, banner,
+css-ready, css-countdown or css-waiting (all of them by default). Each boots the game straight into the page
 (MELEE_BOOT_SCENE=xn-host or css, MELEE_XN_PREVIEW=PAGE: no network, no
 service), waits for it to fade in and captures the window. --share puts the
 pictures on the tailnet share as xn-preview-PAGE.png.
@@ -23,7 +23,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-PAGES = ["host", "more", "stages", "lobbies", "code", "joining", "progress", "failed", "banner"]
+PAGES = ["host", "more", "stages", "lobbies", "code", "joining", "progress", "failed", "banner",
+         "css-ready", "css-countdown", "css-waiting"]
 DISC = os.path.expanduser("~/Downloads/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).iso")
 SHARE = os.path.expanduser("~/.claude/skills/tailnet-share/scripts/share.py")
 
@@ -35,14 +36,15 @@ def shoot(page, args):
     os.makedirs(ident, exist_ok=True)
     title = f"xn-preview-{page}"
     env = dict(os.environ,
-               MELEE_BOOT_SCENE="css" if page == "banner" else "xn-host",
+               MELEE_BOOT_SCENE="css" if page == "banner" or page.startswith("css-") else "xn-host",
                MELEE_XN_PREVIEW=page, MELEE_XN_NAME="RHYTHM", MELEE_XN_IDENTITY=ident,
                MELEE_WINDOW_TITLE=title, MELEE_VSYNC="0", MELEE_NO_CARD="1",
                SDL_VIDEO_DRIVER=os.environ.get("SDL_VIDEO_DRIVER", "x11"))
     with open(log_path, "wb") as log:
         proc = subprocess.Popen([args.exe, "--no-card", args.disc], env=env, stdout=log, stderr=subprocess.STDOUT)
         try:
-            want = b"xeleenet pages: preview" if page != "banner" else b"MnSlChr"
+            css = page == "banner" or page.startswith("css-")
+            want = b"MnSlChr" if css else b"xeleenet pages: preview"
             deadline = time.time() + 90
             seen = False
             while time.time() < deadline and proc.poll() is None:
@@ -55,7 +57,7 @@ def shoot(page, args):
             if not seen:
                 print(f"xn_preview: {page}: never showed (see {log_path})")
                 return None
-            time.sleep(args.settle + (5 if page == "banner" else 0))  # the CSS's doors, then the banner
+            time.sleep(args.settle + (5 if css else 0))  # the CSS's doors, then the banner
             r = subprocess.run([sys.executable, os.path.join(HERE, "devctl.py"), "shot", out],
                                env=dict(env, MELEE_WINDOW_TITLE=title), capture_output=True, text=True)
             if r.returncode != 0:

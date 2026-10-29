@@ -19,3 +19,34 @@ div, span { display: block; }
 .seats { position: absolute; right: 250px; top: 14px; font-size: 24px; font-weight: 800; color: #fff8e0; }
 .code { position: absolute; right: 18px; top: 11px; height: 36px; padding: 0 16px; font-size: 19px; font-weight: 800;
         letter-spacing: 2px; line-height: 32px; color: #ffe066; border: 2px #f0c226; border-radius: 18px; }
+
+/* The READY count in the seats' place (gold when everyone is), and the notice
+ * slot under the banner: room above and below it (the portraits sit lower in
+ * XeleeNet's CSS, mncharsel.c cssXnGridShrink). */
+.rpill { position: absolute; right: 250px; top: 13px; height: 32px; padding: 0 14px; font-size: 17px; font-weight: 800;
+         letter-spacing: 1px; line-height: 28px; color: #fff8e0; border: 2px #f0c226; border-radius: 16px;
+         background-color: #0b0b10; }
+.rpill.all { color: #1a1406; background-color: #f0c226; }
+.nslot { position: absolute; left: 0; right: 0; top: 89px; text-align: center; }
+.notice { display: inline-block; position: relative; height: 34px; padding: 0 22px; font-size: 16px; font-weight: 800;
+          letter-spacing: 1px; line-height: 32px; border-radius: 17px; }
+.notice.gold { color: #1a1406; background-color: #f0c226; border: 1px #f0c226; }
+.notice.warn { color: #f0e4b8; background-color: #0b0b10; border: 1px #f0c226; }
+.notice.info { color: #e9e3cf; background-color: #0b0b10; border: 1px #aeaba3; }
+.notice.red { color: #ffd0c8; background-color: #2a0e0a; border: 1px #e0392b; }
+.notice .drain { position: absolute; left: 0; bottom: 3px; height: 3px; background-color: #1a140680; }
+
+/* The doors' tags (window pixels) and the legend above the doors. */
+#doors { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+.door { position: absolute; }
+.ribbon { position: absolute; left: 3px; right: 3px; text-align: center; font-weight: 900; letter-spacing: 3px;
+          color: #1a1406; background-color: #f0c226; }
+.tag { position: absolute; left: 10%; right: 10%; text-align: center; font-weight: 800; color: #d6d3cb;
+       border: 1px #aeaba399; border-radius: 11px; background-color: #0b0b10d8; }
+.tag.warn { color: #ffe066; border-color: #f0c226; background-color: #2a1f08; }
+.choosing { position: absolute; left: 3px; right: 3px; top: 3px; bottom: 3px; text-align: center; color: #c9cde8;
+            border-radius: 6px; background-color: #05060f8c; } /* no italic: no italic face ships */
+.dash { position: absolute; left: 0; right: 0; top: 0; bottom: 0; border: 3px #fff4c4; border-radius: 8px; }
+#clegend { position: absolute; width: 1120px; height: 46px; text-align: center; transform-origin: 0 0; }
+#clegend .keys { display: inline-block; height: 46px; padding: 0 14px; border: 1px #f0c22650; border-radius: 23px;
+                 background-color: #0c0b08d8; }

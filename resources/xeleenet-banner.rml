@@ -1,4 +1,5 @@
-<rml><head><title>XeleeNet banner</title><link type="text/rcss" href="xeleenet-banner.rcss" /></head>
+<rml><head><title>XeleeNet banner</title><link type="text/rcss" href="xeleenet.rcss" /><link type="text/rcss" href="xeleenet-banner.rcss" /></head>
 <body>
+<div id="doors"></div>
 <div id="bar"></div>
 </body></rml>

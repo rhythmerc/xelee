@@ -350,6 +350,7 @@ static struct CSSDoorsData2 data2 = {
 #ifdef TARGET_PC
 #include "pc/region.h"
 #include "pc/xr_pointer.h"
+#include "pc/xeleenet_menu.h"
 /* The character-select header and token counters are composed by index out
  * of SdSlChr, and the USA build's layout does not exist on PAL: there the
  * digits are string 73 (one byte per glyph, see sislib.static.h), 72 is the
@@ -5577,6 +5578,80 @@ static bool cssXnPicked(int i)
            mnCharSel_804A0BC0[i] != NULL && mnCharSel_804A0BC0[i]->x5 != 1;
 }
 
+/* XeleeNet's CSS: the portraits shrink and sit lower, making room for the
+ * notice slot under the banner and the legend above the doors (P3). Joints 2
+ * and 15 of the menu model hold the side and middle portraits, both at the
+ * origin; the icons' bounds (the hand's hit test, the tokens' spots and
+ * drift) are moved the same way while the CSS is up, and put back after. */
+#define CSS_XN_GRID_S 0.76F
+#define CSS_XN_GRID_PX (-3.35F) /* the pivot: the grid's top centre */
+#define CSS_XN_GRID_PY 24.0F
+#define CSS_XN_GRID_DY (-3.3F) /* then this much lower */
+static float css_xn_bounds[25][4]; /* the icons' own, while shrunk */
+static bool css_xn_shrunk;
+
+static float cssXnGx(float x)
+{
+    return CSS_XN_GRID_PX + (x - CSS_XN_GRID_PX) * CSS_XN_GRID_S;
+}
+
+static float cssXnGy(float y)
+{
+    return CSS_XN_GRID_PY + (y - CSS_XN_GRID_PY) * CSS_XN_GRID_S + CSS_XN_GRID_DY;
+}
+
+static void cssXnGridJoints(void)
+{
+    static const int ids[] = { 2, 15 };
+    int k;
+    for (k = 0; k < 2; k++) {
+        HSD_JObj* j = NULL;
+        lb_80011E24(mnCharSel_804D6CC0, &j, ids[k], -1);
+        if (j != NULL) {
+            Vec3 sc = { CSS_XN_GRID_S, CSS_XN_GRID_S, 1.0F };
+            Vec3 t = { CSS_XN_GRID_PX * (1.0F - CSS_XN_GRID_S),
+                       CSS_XN_GRID_PY * (1.0F - CSS_XN_GRID_S) + CSS_XN_GRID_DY, 0.0F };
+            HSD_JObjSetScale(j, &sc);
+            HSD_JObjSetTranslate(j, &t);
+        }
+    }
+}
+
+static void cssXnGridShrink(void)
+{
+    int i;
+    if (css_xn_shrunk) {
+        return;
+    }
+    for (i = 0; i < 25; i++) {
+        css_xn_bounds[i][0] = icons[i].bound_l;
+        css_xn_bounds[i][1] = icons[i].bound_r;
+        css_xn_bounds[i][2] = icons[i].bound_u;
+        css_xn_bounds[i][3] = icons[i].bound_d;
+        icons[i].bound_l = cssXnGx(icons[i].bound_l);
+        icons[i].bound_r = cssXnGx(icons[i].bound_r);
+        icons[i].bound_u = cssXnGy(icons[i].bound_u);
+        icons[i].bound_d = cssXnGy(icons[i].bound_d);
+    }
+    css_xn_shrunk = true;
+    cssXnGridJoints();
+}
+
+static void cssXnGridRestore(void)
+{
+    int i;
+    if (!css_xn_shrunk) {
+        return;
+    }
+    for (i = 0; i < 25; i++) {
+        icons[i].bound_l = css_xn_bounds[i][0];
+        icons[i].bound_r = css_xn_bounds[i][1];
+        icons[i].bound_u = css_xn_bounds[i][2];
+        icons[i].bound_d = css_xn_bounds[i][3];
+    }
+    css_xn_shrunk = false;
+}
+
 static void cssXnReadyReset(void)
 {
     css_xn_ready = 0;
@@ -5589,7 +5664,7 @@ static void cssXnReadyReset(void)
  * takes Ready back doesn't also un-pick. */
 static void cssXnReadyFrame(void)
 {
-    u8 humans = 0;
+    u8 humans = 0, picked = 0;
     int i;
     for (i = 0; i < 4 && i < (s32) mnCharSel_804D6CF5; i++) {
         HSD_PadStatus* pad = &HSD_PadCopyStatus[i];
@@ -5599,6 +5674,9 @@ static void cssXnReadyFrame(void)
             continue;
         }
         humans |= bit;
+        if (cssXnPicked(i)) {
+            picked |= bit;
+        }
         if ((css_xn_ready & bit) &&
             (!cssXnPicked(i) || mnCharSel_803F0DFC.doors[i].sel_icon != css_xn_icon[i] ||
              mnCharSel_803F0DFC.doors[i].costume != css_xn_costume[i]))
@@ -5657,6 +5735,17 @@ static void cssXnReadyFrame(void)
         css_xn_others = one ? css_xn_others + 1 : 0;
         if (css_xn_others == CSS_XN_WAITING) {
             pc_log_line("css: everyone is waiting on one player (%02x)", left);
+        }
+        {
+            /* For the overlay over the CSS (xeleenet_menu.cpp). */
+            PcXnCssState st;
+            st.humans = humans;
+            st.ready = css_xn_ready & humans;
+            st.picked = picked;
+            st.waiting = css_xn_others >= CSS_XN_WAITING ? left : 0;
+            st.countdown = css_xn_count;
+            st.countdown_total = CSS_XN_COUNTDOWN;
+            pc_xn_css_frame(&st);
         }
     }
 }
@@ -5728,6 +5817,9 @@ void mnCharSel_Scene_OnEnter(void* arg0)
 #endif
     mnCharSel_802640A0();
 #ifdef TARGET_PC
+    if (gmOnline_XnFlow()) {
+        cssXnGridShrink();
+    }
     if (gmOnline_SlippiFlow()) {
         mnOnlineCss_Create(css_text_ctx);
     }
@@ -5963,6 +6055,7 @@ void mnCharSel_Scene_OnFrame(void)
     }
     if (gmOnline_XnFlow()) {
         cssXnReadyFrame();
+        cssXnGridJoints(); /* over any animation of the two */
     }
     {
         static bool dumped;
@@ -6175,6 +6268,7 @@ void mnCharSel_Scene_OnExit(void* unused)
 
 #ifdef TARGET_PC
     mnOnlineCss_Destroy();
+    cssXnGridRestore(); /* the icons' bounds, for every other CSS */
 #endif
     HSD_SisLib_803A5FBC();
     if (mnCharSel_804D6CD0 != NULL) {

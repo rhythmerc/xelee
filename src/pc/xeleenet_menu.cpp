@@ -306,7 +306,7 @@ void view(PcXnPunchView* v) {
     }
     std::memset(v, 0, sizeof *v);
     v->phase = PC_XN_PUNCH_LOBBY;
-    v->host = s_preview == "banner";
+    v->host = s_preview == "banner" || s_preview.rfind("css-", 0) == 0;
     std::snprintf(v->code, sizeof v->code, "K7MQ2D");
     const char* names[3] = {"PIXEL#3MPA", "KOOPA#Z2RW", "RHYTHM#K7Q2"};
     for (int i = 0; i < 3; i++) {
@@ -1394,10 +1394,18 @@ struct Screen : Rml::EventListener {
 
 // ---- C1: the lobby's banner in the CSS --------------------------------------------
 
+// The CSS's Ready, as mncharsel.c last told it (pc_xn_css_frame), and when.
+PcXnCssState s_css{};
+uint64_t s_css_at = 0;
+
+// The doors' rectangles, as fractions of the screen: four in a row under the
+// portraits (measured on the CSS, as the banner's place is).
+constexpr float kDoorX0 = 0.1042f, kDoorPitch = 0.2010f, kDoorW = 0.1896f, kDoorY0 = 0.539f, kDoorH = 0.394f;
+
 struct Banner {
     Rml::ElementDocument* document = nullptr;
     bool shown = false;
-    std::string last;
+    std::string last, lastDoors;
 
     void show(bool on) {
         if (on && document == nullptr) {
@@ -1449,16 +1457,100 @@ struct Banner {
         if (host && s_host.hide_code)
             code = "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2 \xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2";
         const int seats = host ? s_host.seats : known && info.seats ? info.seats : 4;
+        // The CSS's Ready, while it keeps telling it.
+        const bool css = s_css_at != 0 && SDL_GetTicks() - s_css_at < 500;
+        const auto bits = [](unsigned m) { return __builtin_popcount(m & 15u); };
+        std::string count = "<div class=\"seats\">" + std::to_string(std::max(1, v.nplayers)) + "/" +
+                            std::to_string(seats) + "</div>";
+        if (css && s_css.humans != 0) {
+            const bool all = (s_css.ready & s_css.humans) == s_css.humans;
+            count = "<div class=\"rpill" + std::string(all ? " all" : "") + "\">" +
+                    enc(tr("xeleenet.css.ready_count",
+                           {{"n", bits(s_css.ready & s_css.humans)}, {"m", bits(s_css.humans)}})) +
+                    "</div>";
+        }
+        // The notice slot, under the banner: the countdown, or who's waited on.
+        std::string notice;
+        if (css && s_css.countdown > 0) {
+            const int secs = (s_css.countdown + 59) / 60;
+            const float left = s_css.countdown_total > 0 ? float(s_css.countdown) / s_css.countdown_total : 0.f;
+            notice = "<div class=\"notice gold\">" + enc(tr("xeleenet.css.countdown", {{"n", secs}})) +
+                     "<div class=\"drain\" style=\"width: " + fmt(100.f * left) + "%;\"></div></div>";
+        } else if (css && s_css.waiting != 0) {
+            std::string who;
+            for (int i = 0; i < v.nplayers; i++)
+                if (s_css.waiting & (1u << v.players[i].port))
+                    who = v.players[i].name;
+            const size_t hash = who.find('#');
+            notice = "<div class=\"notice warn\">" +
+                     enc(tr("xeleenet.css.waiting_on", {{"name", hash == std::string::npos ? who : who.substr(0, hash)}})) +
+                     "</div>";
+        }
         const std::string r =
             "<div class=\"brand\"><span>" + enc(tr("xeleenet.banner.brand")) +
             "</span></div><div class=\"pill\"><div class=\"names\"><div class=\"bn\">" + enc(name) +
-            "</div><div class=\"br\">" + enc(rules) + "</div></div><div class=\"seats\">" +
-            std::to_string(std::max(1, v.nplayers)) + "/" + std::to_string(seats) + "</div>" +
+            "</div><div class=\"br\">" + enc(rules) + "</div></div>" + count +
             (code.empty() ? "" : "<div class=\"code\">" + enc(tr("xeleenet.banner.code", {{"code", code}})) + "</div>") +
-            "</div>";
+            "</div><div class=\"nslot\">" + notice + "</div>";
         if (r != last) {
             last = r;
             bar->SetInnerRML(r);
+        }
+        update_doors(d, css);
+    }
+
+    // Each door's tag, and the legend above the doors, in window pixels (laid
+    // out at 720 tall and scaled).
+    void update_doors(const Rml::Vector2i d, bool css) {
+        auto* doors = document->GetElementById("doors");
+        if (doors == nullptr)
+            return;
+        std::string r;
+        if (css) {
+            const float k = d.y / 720.f;
+            for (int i = 0; i < 4; i++) {
+                const unsigned bit = 1u << i;
+                if (!(s_css.humans & bit))
+                    continue;
+                const float x = (kDoorX0 + i * kDoorPitch) * d.x, w = kDoorW * d.x;
+                const float y = kDoorY0 * d.y, h = kDoorH * d.y;
+                std::string tag;
+                if (s_css.ready & bit) {
+                    tag = "<div class=\"ribbon\" style=\"top: " + fmt(0.54f * h) + "px; height: " + fmt(0.10f * h) +
+                          "px; line-height: " + fmt(0.10f * h) + "px; font-size: " + fmt(18.f * k) + "px;\">" +
+                          enc(tr("xeleenet.css.tag_ready")) + "</div>";
+                } else if (s_css.waiting & bit) {
+                    tag = "<div class=\"dash\"></div><div class=\"tag warn\" style=\"top: " + fmt(0.58f * h) +
+                          "px; font-size: " + fmt(11.f * k) + "px; height: " + fmt(22.f * k) + "px; line-height: " +
+                          fmt(20.f * k) + "px;\">" + enc(tr("xeleenet.css.tag_waiting")) + "</div>";
+                } else if (s_css.picked & bit) {
+                    tag = "<div class=\"tag\" style=\"top: " + fmt(0.58f * h) + "px; font-size: " + fmt(11.f * k) +
+                          "px; height: " + fmt(22.f * k) + "px; line-height: " + fmt(20.f * k) + "px;\">" +
+                          enc(tr("xeleenet.css.tag_start")) + "</div>";
+                } else {
+                    tag = "<div class=\"choosing\" style=\"font-size: " + fmt(13.f * k) + "px; line-height: " +
+                          fmt(h) + "px;\">" + enc(tr("xeleenet.css.tag_choosing")) + "</div>";
+                }
+                r += "<div class=\"door\" style=\"left: " + fmt(x) + "px; top: " + fmt(y) + "px; width: " + fmt(w) +
+                     "px; height: " + fmt(h) + "px;\">" + tag + "</div>";
+            }
+            // The legend: what this player's buttons do now.
+            const int me = pc_net_local_player();
+            const unsigned mine = me >= 0 && me < 4 ? 1u << me : 0u;
+            std::string keys;
+            if (s_css.countdown > 0)
+                keys = legend_key("b", "xeleenet.legend.cancel");
+            else if (s_css.ready & mine)
+                keys = legend_key("b", "xeleenet.legend.not_ready");
+            else
+                keys = legend_key("start", "xeleenet.legend.ready");
+            const float ls = 0.66f * k;
+            r += "<div id=\"clegend\" style=\"transform: scale(" + fmt(ls) + "); left: " + fmt(d.x / 2 - 560.f * ls) +
+                 "px; top: " + fmt(0.515f * d.y - 23.f * ls) + "px;\"><div class=\"keys\">" + keys + "</div></div>";
+        }
+        if (r != lastDoors) {
+            lastDoors = r;
+            doors->SetInnerRML(r);
         }
     }
 };
@@ -1666,8 +1758,9 @@ extern "C" void pc_xn_menu_update(void) {
     reload_styles();
     if (s_active)
         s_screen.update();
-    if (s_banner.shown || s_preview == "banner") {
-        if (s_preview == "banner" && !s_banner.shown) {
+    const bool css_preview = s_preview == "banner" || s_preview.rfind("css-", 0) == 0;
+    if (s_banner.shown || css_preview) {
+        if (css_preview && !s_banner.shown) {
             const char* boot = std::getenv("MELEE_BOOT_SCENE");
             if (boot != nullptr && std::strcmp(boot, "css") == 0 && SDL_GetTicks() > 6000) {
                 preset(kDoubles); // three players of four
@@ -1680,6 +1773,18 @@ extern "C" void pc_xn_menu_update(void) {
 }
 
 extern "C" void pc_xn_banner_show(bool show) { s_banner.show(show); }
+
+extern "C" void pc_xn_css_frame(const PcXnCssState* state) {
+    s_css = *state;
+    s_css_at = SDL_GetTicks();
+    // tools/xn_preview.py's CSS states: three players, as the wireframe's R1-R3.
+    if (s_preview == "css-ready")
+        s_css = {0x7, 0x1, 0x3, 0, -1, 120};
+    else if (s_preview == "css-countdown")
+        s_css = {0x7, 0x7, 0x7, 0, 70, 120};
+    else if (s_preview == "css-waiting")
+        s_css = {0x7, 0x5, 0x7, 0x2, -1, 120};
+}
 
 extern "C" void pc_xn_sss_frame(uint32_t mask) {
     s_sss.mask = mask;

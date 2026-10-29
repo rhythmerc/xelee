@@ -79,6 +79,16 @@ void pc_xn_menu_update(void);
 /* C1: the lobby's banner over the CSS's rules bar, while in a XeleeNet CSS. */
 void pc_xn_banner_show(bool show);
 
+/* XeleeNet's CSS Ready (mncharsel.c), once a frame, for the overlay over it:
+ * the READY count, the notice slot, the doors' tags and the legend. */
+typedef struct PcXnCssState {
+    uint8_t humans, ready, picked; /* port bits */
+    uint8_t waiting;               /* the one everyone else waits on, or 0 */
+    int countdown;                 /* frames to the stage select; -1: none */
+    int countdown_total;
+} PcXnCssState;
+void pc_xn_css_frame(const PcXnCssState* state);
+
 /* The stage select in a XeleeNet lobby, once a frame: the lobby's stage list
  * (RULES stage_mask), for the overlay's pill and legend (mnstagesel.c dims
  * the stages off it). Shows the overlay; pc_xn_sss_show(false) on the way

@@ -142,7 +142,18 @@ must not leave the CSS. P3 readies, the countdown runs, and everyone reaches
 the stage select on the same frame (scene hand-off logs). A cancel by B
 mid-countdown is tested too.
 
-### P3 · CSS overlay: legend, notice slot, door tags, portraits
+### P3 · CSS overlay: legend, notice slot, door tags, portraits — done 2026-10-28
+
+Built with two changes: the doors' rectangles are measured fractions of the
+screen (as the banner's place is), not projected joints; and the portraits
+shrink to 0.76 (not 0.88), 3.3 units lower, because the real CSS has far less
+room between the grid and the doors than the wireframe drew. The icons' bounds
+table is rewritten while XeleeNet's CSS is up and restored on exit, so the
+hand's hit test, the tokens' spots and their drift follow without touching
+each use. Previews: `tools/xn_preview.py css-ready css-countdown css-waiting`.
+The legend lacks "Hold B: leave lobby" until P4.
+
+The plan as written:
 
 1. **One RmlUi document for the CSS:** extend `xeleenet-banner.rml`, or add
    `xeleenet-css.rml` with the same scaling. It holds:

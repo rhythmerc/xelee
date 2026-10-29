@@ -325,11 +325,24 @@ xeleenet:
     type: Type
     delete: Delete
     cancel: Cancel
+    ready: Ready
+    not_ready: Not ready
 
   # The lobby's banner over the CSS: its name, rules and code.
   # The stage select's overlay: the lobby's stage list, top right.
   sss:
     list: "Lobby list: {list}"
+
+  # The CSS (the lobby): the READY count, the notices under the banner, the
+  # doors' tags.
+  css:
+    ready_count: "READY {n}/{m}"
+    countdown: "EVERYONE'S READY · STAGE SELECT IN {n}"
+    waiting_on: "Waiting on {name}"
+    tag_ready: READY
+    tag_start: START when ready
+    tag_choosing: choosing...
+    tag_waiting: Waiting on you · START
 
   banner:
     brand: XeleeNet
