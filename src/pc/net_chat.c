@@ -5,6 +5,8 @@
 #include <SDL3/SDL_timer.h>
 #include <stdio.h>
 #include <string.h>
+
+extern void pc_log_line(const char* fmt, ...);
 static const char* phrases[PC_NET_CHAT_COUNT] = {"Hello", "Good luck", "Have fun", "Ready",
     "Good game", "Well played", "Nice combo", "That was close", "One more", "Last game",
     "Need a moment", "Thanks for waiting", "Thanks for playing", "See you", "Sorry", "No problem"};
