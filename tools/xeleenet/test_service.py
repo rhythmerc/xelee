@@ -218,6 +218,17 @@ def run(url):
     refused(lambda: d.join(second, ["203.0.113.4:41000"]), "not_found",
             f"a lobby without heartbeats for {EXPIRE} s expires")
     check(all(x["code"] != second for x in d.list(full=True)["lobbies"]), "and leaves the browser")
+    # A host that heartbeats past the first alarm and then dies (a crash, a
+    # kill): the alarm has re-armed itself on heartbeats, and must still
+    # close the lobby once they stop (2026-10-29: dead hosts' lobbies stayed
+    # listed for hours).
+    r = g.host("Crashed", ["198.51.100.3:41000"])
+    for _ in range(4):
+        g.heartbeat(r["id"], roster=[])
+        time.sleep(1)
+    time.sleep(2 * EXPIRE + 3)
+    check(all(x["code"] != r["code"] for x in d.list(full=True)["lobbies"]),
+          f"a host's heartbeats stopping for {EXPIRE} s closes its lobby too")
 
 
 def main():

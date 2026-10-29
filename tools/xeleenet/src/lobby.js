@@ -4,8 +4,11 @@
 // links (docs/xeleenet-plan.md §3.1).
 //
 // The record is written to storage when it changes, never on a heartbeat. The
-// heartbeat time and pending "Ask before joining" requests live in memory: a
-// lobby whose host keeps polling stays loaded.
+// heartbeat time lives in memory, and goes to storage only when the expiry
+// alarm re-arms (every EXPIRE_SECS): a lobby whose host has stopped polling
+// gets unloaded before its alarm fires, and the copy the alarm wakes must
+// know how long it has been. Pending "Ask before joining" requests live in
+// memory only: a lobby whose host keeps polling stays loaded.
 
 import { DurableObject } from "cloudflare:workers";
 import { refuse, sameCompat, secs } from "./common.js";
@@ -19,10 +22,14 @@ export class Lobby extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.s = null;
-    this.beat = Date.now();
+    // The last heartbeat, as of the last alarm. A copy with none stored has
+    // no record of a living host: its first heartbeat sets it, and an alarm
+    // before one closes the lobby.
+    this.beat = 0;
     this.pending = new Map(); // joiner key -> { joiner, since, decided, wake[] }
     ctx.blockConcurrencyWhile(async () => {
       this.s = (await ctx.storage.get("lobby")) || null;
+      this.beat = (await ctx.storage.get("beat")) || 0;
     });
   }
 
@@ -33,6 +40,7 @@ export class Lobby extends DurableObject {
     this.s = { ...init, members: [], banned: [], state: "open", score: null };
     this.beat = Date.now();
     await this.save();
+    await this.ctx.storage.put("beat", this.beat);
     await this.ctx.storage.setAlarm(Date.now() + this.expireMs());
     return ok({ id: this.s.id, code: this.s.code });
   }
@@ -178,6 +186,7 @@ export class Lobby extends DurableObject {
     if (quiet >= this.expireMs()) {
       await this.close("expired");
     } else {
+      await this.ctx.storage.put("beat", this.beat);
       await this.ctx.storage.setAlarm(this.beat + this.expireMs() + 1000);
     }
   }
