@@ -470,7 +470,25 @@ static const char* mnPage_Title(MenuKind kind)
     return NULL;
 }
 
-void mnPage_PanelMainTitle(HSD_JObj* panel, bool ours);
+void mnPage_PanelMainTitle(HSD_JObj* panel, const char* text);
+
+/* The tab's main title over a PC kind, or NULL for the stock texture. The
+ * Online Mode menus borrow VS. Mode's panel, whose title would read VS. Mode:
+ * they read Online Mode, and XeleeNet's pages their network (XeleeNet or LAN,
+ * the language overlay). */
+static const char* mnPage_MainTitle(MenuKind kind)
+{
+    switch (kind) {
+    case MENU_KIND_ONLINE:
+    case MENU_KIND_ONLINE_SLIPPI:
+    case MENU_KIND_ONLINE_XN:
+        return "Online Mode";
+    case MENU_KIND_SLIPPI_PAGE: /* Slippi's sign-in pages, or XeleeNet's */
+        return mnXeleeNet_Active() ? pc_tr("xeleenet.menu.tab") : "Online Mode";
+    default:
+        return NULL;
+    }
+}
 
 /* The tab's title on a PC page: the borrowed page's texture hidden, ours in
  * SIS text where it sits, following it through the tab's slide in and out. */
@@ -489,8 +507,8 @@ void mnPage_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, bool leavin
     if (text == NULL && leaving) {
         text = mnPage_Title(prev);
     }
-    mnPage_PanelMainTitle(panel, text != NULL && mnXeleeNet_Active() &&
-                                     (cur == MENU_KIND_SLIPPI_PAGE || (leaving && prev == MENU_KIND_SLIPPI_PAGE)));
+    /* While the tab slides out, the menu it is leaving keeps its title. */
+    mnPage_PanelMainTitle(panel, mnPage_MainTitle(leaving ? prev : cur));
     lb_80011E24(panel, &joint, PANEL_TITLE_JOINT, -1);
     if (joint == NULL) {
         return;
@@ -542,7 +560,7 @@ static void mnPage_MainItalic(void* gobj)
     mnPage_titleJoint = keep;
 }
 
-void mnPage_PanelMainTitle(HSD_JObj* panel, bool ours)
+void mnPage_PanelMainTitle(HSD_JObj* panel, const char* text)
 {
     static const GXColor colour = { 0x9C, 0x9C, 0x9C, 0xFF };
     HSD_JObj* joint = NULL;
@@ -553,7 +571,7 @@ void mnPage_PanelMainTitle(HSD_JObj* panel, bool ours)
         return;
     }
     mnPage_mainJoint = joint;
-    if (!ours) {
+    if (text == NULL) {
         if (mnPage_mainTitle != NULL) {
             HSD_SisLib_803A5CC4(mnPage_mainTitle);
             mnPage_mainTitle = NULL;
@@ -566,20 +584,20 @@ void mnPage_PanelMainTitle(HSD_JObj* panel, bool ours)
     }
     HSD_JObjSetFlagsAll(joint, JOBJ_HIDDEN);
     mnPage_mainHidden = true;
-    /* XeleeNet's tab, or LAN's (the language overlay): made again when the
-     * network changed since. */
-    static const char* mainTitleText;
-    if (mnPage_mainTitle != NULL && mainTitleText != pc_tr("xeleenet.menu.tab")) {
+    /* Made again when the text changed (Online Mode to a network's tab, or
+     * XeleeNet to LAN). */
+    static char mainTitleText[32];
+    if (mnPage_mainTitle != NULL && strcmp(mainTitleText, text) != 0) {
         HSD_SisLib_803A5CC4(mnPage_mainTitle);
         mnPage_mainTitle = NULL;
     }
     if (mnPage_mainTitle == NULL) {
-        mainTitleText = pc_tr("xeleenet.menu.tab");
+        snprintf(mainTitleText, sizeof mainTitleText, "%s", text);
         mnPage_mainTitle = HSD_SisLib_803A6754(0, mn_804D6BB4);
         mnPage_mainTitle->default_kerning = 1;
         mnPage_mainTitle->font_size.x = 0.034f;
         mnPage_mainTitle->font_size.y = 0.040f;
-        HSD_SisLib_803A6B98(mnPage_mainTitle, 0.0f, 0.0f, "%s", pc_tr("xeleenet.menu.tab"));
+        HSD_SisLib_803A6B98(mnPage_mainTitle, 0.0f, 0.0f, "%s", mainTitleText);
         mnPage_mainTitle->render_callback = mnPage_MainItalic;
     }
     lb_8000B1CC(joint, NULL, &pos);
