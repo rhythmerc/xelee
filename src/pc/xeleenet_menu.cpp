@@ -26,7 +26,9 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -359,6 +361,14 @@ void load_fonts() {
     for (const char* face : {"menu.ttf", "menu-bold.ttf"})
         Rml::LoadFontFace(dir + face);
     Rml::LoadFontFace(dir + "menu-heavy.ttf", false, static_cast<Rml::Style::FontWeight>(800));
+}
+
+// A legend entry: a GameCube button's glyph (xeleenet.rcss .gl) and its label.
+std::string legend_key(const std::string& button, const char* label) {
+    const std::string face = button == "stick"   ? "<div class=\"nub\"></div>"
+                             : button == "start" ? "START"
+                                                 : std::string(1, static_cast<char>(std::toupper(button[0])));
+    return "<div class=\"lg\"><div class=\"gl " + button + "\">" + face + "</div>" + enc(tr(label)) + "</div>";
 }
 
 struct Screen : Rml::EventListener {
@@ -953,12 +963,7 @@ struct Screen : Rml::EventListener {
 
     // ---- the legend: what the buttons do, over Melee's description box ---------
 
-    static std::string key(const std::string& button, const char* label) {
-        const std::string face = button == "stick"   ? "<div class=\"nub\"></div>"
-                                 : button == "start" ? "START"
-                                                     : std::string(1, static_cast<char>(std::toupper(button[0])));
-        return "<div class=\"lg\"><div class=\"gl " + button + "\">" + face + "</div>" + enc(tr(label)) + "</div>";
-    }
+    static std::string key(const std::string& button, const char* label) { return legend_key(button, label); }
 
     std::string legend() const {
         const Item* at = items.empty() ? nullptr : &items[cursor];
@@ -1458,8 +1463,80 @@ struct Banner {
     }
 };
 
+// ---- the stage select's overlay: the stages off the list, its name, the legend
+
+struct SssOverlay {
+    Rml::ElementDocument* document = nullptr;
+    bool shown = false;
+    std::string last;
+    unsigned mask = 0;
+    std::vector<std::array<float, 4>> off; // fractions of the screen
+
+    void show(bool on) {
+        if (on && document == nullptr) {
+            auto* context = aurora::rmlui::get_context();
+            if (context == nullptr)
+                return;
+            load_fonts();
+            document = context->LoadDocument(std::string(pc_resources_dir()) + "xeleenet-sss.rml");
+            if (document == nullptr) {
+                pc_log_line("xeleenet: could not load xeleenet-sss.rml");
+                return;
+            }
+        }
+        if (document == nullptr || on == shown)
+            return;
+        shown = on;
+        last.clear();
+        if (on)
+            document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+        else
+            document->Hide();
+    }
+
+    void update() {
+        if (!shown)
+            return;
+        auto* context = aurora::rmlui::get_context();
+        auto* root = document->GetElementById("root");
+        if (context == nullptr || root == nullptr)
+            return;
+        const Rml::Vector2i d = context->GetDimensions();
+        // The off-list stages: a dark card each, struck corner to corner.
+        std::string r;
+        for (const auto& q : off) {
+            // The icons' hover extents run a little past their art, onto
+            // their neighbours: inset by 6%.
+            const float iw = (q[2] - q[0]) * d.x, ih = (q[3] - q[1]) * d.y;
+            const float x = q[0] * d.x + iw * 0.06f, y = q[1] * d.y + ih * 0.06f, w = iw * 0.88f, h = ih * 0.88f;
+            const float len = std::sqrt(w * w + h * h), deg = std::atan2(h, w) * 57.29578f;
+            r += "<div class=\"off\" style=\"left: " + fmt(x) + "px; top: " + fmt(y) + "px; width: " + fmt(w) +
+                 "px; height: " + fmt(h) + "px;\"><div class=\"strike\" style=\"left: " + fmt((w - len) / 2) +
+                 "px; top: " + fmt(h / 2 - 1.5f) + "px; width: " + fmt(len) + "px; transform: rotate(-" + fmt(deg) +
+                 "deg);\"></div></div>";
+        }
+        // The list's name, top right; the legend, bottom centre. Laid out at
+        // 720 px tall, scaled to the window as the banner is.
+        const float scale = d.y / 720.f;
+        r += "<div id=\"top\" style=\"transform: scale(" + fmt(scale) + "); left: " + fmt(d.x - 624.f * scale) +
+             "px; top: " + fmt(22.f * scale) + "px;\"><div class=\"pill\">" +
+             enc(tr("xeleenet.sss.list", {{"list", stage_list_label(mask & kAllStages)}})) + "</div></div>";
+        // Only the host takes everyone back to the CSS (mnstagesel.c).
+        std::string keys = legend_key("stick", "xeleenet.legend.move") + legend_key("a", "xeleenet.legend.pick");
+        if (pc_net_local_player() == 0)
+            keys += legend_key("b", "xeleenet.legend.everyone_back");
+        r += "<div id=\"bottom\" style=\"transform: scale(" + fmt(scale) + "); left: " + fmt(d.x / 2 - 560.f * scale) +
+             "px; top: " + fmt(d.y - 70.f * scale) + "px;\"><div class=\"keys\">" + keys + "</div></div>";
+        if (r != last) {
+            last = r;
+            root->SetInnerRML(r);
+        }
+    }
+};
+
 Screen s_screen;
 Banner s_banner;
+SssOverlay s_sss;
 bool s_active = false;
 bool s_shown = false;
 bool s_f5_was = false;
@@ -1612,6 +1689,17 @@ extern "C" void pc_xn_menu_update(void) {
         }
         s_banner.update();
     }
+    s_sss.update();
 }
 
 extern "C" void pc_xn_banner_show(bool show) { s_banner.show(show); }
+
+extern "C" void pc_xn_sss_frame(uint32_t mask, int n, const float rects[][4]) {
+    s_sss.mask = mask;
+    s_sss.off.assign(n, {});
+    for (int i = 0; i < n; i++)
+        s_sss.off[i] = {rects[i][0], rects[i][1], rects[i][2], rects[i][3]};
+    s_sss.show(true);
+}
+
+extern "C" void pc_xn_sss_show(bool show) { s_sss.show(show); }

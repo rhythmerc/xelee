@@ -308,6 +308,9 @@ xeleenet:
   legend:
     change: Change
     confirm: OK                      # A on the preset bar: on to the rules
+    move: Move
+    pick: Pick
+    everyone_back: Everyone back to CSS   # the stage select, the host's only
     select: Select
     open: Open lobby
     back: Back
@@ -324,6 +327,10 @@ xeleenet:
     cancel: Cancel
 
   # The lobby's banner over the CSS: its name, rules and code.
+  # The stage select's overlay: the lobby's stage list, top right.
+  sss:
+    list: "Lobby list: {list}"
+
   banner:
     brand: XeleeNet
     lobby: XeleeNet lobby            # a lobby whose name isn't known yet

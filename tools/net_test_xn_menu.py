@@ -110,6 +110,54 @@ def drive_css(insts):
     return False
 
 
+def css_loads(inst):
+    return len(nt.re.findall(nt.SCENE_FILE["css"], inst.text()))
+
+
+def sss_host_b(insts, shots):
+    """The stage select in a lobby: a guest's B does nothing; a guest's A on a
+    stage off the lobby's list is refused; the host's B takes everyone back to
+    the CSS, which picks again (P1 of docs/xeleenet-ready-plan.md)."""
+    host, guest = insts[0], insts[1]
+    before = [css_loads(i) for i in insts]
+    nt.press((guest,), "Z", 9, 2.0)
+    if [css_loads(i) for i in insts] != before:
+        print("FAIL: a guest's B left the stage select")
+        return False
+    print("net_test_xn_menu: a guest's B did nothing", flush=True)
+    # The cursor starts under the bottom row; straight up are rows of stages
+    # off the Competitive list (up-left is RANDOM, a valid pick). Step up
+    # until one refuses a pick.
+    refused = False
+    for frames in (12, 12, 12, 12, 12):
+        nt.press((guest,), "Up", frames, 0.4)
+        nt.press((guest,), "X", 7, 0.8)
+        if "is off the lobby's list" in guest.text():
+            refused = True
+            break
+        if "sss: we picked" in guest.text():
+            break
+    if not refused:
+        print("FAIL: no off-list stage refused a pick (or a pick went through)")
+        return False
+    print("net_test_xn_menu: an off-list pick was refused", flush=True)
+    shot(guest, shots, "10b-sss-guest")
+    nt.press((host,), "Z", 9, 1.0)
+    deadline = time.time() + 30
+    while time.time() < deadline and not all(css_loads(i) > n for i, n in zip(insts, before)):
+        time.sleep(0.5)
+    if not all(css_loads(i) > n for i, n in zip(insts, before)):
+        print("FAIL: the host's B didn't take everyone back to the CSS")
+        return False
+    print("net_test_xn_menu: the host's B took everyone back to the CSS", flush=True)
+    time.sleep(3)
+    if not drive_css(insts):
+        print("FAIL: no CSS pick reached the SSS the second time")
+        return False
+    time.sleep(2)
+    return True
+
+
 def run(args):
     names = "abcd"[:args.players]
     shots = args.shots or os.path.join(args.work, "shots")
@@ -195,6 +243,8 @@ def run(args):
             return False
         time.sleep(2)
         shot(host, shots, "10-sss")
+        if args.scenario == "sss-host-b" and not sss_host_b(insts, shots):
+            return False
         if not nt.press_until(insts, "Return", 9, r"sss: resolved cell", tries=8, each=6.0):
             print("FAIL: the SSS never resolved a stage everywhere")
             return False
@@ -233,6 +283,8 @@ def main():
     ap.add_argument("--players", type=int, choices=(2, 3, 4), default=3)
     ap.add_argument("--seconds", type=float, default=40, help="of match after it loads")
     ap.add_argument("--block", default="")
+    ap.add_argument("--scenario", default="", choices=("", "sss-host-b"),
+                    help="sss-host-b: guest B and off-list picks refused, host B back to the CSS")
     ap.add_argument("--url", default="", help="a running service instead of a local wrangler dev")
     ap.add_argument("--exe", default=os.path.join(HERE, "..", "build", "linux", "melee"))
     ap.add_argument("--disc", default=os.path.expanduser(

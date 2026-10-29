@@ -130,6 +130,9 @@ struct StageSelUserData {
 #include <sysdolphin/baselib/sislib.h>
 #include "pc/pc.h"
 #include "mnstagesel_slippi.h"
+#include <melee/gm/gmonlinemode.h>
+#include <melee/lb/lbvector.h>
+#include "pc/xeleenet_menu.h"
 
 /* A compact ranked list uses synchronized pads and makes both bans visible.
  * It does not depend on the archive's cursor geometry. */
@@ -201,6 +204,68 @@ static void rankStageFrame(void)
  * XeleeNet lobby has up to four players (docs/xeleenet-plan.md). */
 static int net_picks[4] = { -1, -1, -1, -1 };
 static bool net_slippi_fixed; /* the ticket chose the stage; skip the pick exchange */
+
+/* XeleeNet: a stage off the lobby's list (the host's stage_mask, in force on
+ * every player as RULES; gm_80164330 reads it, as Random does) is dimmed and
+ * can't be picked. */
+static bool sss_off_list(int cell)
+{
+    return gmOnline_XnFlow() && cell >= 0 && cell < NUM_STAGES &&
+           mnStageSel_803F06D0[cell].stkind != 0 &&
+           !(u8) gm_80164330(mnStageSel_803F06D0[cell].xA);
+}
+
+/* Each frame: the off-list icons' rectangles (fractions of the camera's
+ * viewport) and the lobby's mask, for the overlay that dims and strikes them
+ * and names the list (xeleenet_menu.cpp). The icons' own materials don't
+ * take a colour or alpha (tried: no change on screen). */
+static void sss_mark_off_list(void)
+{
+    float rects[NUM_STAGES][4];
+    int n = 0;
+    int i;
+    HSD_CObj* cobj;
+    if (!gmOnline_XnFlow() || mnStageSel_804D6C9C == NULL) {
+        return;
+    }
+    cobj = GET_COBJ(mnStageSel_804D6C9C);
+    for (i = 0; i < NUM_STAGES; i++) {
+        const struct StageListInfo* st = &mnStageSel_803F06D0[i];
+        Vec3 c, a, b, sa, sb;
+        float vw = cobj->viewport.xmax - cobj->viewport.xmin;
+        float vh = cobj->viewport.ymax - cobj->viewport.ymin;
+        if (!sss_off_list(i) || st->x0 == NULL || st->x8 < 2 || vw <= 0 || vh <= 0) {
+            continue;
+        }
+        lb_8000B1CC(st->x0, NULL, &c);
+        {
+            /* The stacked rows' cells pair up by column (i ^ 1), and a pair's
+             * art is as wide as the wider: one hover box is narrower (2.1
+             * against 3.1) and its card covered half the icon. */
+            float half_x = st->xC;
+            if (i < 22 && mnStageSel_803F06D0[i ^ 1].xC > half_x) {
+                half_x = mnStageSel_803F06D0[i ^ 1].xC;
+            }
+            a = c;
+            b = c;
+            a.x -= half_x;
+            a.y -= st->x10;
+            b.x += half_x;
+            b.y += st->x10;
+        }
+        if (lbVector_WorldToScreen(cobj, &a, &sa, 0) == NULL ||
+            lbVector_WorldToScreen(cobj, &b, &sb, 0) == NULL)
+        {
+            continue;
+        }
+        rects[n][0] = (MIN(sa.x, sb.x) - cobj->viewport.xmin) / vw;
+        rects[n][1] = (MIN(sa.y, sb.y) - cobj->viewport.ymin) / vh;
+        rects[n][2] = (MAX(sa.x, sb.x) - cobj->viewport.xmin) / vw;
+        rects[n][3] = (MAX(sa.y, sb.y) - cobj->viewport.ymin) / vh;
+        n++;
+    }
+    pc_xn_sss_frame(gmMainLib_GetGamePrefs()->stage_mask, n, rects);
+}
 
 static bool netStageSel_Active(void)
 {
@@ -485,7 +550,11 @@ void mnStageSel_80259C28(void)
             return;
         }
         if (mnStageSel_804D6CAE < 0x1E &&
-            mnStageSel_803F06D0[mnStageSel_804D6CAE].x8 >= 2)
+            mnStageSel_803F06D0[mnStageSel_804D6CAE].x8 >= 2
+#ifdef TARGET_PC
+            && !sss_off_list(mnStageSel_804D6CAE)
+#endif
+        )
         {
 #ifdef TARGET_PC
             if (netStageSel_Active() && !pc_rank_session_active()) {
@@ -494,6 +563,11 @@ void mnStageSel_80259C28(void)
 #endif
             goto skip_randomize;
         }
+#ifdef TARGET_PC
+        if (sss_off_list(mnStageSel_804D6CAE)) {
+            pc_log_line("sss: cell %d is off the lobby's list", mnStageSel_804D6CAE);
+        }
+#endif
         lbAudioAx_80024030(3);
         return;
     }
@@ -1261,6 +1335,7 @@ void mnStageSel_Scene_OnFrame(void)
 #endif
 #ifdef TARGET_PC
     frozenToggleFrame();
+    sss_mark_off_list();
 #endif
     if (sss_data->force_stage_id >= 0) {
         mnStageSel_804D6CAF = 2;
@@ -1302,7 +1377,10 @@ void mnStageSel_Scene_OnFrame(void)
         mnStageSel_804D6CAC = get_pad(mnStageSel_804D50A0)->stickX;
         mnStageSel_804D6CAD = get_pad(mnStageSel_804D50A0)->stickY;
 #ifdef TARGET_PC
-        if (netStageSel_Active() && !pc_rank_session_active()) {
+        if (gmOnline_XnFlow()) {
+            /* XeleeNet: the host alone takes everyone back to the CSS. */
+            b_pressed = (HSD_PadCopyStatus[0].trigger & 0x200) != 0;
+        } else if (netStageSel_Active() && !pc_rank_session_active()) {
             b_pressed = (HSD_PadCopyStatus[0].trigger & 0x200) ||
                         (HSD_PadCopyStatus[1].trigger & 0x200);
         } else
@@ -1371,6 +1449,7 @@ void mnStageSel_Scene_OnFrame(void)
 void mnStageSel_Scene_OnExit(UNUSED void* exit_data)
 {
 #ifdef TARGET_PC
+    pc_xn_sss_show(false);
     if (rank_text) { HSD_SisLib_803A5CC4(rank_text); rank_text = NULL; }
 #endif
     if (mnStageSel_804D6C94 != NULL) {

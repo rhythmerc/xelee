@@ -73,7 +73,12 @@ It builds on `docs/xeleenet-plan.md` (§3.4-§3.6) and the state in
 Each phase ends with a test run that shows it working, following the house rule
 of repro before fix.
 
-### P1 · Stage select: the list and host-only B (small)
+### P1 · Stage select: the list and host-only B (small) — done 2026-10-28
+
+Built as planned, with one change: the icons' materials don't take a colour
+or alpha, so the dimming is an overlay (`xeleenet-sss.rml`) of a dark card and
+a strike per off-list icon, placed by projecting each icon's hover box with
+`lbVector_WorldToScreen`. `net_test_xn_menu.py --scenario sss-host-b` passes.
 
 1. **Off-list stages:**
    - With `gmOnline_XnFlow()` and a RULES `stages` mask, dim each icon outside

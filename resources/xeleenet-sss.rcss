@@ -1,0 +1,19 @@
+/* XeleeNet's overlay on the stage select (src/pc/xeleenet_menu.cpp SssOverlay,
+ * wireframe S1): the stages off the lobby's list dimmed and struck, the list's
+ * name top right, the legend bottom centre. The cards are placed in window
+ * pixels; the pill and legend are laid out at 720 px tall and scaled. F5 in the
+ * game reloads this file. */
+* { box-sizing: border-box; }
+body { width: 100%; height: 100%; margin: 0; font-family: "Noto Sans"; color: #fff8e0; background-color: #00000000; }
+div, span { display: block; }
+#root { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+.off { position: absolute; border-radius: 4px; background-color: #0a0918c4; }
+.strike { position: absolute; height: 3px; background-color: #8a86a8a0; transform-origin: center; }
+/* Boxes of fixed width at the 720 px layout: the pill right-aligned in one,
+ * the legend centred in the other (inline blocks size to their content). */
+#top { position: absolute; width: 600px; height: 40px; text-align: right; transform-origin: 0 0; }
+#top .pill { display: inline-block; height: 36px; padding: 0 18px; font-size: 17px; font-weight: bold; line-height: 34px;
+             color: #f0e4b8; border: 2px #f0c226b0; border-radius: 18px; background-color: #0b0b10e0; }
+#bottom { position: absolute; width: 1120px; height: 46px; text-align: center; transform-origin: 0 0; }
+#bottom .keys { display: inline-block; height: 46px; padding: 0 14px; border: 1px #f0c22650; border-radius: 23px;
+                background-color: #0c0b08d8; }
