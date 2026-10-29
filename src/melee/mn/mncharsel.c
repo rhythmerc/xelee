@@ -17,6 +17,19 @@ static int css_text_ctx;
 /* Slippi's "Press START to ..." prompt is up: a valid pick is made. */
 bool mnCharSel_SlippiStartReady(void);
 
+/* tools/xn_preview.py's CSS states (MELEE_XN_PREVIEW=css-*): ports 1-3 are
+ * seated humans though no controller is plugged in, which would otherwise
+ * turn their cards to CPU. In a lobby the network fills every seated pad. */
+static bool cssXnPreviewSeat(int port)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char* p = getenv("MELEE_XN_PREVIEW");
+        on = p != NULL && strncmp(p, "css-", 4) == 0;
+    }
+    return on && port >= 0 && port < 3;
+}
+
 static bool cssOnline(int* local)
 {
     if (gmOnline_SlippiFlow()) {
@@ -2591,7 +2604,12 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
             buttons = HSD_PadCopyStatus[port].button;
             getStickDelta(port, &dx, &dy);
 
-            if (HSD_PadCopyStatus[cursor->x4].err != 0) {
+            if (HSD_PadCopyStatus[cursor->x4].err != 0
+#ifdef TARGET_PC
+                && !cssXnPreviewSeat(cursor->x4)
+#endif
+            )
+            {
                 if (cursor->x5 != 3) {
                     cursor->xC = (f32) ((15.0f * cursor->x4) - 31.0f);
                     cursor->x10 = -21.5f;
@@ -5787,6 +5805,18 @@ void mnCharSel_Scene_OnEnter(void* arg0)
         HSD_SisLib_803A62A0(0, "SdSlChr.usd", "SIS_SelCharData");
     }
     mnCharSel_804D6CF4 = 0;
+#ifdef TARGET_PC
+    {
+        /* tools/xn_preview.py's CSS states draw three players' tags: seat
+         * three humans, as a lobby would (VS. Mode's CSS has none seated). */
+        int k;
+        for (k = 0; k < 3; k++) {
+            if (cssXnPreviewSeat(k)) {
+                mnCharSel_804D6CB0->vs.start.players[k].slot_type = Gm_PKind_Human;
+            }
+        }
+    }
+#endif
 #ifdef TARGET_PC
     if (gmOnline_XnFlow()) {
         /* The doors keep their teams in their own state across visits:
