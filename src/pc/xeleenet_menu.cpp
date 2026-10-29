@@ -1704,8 +1704,14 @@ std::string stage_name_key(int id) {
     return "";
 }
 
-// The picks card's top, as a fraction of the screen: under the zoomed grid.
-constexpr float kCardTop = 0.7375f;
+// The picks card's bottom-left corner, as fractions of the game's picture
+// (the stage select drawn at PC_XN_SSS_ZOOM): as far in from the frame's
+// inner lines on the left as on the bottom. Measured with Brinstar Depths'
+// icon, whose bottom a card of three or four rows passes: those are narrow
+// enough to end left of it. Rows are kRowH apart and grid tiles kTileW by
+// kTileH, at 720 tall.
+constexpr float kCardLeft = 0.13f, kCardBottom = 0.8365f;
+constexpr float kRowH = 58.f, kTileW = 84.f, kTileH = 73.f;
 // An icon frame's corner cut, as a fraction of its width (measured).
 constexpr float kFrameCut = 0.07f;
 
@@ -1780,13 +1786,17 @@ struct SssOverlay {
              "px; top: " + fmt(22.f * scale) + "px;\"><div class=\"pill\">" +
              enc(tr("xeleenet.sss.list", {{"list", stage_list_label(mask & kAllStages)}})) + "</div></div>";
         const bool picks = st_at != 0 && SDL_GetTicks() - st_at < 500;
-        const int me = pc_net_local_player();
+        const bool sample = s_preview.rfind("sss-", 0) == 0; // tools/xn_preview.py: we are P2
+        const int me = sample ? 1 : pc_net_local_player();
         PcXnPunchView v;
         view(&v);
         std::array<std::string, 4> names;
-        for (int i = 0; i < v.nplayers; i++)
-            if (v.players[i].port >= 0 && v.players[i].port < 4)
-                names[v.players[i].port] = short_name(v.players[i].name);
+        if (sample)
+            names = {"RHYTHM", "PIXEL", "WAVEDASH KINGPN", "KOOPA"};
+        else
+            for (int i = 0; i < v.nplayers; i++)
+                if (v.players[i].port >= 0 && v.players[i].port < 4)
+                    names[v.players[i].port] = short_name(v.players[i].name);
         for (int i = 0; i < 4; i++)
             if (names[i].empty())
                 names[i] = "P" + std::to_string(i + 1);
@@ -1799,10 +1809,13 @@ struct SssOverlay {
         // Only the host takes everyone back to the CSS (mnstagesel.c); once
         // the draw is made, nobody has anything to press.
         if (!(picks && st.final)) {
+            // With a pick, B takes it back (the only way to change it); the
+            // host's B with none takes everyone back to the CSS.
             const bool mine = picks && me >= 0 && me < 4 && st.pick[me] >= 0;
-            std::string keys = legend_key("stick", "xeleenet.legend.move") +
-                               legend_key("a", mine ? "xeleenet.legend.change_pick" : "xeleenet.legend.pick");
-            if (me == 0)
+            std::string keys = mine ? legend_key("b", "xeleenet.legend.change_pick")
+                                    : legend_key("stick", "xeleenet.legend.move") +
+                                          legend_key("a", "xeleenet.legend.pick");
+            if (me == 0 && !mine)
                 keys += legend_key("b", "xeleenet.legend.everyone_back");
             r += "<div id=\"bottom\" style=\"transform: scale(" + fmt(scale) + "); left: " +
                  fmt(d.x / 2 - 560.f * scale) + "px; top: " + fmt(d.y - 62.f * scale) +
@@ -1842,23 +1855,28 @@ struct SssOverlay {
         return r;
     }
 
-    // The picks card (wireframe S2): a strip under the grid, in the room the
-    // zoom leaves (PC_XN_SSS_ZOOM), clear of the hovered stage's name (bottom
-    // left). A tile per player, their colour round the picture, and the pick
-    // timer once it runs.
+    // The picks card (wireframe S2), in the corner under RANDOM where Melee
+    // shows the hovered stage's name and series (hidden in a lobby,
+    // mnstagesel.c): a row per player, or for four a 2x2 grid of pictures.
+    // Our own entry stands in for the hidden name: the stage the cursor is
+    // on, ghosted, until we pick. Anything not locked in is faint, its
+    // colour bar too.
     std::string card(const Rml::Vector2i d, const std::array<std::string, 4>& names, int me) const {
-        // From the stage select's first frame: everyone "Choosing…" until
-        // they pick.
         if (st.ports == 0)
             return "";
-        const float k = d.y / 720.f;
         int n = 0;
         for (int i = 0; i < 4; i++)
             n += (st.ports >> i) & 1;
-        const float cw = 24.f + n * 124.f - 4.f;
-        std::string r = "<div id=\"card\" style=\"transform: scale(" + fmt(k) + "); width: " + fmt(cw) +
-                        "px; left: " + fmt(d.x / 2 - cw * k / 2) + "px; top: " + fmt(kCardTop * d.y) +
-                        "px;\"><div class=\"ctitle\">" +
+        const float k = d.y / 720.f;
+        const bool grid = n >= 4;
+        // Taller than Brinstar Depths' bottom, the card must end left of it.
+        const float w = n <= 2 ? 250.f : 210.f;
+        const float h = grid ? 40.f + 2 * kTileH + 8.f : 40.f + n * kRowH + 10.f;
+        // Names cut short to fit three rows' width (the "(you)" kept whole).
+        const size_t chars = n == 3 ? 12 : 15;
+        std::string r = "<div id=\"card\" style=\"transform: scale(" + fmt(k) + "); width: " + fmt(w) +
+                        "px; height: " + fmt(h) + "px; left: " + fmt(kCardLeft * d.x) + "px; top: " +
+                        fmt(kCardBottom * d.y - h * k) + "px;\"><div class=\"ctitle\">" +
                         enc(tr("xeleenet.sss.picks_title"));
         if (st.timer >= 0) {
             const int secs = (st.timer + 59) / 60;
@@ -1869,27 +1887,54 @@ struct SssOverlay {
         if (st.timer >= 0 && st.timer_total > 0)
             r += "<div style=\"width: " + fmt(100.f * st.timer / st.timer_total) + "%;\"></div>";
         r += "</div>";
-        int c = 0;
+        int at = 0;
         for (int i = 0; i < 4; i++) {
             if (!(st.ports & (1u << i)))
                 continue;
             const int p = st.pick[i];
-            r += "<div class=\"ctile\" style=\"left: " + fmt(12.f + c++ * 124.f) + "px;\"><div class=\"cpic" +
-                 std::string(p < 0 ? " pend" : "") + "\" style=\"border-color: " +
-                 std::string(p < 0 ? "#6f6852" : kPortColor[i]) + ";\">" +
-                 thumb(p >= 0 && p < 30 ? p : -1, p >= 29, "cthumb") +
-                 (p >= 0 ? "<div class=\"ccheck\"><div></div></div>" : "") + "</div><div class=\"cname\">" +
-                 enc(i == me ? tr("xeleenet.sss.you", {{"name", names[i]}}) : names[i]) + "</div>";
-            if (p < 0)
-                r += "<div class=\"cstage pend\">" + enc(tr("xeleenet.sss.choosing")) + "</div>";
+            const bool ghost = p < 0 && i == me && st.hover >= 0;
+            std::string pic;
+            if (p >= 0)
+                pic = "<div class=\"cpic\" style=\"border-color: " + std::string(kPortColor[i]) + ";\">" +
+                      thumb(p < 30 ? p : -1, p >= 29, "cthumb") + "</div>";
+            else if (ghost)
+                pic = "<div class=\"cpic pend\"><div class=\"ghost\">" + thumb(st.hover, false, "cthumb") + "</div></div>";
             else
-                r += "<div class=\"cstage\">" +
-                     enc(st.pick_id[i] >= 0 ? tr(stage_name_key(st.pick_id[i]).c_str())
-                                            : tr("xeleenet.sss.random")) +
-                     "</div>";
-            r += "</div>";
+                pic = "<div class=\"cpic pend\"></div>";
+            const std::string bar = "<div class=\"cbar" + std::string(p < 0 ? " pend" : "") +
+                                    "\" style=\"background-color: " + std::string(kPortColor[i]) + ";\"></div>";
+            if (grid) {
+                const float x = 14.f + (at % 2) * (kTileW + 12.f), y = 40.f + (at / 2) * kTileH;
+                at++;
+                // No names: which tile is ours is its port, as our cursor's
+                // token reads, bright among the others.
+                r += "<div class=\"ctile\" style=\"left: " + fmt(x) + "px; top: " + fmt(y) + "px;\">" + bar + pic +
+                     "<div class=\"ctag" + std::string(i == me ? " me" : "") + "\">P" + std::to_string(i + 1) +
+                     "</div></div>";
+                continue;
+            }
+            std::string stage;
+            if (p >= 0)
+                stage = "<div class=\"cstage\">" +
+                        enc(st.pick_id[i] >= 0 ? tr(stage_name_key(st.pick_id[i]).c_str()) : tr("xeleenet.sss.random")) +
+                        "</div>";
+            else if (ghost)
+                stage = "<div class=\"cstage pend\">" + enc(tr(stage_name_key(st.hover_id).c_str())) + "</div>";
+            else
+                stage = "<div class=\"cstage pend\">" + enc(tr("xeleenet.sss.choosing")) + "</div>";
+            const std::string you = tr("xeleenet.sss.you", {{"name", ""}}); // " (you)" around nothing
+            const std::string name =
+                i == me ? tr("xeleenet.sss.you", {{"name", clip(names[i], chars > you.size() ? chars - you.size() : 1)}})
+                        : clip(names[i], chars);
+            r += "<div class=\"crow\" style=\"top: " + fmt(40.f + at++ * kRowH) + "px;\">" + bar + pic +
+                 "<div class=\"cname\">" + enc(name) + "</div>" + stage + "</div>";
         }
         return r + "</div>";
+    }
+
+    // A name cut to `n` characters, its last an ellipsis (names are ASCII).
+    static std::string clip(const std::string& s, size_t n) {
+        return s.size() <= n ? s : s.substr(0, n - 1) + "\xe2\x80\xa6";
     }
 
     // The draw (wireframe S3, S4): the cards side by side, the highlight

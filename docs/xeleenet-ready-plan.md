@@ -305,10 +305,22 @@ Built as planned, with these differences:
   back after the host had made the draw. The host sends one or the other.
 - **The timer is on the card.** The host sends the deadline when the first
   pick lands (`NET_MSG_STAGE_TIMER` 0x23), and the card counts it down.
-- **The card is a strip under the grid:** a tile per player with their
-  colour round the picture, a tick, the name and the stage. The stage select
-  draws at 0.88 about its centre (`PC_XN_SSS_ZOOM`, as the CSS does) to make
-  the room, clear of the hovered stage's name and series (bottom left).
+- **The card sits in the corner under RANDOM,** where Melee's circle is
+  hidden in a lobby (the border model's own mesh; its frame lines stay), as far
+  in from the frame's left line as from its bottom. Two or three players get
+  a row each (colour, picture, tick, name, stage; with three, names are cut
+  to 12 characters, "(you)" kept whole); four get a 2x2 grid of pictures.
+  Three or four reach above Brinstar Depths' icon, so those end left of it.
+  The hovered stage's name and its series are hidden in a lobby: our own
+  entry stands in for them, the stage the cursor is on ghosted (35%), with
+  its name, until we pick. Anything not locked in is faint, its colour bar
+  too. The stage select draws at 0.88 about its centre (`PC_XN_SSS_ZOOM`, as
+  the CSS does).
+- **A pick changes through B:** B with a pick takes it back (a STAGE_PICK of
+  0xFF), and A with one does nothing, so a row always shows the pick that
+  stands. The host's B with no pick still takes everyone back to the CSS.
+  Nothing changes once FINAL is in. This replaces decision 9's "A on another
+  stage changes yours".
 - **The rings on the grid** follow the icons' frames: sized by the scale
   Melee gives its hover frame, with the frame's corner cuts (the upper grid's
   are square at the bottom right). RmlUi has no polygons, so each ring is a
@@ -339,8 +351,8 @@ Tests: `tools/net_test_xn_menu.py`, 3 players:
 
 Not covered:
 - The headset (item 5): the card and the draw are untested on the menu quad.
-- `tools/xn_preview.py` has no stage-select pages: nothing boots into the
-  stage select offline. The test run's screenshots stand in.
+- `tools/xn_preview.py sss-N|sss-draw-N|sss-landed-N` (N players, 2-4) boot
+  VS mode's stage select (`MELEE_BOOT_SCENE=sss`) with sample picks.
 - Under the simulator's delay, the host's settle at a join waits the full
   1.5 s: the simulator drops held packets when a session starts, the other
   players' last acks among them.

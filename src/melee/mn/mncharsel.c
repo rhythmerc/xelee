@@ -6187,6 +6187,21 @@ void mnCharSel_Scene_OnFrame(void)
         return;
     }
     {
+        /* MELEE_BOOT_SCENE=sss (tools/xn_preview.py's sss-* pages): VS
+         * mode's CSS goes straight on to its stage select, once. */
+        static int boot_sss = -1;
+        if (boot_sss < 0) {
+            const char* b = getenv("MELEE_BOOT_SCENE");
+            boot_sss = b != NULL && strcmp(b, "sss") == 0;
+        }
+        if (boot_sss == 1 && mnCharSel_804D6CEC >= 30) {
+            boot_sss = 0;
+            mnCharSel_804D6CF6 = 1;
+            gm_801A4B60();
+            return;
+        }
+    }
+    {
         static bool dumped;
         if (!dumped && mnCharSel_804D6CEC == 90 && getenv("MELEE_CSS_DUMP")) {
             int id;

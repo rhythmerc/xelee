@@ -258,7 +258,8 @@ def sss_picks(insts, shots, scenario):
         if c is None:
             print("FAIL: sss-repick wants three players")
             return False
-        # P2: Battlefield, then Final Destination, then Dream Land.
+        # P2: Battlefield, then Final Destination, then Dream Land; a change
+        # is B (the pick back), then A. A with a pick does nothing.
         if not steer(b, "Up", BF):
             return False
         nt.press((b,), "X", 7, 0.5)
@@ -266,7 +267,12 @@ def sss_picks(insts, shots, scenario):
         for cell in (FD, DL):
             if not steer(b, "Right", cell):
                 return False
+            nt.press((b,), "X", 7, 0.4)  # refused: P2 has a pick
+            nt.press((b,), "Z", 7, 0.4)  # B: the pick back
             nt.press((b,), "X", 7, 0.5)
+        if not host.wait_log(r"sss: P2 took their pick back", 5):
+            print("FAIL: P2's B didn't take its pick back")
+            return False
         # The host picks Battlefield; then P3's Random and P2's last change
         # (back to Final Destination) go in together.
         if not steer(host, "Up", BF):
@@ -275,6 +281,7 @@ def sss_picks(insts, shots, scenario):
         shot(host, shots, "10d-sss-card-host")
         if not steer(b, "Left", FD):
             return False
+        nt.press((b,), "Z", 7, 0.1)
         b.key("X 120")
         c.key("Return 120")
         time.sleep(0.9)

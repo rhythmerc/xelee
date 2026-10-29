@@ -138,6 +138,7 @@ struct StageSelUserData {
 #include <melee/lb/lbvector.h>
 #include <aurora/aurora.h>
 #include <sysdolphin/baselib/initialize.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -457,6 +458,7 @@ static int netStageSel_Random(void)
 #define XN_LEAD 12               /* FINAL to the draw's first frame: the message's trip */
 #define XN_RESEND 15             /* a changed pick goes out at most this often */
 #define XN_THUMBS_AT 60          /* the icons' textures have settled by then */
+#define XN_UNPICK 0xFF           /* a STAGE_PICK taking a pick back */
 
 static struct {
     bool final;     /* FINAL is in (or, on the host, out) */
@@ -469,7 +471,7 @@ static struct {
     u8 timed_out;
     int chosen;
     s32 start, deadline, sent_at;
-    int pending; /* our newest pick, not out yet */
+    int pending; /* our newest pick (or XN_UNPICK), not out yet */
     int lit;
     int frames;
     int over; /* the cell under the cursor, for the log */
@@ -519,17 +521,20 @@ static int xnSss_RandomCell(void)
     return n > 0 ? allowed[xnSss_Rand() % (u32) n] : 0;
 }
 
-/* A on a stage (or Random): ours until FINAL. */
+/* A on a stage (or Random): ours until FINAL, or until B takes it back. A
+ * with a pick does nothing: a change goes through B, so the card's row
+ * always shows the pick that stands. */
 static void xnSss_Pick(int cell)
 {
     int me = pc_net_local_player() & 3;
     if (xn_sss.final || xn_sss.leaving) {
         return;
     }
-    sfxForward();
-    if (net_picks[me] == cell) {
+    if (net_picks[me] >= 0) {
+        lbAudioAx_80024030(3);
         return;
     }
+    sfxForward();
     net_picks[me] = cell;
     xn_sss.pending = cell;
     pc_log_line("sss: we picked %d", cell);
@@ -615,8 +620,12 @@ static void xnSss_Poll(void)
         if (type == NET_MSG_STAGE_PICK && n >= 2 && buf[1] < 4 &&
             buf[1] != pc_net_local_player() && !xn_sss.final)
         {
-            net_picks[buf[1]] = buf[0];
-            pc_log_line("sss: P%d picked %d", buf[1] + 1, buf[0]);
+            net_picks[buf[1]] = buf[0] == XN_UNPICK ? -1 : buf[0];
+            if (buf[0] == XN_UNPICK) {
+                pc_log_line("sss: P%d took their pick back", buf[1] + 1);
+            } else {
+                pc_log_line("sss: P%d picked %d", buf[1] + 1, buf[0]);
+            }
         } else if (type == NET_MSG_STAGE_TIMER && n >= 4 && pc_net_local_player() != 0) {
             xn_sss.deadline = (s32) ((u32) buf[0] << 24 | (u32) buf[1] << 16 | (u32) buf[2] << 8 | buf[3]);
         } else if (type == NET_MSG_STAGE_FINAL && n >= 14 && pc_net_local_player() != 0 &&
@@ -650,13 +659,20 @@ static void xnSss_Poll(void)
     }
 }
 
-/* The host's B, or its BACK arriving: true once, on the frame to leave. */
+/* B: with a pick, anyone's takes it back (not once FINAL is in). The
+ * host's with none, or its BACK arriving: true once, on the frame to leave. */
 static bool xnSss_Back(void)
 {
+    int me = pc_net_local_player() & 3;
     if (xn_sss.leaving || xn_sss.final) {
         return false;
     }
-    if (pc_net_local_player() == 0 && (HSD_PadCopyStatus[0].trigger & HSD_PAD_B)) {
+    if ((HSD_PadCopyStatus[me].trigger & HSD_PAD_B) && net_picks[me] >= 0) {
+        net_picks[me] = -1;
+        xn_sss.pending = XN_UNPICK;
+        sfxBack();
+        pc_log_line("sss: we took our pick back");
+    } else if (me == 0 && (HSD_PadCopyStatus[0].trigger & HSD_PAD_B)) {
         xn_sss.back_want = true;
     }
     if (xn_sss.back_want && pc_net_send_reliable(NET_MSG_STAGE_BACK, NULL, 0)) {
@@ -788,6 +804,65 @@ static void xnSss_OverlayCreate(void)
     GObj_SetupGXLink(gobj, (GObj_RenderFunc) xnSss_OverlayRender, 4, 0x85);
 }
 
+/* tools/xn_preview.py's sss-[draw-|landed-]N pages (MELEE_BOOT_SCENE=sss,
+ * MELEE_XN_PREVIEW): N players over the real stage select, with sample
+ * picks; we are P2, choosing, on Pokemon Stadium. */
+static void xnSss_PreviewFrame(void)
+{
+    static const s8 picks[4] = { 24, -1, 30, -1 };
+    static const s8 cells[4] = { 24, 18, 25, 26 };
+    const char* p = getenv("MELEE_XN_PREVIEW");
+    PcXnSssState st;
+    int n = 4, i;
+    bool draw = false, landed = false;
+    if (p == NULL || strncmp(p, "sss-", 4) != 0) {
+        return;
+    }
+    p += 4;
+    if (strncmp(p, "draw-", 5) == 0) {
+        draw = true;
+        p += 5;
+    } else if (strncmp(p, "landed-", 7) == 0) {
+        landed = true;
+        p += 7;
+    }
+    n = *p >= '2' && *p <= '4' ? *p - '0' : 4;
+    if (++xn_sss.frames == XN_THUMBS_AT) {
+        xnSss_Thumbs();
+    }
+    memset(&st, 0, sizeof st);
+    st.ports = (u8) ((1 << n) - 1);
+    st.chosen = -1;
+    st.lit = -1;
+    st.t = -1;
+    st.draw = XN_DRAW;
+    st.rest = XN_REST;
+    st.timer = 9 * 60 + 20;
+    st.timer_total = XN_PICK_TIMER;
+    st.hover = st.hover_id = -1;
+    for (i = 0; i < 4; i++) {
+        int c = i < n ? picks[i] : -1;
+        st.pick[i] = (s8) c;
+        st.pick_id[i] = c >= 0 && c < NUM_STAGES ? (s8) mnStageSel_803F06D0[c].xA : -1;
+        st.outline_ok[i] = c >= 0 && c < NUM_STAGES && xnSss_IconOnScreen(c, st.outline[i]);
+        st.outline_bevels[i] = c < 22 ? 0xB : 0xF;
+        st.cell[i] = cells[i];
+        st.cell_id[i] = (s8) mnStageSel_803F06D0[cells[i]].xA;
+    }
+    st.hover = 18;
+    st.hover_id = (s8) mnStageSel_803F06D0[18].xA;
+    if (draw || landed) {
+        st.final = true;
+        st.random = 1 << 2;
+        st.timed_out = n > 3 ? 1 << 3 : 0;
+        st.chosen = 1;
+        st.t = landed ? XN_DRAW + 10 : XN_DRAW / 2;
+        st.lit = landed ? 1 : 0;
+        st.timer = -1;
+    }
+    pc_xn_sss_picks(&st);
+}
+
 /* Once a frame in a XeleeNet lobby: the messages, our pick, the host's timer
  * and FINAL, the draw, and the overlay's state. */
 static void xnSss_Frame(void)
@@ -857,6 +932,13 @@ static void xnSss_Frame(void)
         /* The upper grid's frames are square at the bottom right; Icicle
          * Mountain, Flat Zone and the bottom row cut all four corners. */
         st.outline_bevels[i] = p < 22 ? 0xB : 0xF;
+    }
+    /* What our cursor is on, ghosted in our row until we pick. */
+    st.hover = -1;
+    st.hover_id = -1;
+    if (!xn_sss.final && net_picks[me] < 0 && xnSss_Listed(mnStageSel_804D6CAE)) {
+        st.hover = (s8) mnStageSel_804D6CAE;
+        st.hover_id = (s8) mnStageSel_803F06D0[mnStageSel_804D6CAE].xA;
     }
     if (xn_sss.final) {
         bool same = xnSss_Same();
@@ -1142,6 +1224,11 @@ void mnStageSel_80259ED8(int id)
     temp_r3_2->x0 = id;
     temp_r3_2->x4 = 0;
     temp_r3_2->x2 = 0;
+#ifdef TARGET_PC
+    if (gmOnline_XnFlow()) {
+        HSD_JObjSetFlagsAll(jobj, JOBJ_HIDDEN); /* the picks card's row names it */
+    }
+#endif
     if (id < 0x1E && mnStageSel_803F06D0[id].x8 >= 2) {
         do_anim(jobj, 20.0F * mnStageSel_803F06D0[id].x9);
     }
@@ -1398,6 +1485,17 @@ static inline void make_bg_model(HSD_JObj** out)
     }
 #endif
     *out = gobj->hsd_obj;
+#ifdef TARGET_PC
+    /* XeleeNet: the circle under RANDOM makes room for the picks card. It's
+     * the border's own mesh (its one child is the frame's lines, which
+     * stay). */
+    if (gmOnline_XnFlow()) {
+        HSD_DObj* d;
+        for (d = jobj->u.dobj; d != NULL; d = d->next) {
+            HSD_DObjSetFlags(d, DOBJ_HIDDEN);
+        }
+    }
+#endif
 }
 
 static inline void make_icon_root(HSD_JObj** icons)
@@ -1765,6 +1863,13 @@ void mnStageSel_Scene_OnEnter(void* arg0)
                 HSD_ForeachAnim(jobj, JOBJ_TYPE, ALL_TYPE_MASK,
                                 HSD_AObjStopAnim, AOBJ_ARG_AOV, NULL);
                 HSD_JObjSetTranslateX(jobj, 100.0F);
+#ifdef TARGET_PC
+                /* XeleeNet: the picks card sits here, and its own row
+                 * shows what the cursor is on. */
+                if (gmOnline_XnFlow()) {
+                    HSD_JObjSetFlagsAll(jobj, JOBJ_HIDDEN);
+                }
+#endif
                 temp_r3_14->x0 = 0x1E;
                 temp_r3_14->x4 = 0;
             }
@@ -1823,6 +1928,8 @@ void mnStageSel_Scene_OnFrame(void)
     sss_mark_off_list();
     if (gmOnline_XnFlow() && netStageSel_Active()) {
         xnSss_Frame();
+    } else if (gmOnline_XnFlow()) {
+        xnSss_PreviewFrame();
     }
 #endif
     if (sss_data->force_stage_id >= 0) {

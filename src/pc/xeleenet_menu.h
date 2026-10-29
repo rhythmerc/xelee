@@ -126,6 +126,7 @@ typedef struct PcXnSssState {
     float outline[4][4];
     uint8_t outline_bevels[4]; /* which of its corners are cut: bit 0 top left, then clockwise */
     int timer, timer_total; /* frames left to pick, -1 before the first pick */
+    int8_t hover, hover_id; /* the stage our cursor is on while we've no pick, else -1 */
     /* The draw, once the host's FINAL is in: */
     bool final;
     int8_t cell[4], cell_id[4]; /* what each card shows, Random drawn */

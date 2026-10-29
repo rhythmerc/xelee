@@ -37,7 +37,7 @@ static struct loadData load_data;
 static struct leaveData leave_data;
 
 #ifdef TARGET_PC
-/* MELEE_BOOT_SCENE=<title|vs|css|classic|adventure|allstar|homerun|training|unranked|direct|ranked|login|place|menu|xn-host|xn-join>: skip
+/* MELEE_BOOT_SCENE=<title|vs|css|sss|classic|adventure|allstar|homerun|training|unranked|direct|ranked|login|place|menu|xn-host|xn-join>: skip
  * the whole menu walk and boot into one scene with a fixed setup. Menu navigation here can only be
  * driven by synthetic input, which misses keypresses often enough that an
  * automated run cannot rely on it (see tools/smoke_test.py).
@@ -62,6 +62,8 @@ u8 pc_boot_scene(void)
             scene = GM_DEBUG_VS;
         } else if (strcmp(want, "css") == 0) {
             scene = GM_VS; /* VS mode, from its character select */
+        } else if (strcmp(want, "sss") == 0) {
+            scene = GM_VS; /* its stage select: the CSS goes on at once (mncharsel.c) */
         } else if (strcmp(want, "classic") == 0) {
             scene = GM_CLASSIC;
         } else if (strcmp(want, "adventure") == 0) {
@@ -100,7 +102,7 @@ u8 pc_boot_scene(void)
             gmOnline_SetXnIntent(want[3] == 'h' ? XN_INTENT_HOST : XN_INTENT_JOIN);
         } else {
             OSReport("MELEE_BOOT_SCENE: unknown scene '%s'; valid values are "
-                     "title, vs, css, classic, adventure, allstar, homerun, training, unranked, direct, ranked, login, register, place, menu, xn-host, xn-join\n",
+                     "title, vs, css, sss, classic, adventure, allstar, homerun, training, unranked, direct, ranked, login, register, place, menu, xn-host, xn-join\n",
                      want);
         }
     }
