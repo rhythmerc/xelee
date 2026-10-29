@@ -43,6 +43,7 @@ REV = "xn-trial"  # tools/xn_trial.py's tag: the Quest's melee-env.txt runs it
 # The Competitive list (xeleenet_menu.cpp kCompetitive): Random Stage Switch ids.
 COMPETITIVE = sum(1 << b for b in (24, 25, 26, 4, 5, 7))
 STAGES = [(xm.BF, "Right"), (xm.FD, "Right"), (xm.DL, "Right")]  # the bottom row, left to right
+REHOST = 2  # run()'s answer: start the game again and host a new lobby
 ENTER = re.compile(r"online: enter (CSS|SSS|VS splash|VS|RESULTS) at frame")
 
 
@@ -163,10 +164,17 @@ def run(args):
         code = re.search(r"xeleenet: lobby code ([A-Z0-9]{6})", bot.text()).group(1)
         say(f"hosting {args.name}'s 1v1, code {code[:3]} {code[3:]}: 1-minute time, no items")
         scene, games, stage_i, column = None, 0, 0, random.randrange(nt.CSS_COLS)
-        workout, last_try, last_start = None, 0.0, 0.0
+        workout, last_try, last_start, lost_since = None, 0.0, 0.0, 0.0
         need_pick, no_picks = True, 0  # a START with no pick says the pick went
         while bot.proc.poll() is None:
             text = bot.text()
+            # The lobby went (the guest dropped, the session failed): the
+            # game is out of the CSS and nothing comes after. Host again.
+            lost = last_index(text, r"net: disconnected|xeleenet pages: begin") > last_index(text, r"online: enter ")
+            lost_since = (lost_since or time.time()) if lost else 0.0
+            if lost and time.time() - lost_since > 10:
+                say("the lobby went; hosting again")
+                return REHOST
             entered = ENTER.findall(text)
             now_scene = entered[-1] if entered else None
             if now_scene != scene:
@@ -241,7 +249,10 @@ def main():
         sys.exit(f"no disc at {args.disc}; pass --disc")
     # A SIGTERM ends it as Ctrl-C does, so the game goes with it.
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
-    sys.exit(run(args))
+    while True:
+        rc = run(args)
+        if rc != REHOST:
+            sys.exit(rc)
 
 
 if __name__ == "__main__":

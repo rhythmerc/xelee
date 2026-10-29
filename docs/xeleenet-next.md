@@ -124,6 +124,27 @@ is in `resources/lang/en.yaml` (943161cc).
 The web build waits on WebRTC (browsers can't punch UDP); per-client cameras
 are planned and deferred (`docs/client-camera-plan.md`).
 
+## Queued: the CSS cards (after LAN L2, 2026-10-29)
+
+The user wants, in a lobby's CSS: the P1-P4 cards nudged down a little (room
+from the fighters' portraits), the cards of seats the lobby doesn't have
+hidden, and the rest centred. Found while scoping (MELEE_CSS_DUMP):
+- The CSS is one model of 173 joints. A card isn't a subtree: its emblem,
+  costume art, team colour, body, background, P indicator and sliders are
+  scattered joints (door 0: 46, 51, 56, 133, 41, 166, 61, 65, 64; door 1: 47,
+  52, 57, 141, 42, 168, 67, 71, 70), each to be offset every frame after its
+  animation.
+- Melee checks the hand against fixed coordinates: the card band is
+  `cursor->x10 < 0.2`; the team button is `CSSDoor.teambtn_left/right` with
+  y in (-5.8, -1); the CPU slider `mnCharSel_803F0EBC.cpubtn_*`. Moving cards
+  means mapping the hand back to Melee's layout for those tests (in
+  `mnCharSel_CursorThink`, after the move and clamp) and back again, without
+  moving the hand's drawing.
+- The name tags are SIS text placed per card; our tags, READY ribbons and
+  the leave ring use the fixed slots (`kDoorX0`, `kDoorPitch`).
+- Test: a Doubles run toggling teams on a moved card, name tags, and the
+  css-* previews at 2, 3 and 4 seats.
+
 ## Open follow-ups from XN1 and XN2
 
 - A silent player freezes the match for ~6.5 s before it's declared gone.
