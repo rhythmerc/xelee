@@ -1521,15 +1521,17 @@ struct Banner {
                 const float y = css_zoom(kDoorY0) * d.y, h = kDoorH * PC_XN_CSS_ZOOM * d.y;
                 std::string tag;
                 if (s_css.ready & bit) {
-                    tag = "<div class=\"ribbon\" style=\"top: " + fmt(0.54f * h) + "px; height: " + fmt(0.10f * h) +
+                    // At the card's foot, inside its frame (3 px, as at its sides).
+                    tag = "<div class=\"ribbon\" style=\"bottom: 3px; height: " + fmt(0.10f * h) +
                           "px; line-height: " + fmt(0.10f * h) + "px; font-size: " + fmt(18.f * k) + "px;\">" +
                           enc(tr("xeleenet.css.tag_ready")) + "</div>";
                 } else if (s_css.waiting & bit) {
-                    tag = "<div class=\"dash\"></div><div class=\"tag warn\" style=\"top: " + fmt(0.58f * h) +
+                    tag = "<div class=\"dash\"></div><div class=\"tag warn\" style=\"bottom: " + fmt(0.1f * w) +
                           "px; font-size: " + fmt(11.f * k) + "px; height: " + fmt(22.f * k) + "px; line-height: " +
                           fmt(20.f * k) + "px;\">" + enc(tr("xeleenet.css.tag_waiting")) + "</div>";
                 } else if (s_css.picked & bit) {
-                    tag = "<div class=\"tag\" style=\"top: " + fmt(0.58f * h) + "px; font-size: " + fmt(11.f * k) +
+                    // Off the foot as far as off the sides (10% of the card's width).
+                    tag = "<div class=\"tag\" style=\"bottom: " + fmt(0.1f * w) + "px; font-size: " + fmt(11.f * k) +
                           "px; height: " + fmt(22.f * k) + "px; line-height: " + fmt(20.f * k) + "px;\">" +
                           enc(tr("xeleenet.css.tag_start")) + "</div>";
                 } else {
