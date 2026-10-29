@@ -1635,6 +1635,7 @@ struct Banner {
         if (r != last) {
             last = r;
             bar->SetInnerRML(r);
+            bar->SetClass("lan", lan()); // a shorter brand
         }
         update_doors(d, css);
     }

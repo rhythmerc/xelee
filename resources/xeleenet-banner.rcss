@@ -9,6 +9,9 @@ div, span { display: block; }
 .brand { position: absolute; left: 0; top: 4px; width: 234px; height: 64px; padding-left: 28px; font-size: 34px;
          font-weight: 800; letter-spacing: 2px; line-height: 62px; color: #ffffff;
          background-color: #c8321e; border-radius: 32px 0 0 32px; }
+/* LAN's brand is shorter: less red, a longer pill. */
+#bar.lan .brand { width: 146px; }
+#bar.lan .pill { left: 132px; }
 /* No italic face ships, so the brand leans by a skew. */
 .brand span { display: inline-block; transform: skewX(-12deg); }
 .pill { position: absolute; left: 220px; right: 0; top: 4px; height: 64px; border: 3px #f0c226; border-radius: 0 32px 32px 0;
