@@ -22,33 +22,34 @@
 
 /* Main Menu > Online Mode. Each entry selects its GM_ONLINE lobby mode. The
  * labels are drawn text (the menu's own labels are textures with no room for
- * new words), spelled as Slippi spells them. XeleeNet's are keys
- * (resources/lang/en.yaml). */
+ * new words); all of it is keys (resources/lang/en.yaml). */
 
 static const char* const online_labels[] = {
     "xeleenet.menu.online.label",
-    "Slippi",
-    "LAN",
+    "slippi.menu.online.label",
+    "online.lan.label",
 };
 
-/* <= 44 chars: that is what fits the bottom bar at mnmain.c's font size */
 static const char* const online_descriptions[] = {
     "xeleenet.menu.online.desc",
-    "Play over the internet with Slippi.",
-    "Host or join a lobby on your local network.",
+    "slippi.menu.online.desc",
+    "online.lan.desc",
 };
 
 /* Online Mode > Slippi: signed out it is Login and Register; signed in it is
  * Unranked, Direct, Place Stage (only with a headset presenting) and Logout. */
 enum { row_unranked, row_direct, row_place, row_logout, row_count };
-static const char* const slippi_in_labels[row_count] = { "Unranked", "Direct", "Place Stage",
-                                                         "Logout" };
-static const char* const slippi_in_descriptions[row_count] = {
-    "Play unranked matches.",
-    "Play a specific person.",
-    "Place the stage in your room.",
-    "Sign out of your Slippi account.",
-};
+static const char* const slippi_in_rows[row_count] = { "slippi.menu.unranked", "slippi.menu.direct",
+                                                       "slippi.menu.place_stage", "slippi.menu.logout" };
+static const char* const slippi_out_rows[] = { "slippi.menu.login", "slippi.menu.register" };
+
+/* `row`'s label or desc ("slippi.menu.login" + ".label"). */
+static const char* slippiText(const char* row, const char* what)
+{
+    char key[64];
+    snprintf(key, sizeof key, "%s.%s", row, what);
+    return pc_tr(key);
+}
 
 /* The signed-in menu's row at `selection`, or -1. */
 static int slippiRow(int selection)
@@ -105,7 +106,7 @@ void mnOnline_SlippiBuilt(void)
 const char* mnOnline_Label(MenuKind kind, int selection)
 {
     if (kind == MENU_KIND_MAIN && selection == SEL_MAIN_ONLINE) {
-        return "Online Mode";
+        return pc_tr("online.label");
     }
     if (kind == MENU_KIND_SETTINGS) {
         return mnPage_Label(selection); /* its pages' (mnpage.c) */
@@ -113,7 +114,7 @@ const char* mnOnline_Label(MenuKind kind, int selection)
     if (kind == MENU_KIND_ONLINE && selection >= 0 &&
         selection < (int) ARRAY_SIZE(online_labels))
     {
-        return selection == SEL_ONLINE_XN ? pc_tr(online_labels[selection]) : online_labels[selection];
+        return pc_tr(online_labels[selection]);
     }
     if (kind == MENU_KIND_ONLINE_XN && selection >= 0 &&
         selection < (int) ARRAY_SIZE(xn_labels))
@@ -122,10 +123,12 @@ const char* mnOnline_Label(MenuKind kind, int selection)
     }
     if (kind == MENU_KIND_ONLINE_SLIPPI) {
         if (!pc_net_match_slippi_ready()) {
-            return selection == 0 ? "Login" : selection == 1 ? "Register" : NULL;
+            return selection >= 0 && selection < (int) ARRAY_SIZE(slippi_out_rows)
+                       ? slippiText(slippi_out_rows[selection], "label")
+                       : NULL;
         }
         if (slippiRow(selection) >= 0) {
-            return slippi_in_labels[slippiRow(selection)];
+            return slippiText(slippi_in_rows[slippiRow(selection)], "label");
         }
     }
     return NULL;
@@ -134,7 +137,7 @@ const char* mnOnline_Label(MenuKind kind, int selection)
 const char* mnOnline_Description(MenuKind kind, int selection)
 {
     if (kind == MENU_KIND_MAIN && selection == SEL_MAIN_ONLINE) {
-        return "Play against other players over the network.";
+        return pc_tr("online.desc");
     }
     if (kind == MENU_KIND_SETTINGS) {
         return mnPage_Description(selection);
@@ -142,8 +145,7 @@ const char* mnOnline_Description(MenuKind kind, int selection)
     if (kind == MENU_KIND_ONLINE && selection >= 0 &&
         selection < (int) ARRAY_SIZE(online_descriptions))
     {
-        return selection == SEL_ONLINE_XN ? pc_tr(online_descriptions[selection])
-                                          : online_descriptions[selection];
+        return pc_tr(online_descriptions[selection]);
     }
     if (kind == MENU_KIND_ONLINE_XN && selection >= 0 &&
         selection < (int) ARRAY_SIZE(xn_descriptions))
@@ -152,12 +154,12 @@ const char* mnOnline_Description(MenuKind kind, int selection)
     }
     if (kind == MENU_KIND_ONLINE_SLIPPI) {
         if (!pc_net_match_slippi_ready()) {
-            return selection == 0 ? "Sign in to your Slippi account."
-                   : selection == 1 ? "Make a new Slippi account."
-                                    : NULL;
+            return selection >= 0 && selection < (int) ARRAY_SIZE(slippi_out_rows)
+                       ? slippiText(slippi_out_rows[selection], "desc")
+                       : NULL;
         }
         if (slippiRow(selection) >= 0) {
-            return slippi_in_descriptions[slippiRow(selection)];
+            return slippiText(slippi_in_rows[slippiRow(selection)], "desc");
         }
     }
     return NULL;
@@ -191,10 +193,10 @@ static void enterAfterPlacing(OnlineKind kind)
     const bool place = pc_xr_place_needed_online();
     if (calibrate || place) {
         pc_xr_place_plan(calibrate, place,
-                         place ? "PLACE THE STAGE" :
-                         kind == ONLINE_KIND_UNRANKED ? "UNRANKED" :
-                         kind == ONLINE_KIND_DIRECT ? "DIRECT" :
-                         kind == ONLINE_KIND_XN ? pc_tr("xeleenet.menu.place") : "LAN");
+                         place ? pc_tr("online.place") :
+                         kind == ONLINE_KIND_UNRANKED ? pc_tr("slippi.menu.place.unranked") :
+                         kind == ONLINE_KIND_DIRECT ? pc_tr("slippi.menu.place.direct") :
+                                                      pc_tr("xeleenet.menu.place"));
         gmOnline_SetKindAfterPlace(kind);
         enterOnline(ONLINE_KIND_PLACE);
         return;

@@ -480,13 +480,13 @@ static const char* mnPage_MainTitle(MenuKind kind)
 {
     switch (kind) {
     case MENU_KIND_ONLINE:
-        return "Online Mode";
+        return pc_tr("online.title");
     case MENU_KIND_ONLINE_SLIPPI:
-        return "Slippi";
+        return pc_tr("slippi.menu.tab");
     case MENU_KIND_ONLINE_XN:
         return pc_tr("xeleenet.menu.tab");
     case MENU_KIND_SLIPPI_PAGE: /* Slippi's sign-in pages, or XeleeNet's */
-        return mnXeleeNet_Active() ? pc_tr("xeleenet.menu.tab") : "Slippi";
+        return pc_tr(mnXeleeNet_Active() ? "xeleenet.menu.tab" : "slippi.menu.tab");
     default:
         return NULL;
     }

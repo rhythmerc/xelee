@@ -15,7 +15,53 @@
 #   - RmlUi-drawn: everything inside the pages and the CSS banner. No limit
 #     but the room on screen.
 #
-# Only XeleeNet's text is here so far.
+# So far: Online Mode's menus and XeleeNet's text.
+
+# Main Menu > Online Mode (Melee-drawn): the main menu's row, the menu's tab
+# title and its LAN row. The XeleeNet row is xeleenet.menu.online, the Slippi
+# row slippi.menu.online.
+online:
+  label: Online Mode
+  desc: Play against other players over the network.
+  title: Online Mode
+  lan:
+    label: LAN
+    desc: Host or join a lobby on your local network.
+  # Headset only: the placing screen's way on, when the stage hasn't been
+  # placed this launch (39 at most).
+  place: PLACE THE STAGE
+
+# Online Mode > Slippi (Melee-drawn): its row, its tab, and its own menu.
+# Signed out it is Login and Register; signed in it is Unranked, Direct,
+# Place Stage (only with a headset presenting) and Logout.
+slippi:
+  menu:
+    online:
+      label: Slippi
+      desc: Play over the internet with Slippi.
+    tab: Slippi                      # over this menu and the sign-in pages
+    login:
+      label: Login
+      desc: Sign in to your Slippi account.
+    register:
+      label: Register
+      desc: Make a new Slippi account.
+    unranked:
+      label: Unranked
+      desc: Play unranked matches.
+    direct:
+      label: Direct
+      desc: Play a specific person.
+    place_stage:
+      label: Place Stage
+      desc: Place the stage in your room.
+    logout:
+      label: Logout
+      desc: Sign out of your Slippi account.
+    # Headset only: the placing screen's way on to each mode (39 at most).
+    place:
+      unranked: UNRANKED
+      direct: DIRECT
 
 xeleenet:
   # Main Menu > Online Mode: XeleeNet's row, then its own menu (Melee-drawn).
