@@ -410,6 +410,13 @@ def leave_guest(insts, shots):
     if not all(i.wait_log(kept, 60) for i in insts):
         print("FAIL: the picks didn't reach everyone, the newcomer included")
         return False
+    # The rejoin goes straight from Joining to the CSS: a B left over from
+    # the leave's hold once read as back, and the list showed for a while
+    # (a Quest find).
+    rejoin = leaver.text()[leaver.text().rfind("xeleenet pages: joining"):]
+    if "xeleenet pages: Joining -> Lobbies" in rejoin:
+        print("FAIL: the rejoin went back to the lobby list before the CSS")
+        return False
     print("net_test_xn_menu: the leaver joined again from the list; the picks went on", flush=True)
     time.sleep(4)
     shot(host, shots, "9f-css-rejoined")

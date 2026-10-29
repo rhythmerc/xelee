@@ -2876,6 +2876,11 @@ static void session_reset(void) {
     s_seed_have = false;
     s_lockstep = snapshot_state_region_missing() != NULL;
     s_seen_remote = false;
+    /* The newest physical sample fills the first frames of a session until a
+     * fresh one comes. Left over from the last session it can be a button
+     * still held there: XeleeNet's leave happens mid-hold of B, so the next
+     * lobby's first frames read B, and the Joining page took it for back. */
+    memset(&s_raw_last, 0, sizeof s_raw_last);
     memset(s_local_ring, 0, sizeof s_local_ring);
     memset(s_remote_ring, 0, sizeof s_remote_ring);
     memset(s_ck_ring, 0, sizeof s_ck_ring);
