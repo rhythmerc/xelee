@@ -231,6 +231,17 @@ the leaver rejoins from the list, and everyone plays a match with no DESYNC.
 `--scenario leave-host` checks the host closing the lobby. Previews:
 `tools/xn_preview.py css-leaving css-left`.
 
+Fixed after, from the Quest (2026-10-29):
+- **B held over the character grid** flipped the token every frame (39
+  times in 40 frames). The hold takes B out of the pad copy, and the pad
+  library takes last frame's buttons from that copy, so it saw a new press
+  every frame. The CSS now works out B's press itself, and over the grid
+  Melee's B (take the token back, put it down) is off in a lobby: A picks the
+  token up. `--scenario css-b-hold`.
+- **The host alone** could hold B to the end and never leave: with no
+  session yet, the leave took it for the previews' CSS. It now closes the
+  lobby. `--scenario leave-host-alone`.
+
 Not covered:
 - A leave while a join's start is in flight: the start in flight still
   names the leaver.

@@ -1772,7 +1772,16 @@ int gmOnline_XnLeave(int port)
     const int me = pc_net_local_player();
     const int32_t f = pc_net_frame();
     if (!pc_net_active() || me < 0) {
-        return 0; /* tools/xn_preview.py's CSS: no lobby to leave */
+        PcXnPunchView v;
+        pc_xn_punch_view(&v);
+        if (v.phase == PC_XN_PUNCH_OFF || port != 0) {
+            return 0; /* tools/xn_preview.py's CSS: no lobby to leave */
+        }
+        /* The host alone, before anyone has joined or after the last left:
+         * no session to end, and the lobby closes. */
+        pc_log_line("online: XeleeNet the host closes its lobby, alone, at frame %d", f);
+        pc_xn_punch_end();
+        return 1;
     }
     if (port == me || port == 0) {
         /* We leave: our own hold, or the host's, which closes the lobby. The

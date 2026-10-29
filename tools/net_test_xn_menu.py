@@ -432,6 +432,68 @@ def leave_host(insts, shots):
     return True
 
 
+def css_b_hold(insts, shots):
+    """B held over the character grid (a Quest find, 2026-10-29): Melee's B
+    takes the token back, and B again puts it down, so a held B mustn't count
+    as a press every frame. A hold short of leaving touches nothing: the pick
+    stays, and START then readies it."""
+    holder = insts[-1]
+    port = len(insts)
+    nt.settle(insts, nt.MENU_SETTLE)
+    for down in nt.CSS_ROWS[:2]:
+        nt.press((holder,), "Left+Up", nt.CSS_PIN, 1.2)
+        nt.press((holder,), "Down", down, 0.8)
+        nt.press((holder,), "Right", nt.CSS_FIRST, 0.6)
+        for _ in range(nt.CSS_COLS):
+            nt.press((holder,), "X", 7, 0.5)
+            nt.press((holder,), "Right", nt.CSS_STEP, 0.4)
+    nt.press((holder,), "Return", 9, 1.0)
+    if not holder.wait_log(rf"css: P{port} ready", 5):
+        print("FAIL: no pick to test with")
+        return False
+    # Back onto the row's portraits, with nothing in hand.
+    nt.press((holder,), "Left", 2 * nt.CSS_STEP, 0.8)
+    shot(holder, shots, "9i-b-hold-hand-on-grid")
+    flips = lambda: len(nt.re.findall(rf"css: P{port} B (?:took the token back|put the token down)", holder.text()))
+    before = flips()
+    holder.key(f"Z {int(40 * nt.frame_ms(holder))}")  # 40 frames: short of the 60 that leave
+    time.sleep(40 * nt.frame_ms(holder) / 1000 + 1.0)
+    moved = flips() - before
+    print(f"net_test_xn_menu: a 40-frame B over the grid moved the token {moved} time(s)", flush=True)
+    if moved != 0:
+        print("FAIL: B over the character grid moved the token")
+        return False
+    nt.press((holder,), "Return", 9, 1.0)
+    if not holder.wait_log(rf"css: P{port} ready", 5):
+        print("FAIL: after the B hold, START didn't ready the pick (it was lost)")
+        return False
+    print("net_test_xn_menu: the pick stayed through the B hold, and START readied it", flush=True)
+    return True
+
+
+def leave_host_alone(host, shots):
+    """The host alone in its lobby holds B (a Quest find, 2026-10-29): with no
+    session yet, the lobby still closes, and the host lands on the XeleeNet
+    pages."""
+    menus = menu_loads(host)
+    host.key(f"Z {int(90 * nt.frame_ms(host))}")
+    time.sleep(40 * nt.frame_ms(host) / 1000)
+    shot(host, shots, "4b-host-alone-leaving")
+    deadline = time.time() + 15
+    while time.time() < deadline and menu_loads(host) == menus:
+        time.sleep(0.5)
+    if "css: P1 left the lobby" not in host.text():
+        print("FAIL: the host's hold never ended")
+        return False
+    if menu_loads(host) == menus:
+        print("FAIL: the host's hold ended, but it never left the lobby")
+        return False
+    time.sleep(2)
+    shot(host, shots, "4c-host-alone-after")
+    print("net_test_xn_menu: the host alone left its lobby for the XeleeNet pages", flush=True)
+    return True
+
+
 def run(args):
     names = "abcd"[:args.players]
     shots = args.shots or os.path.join(args.work, "shots")
@@ -483,6 +545,9 @@ def run(args):
             return False
         time.sleep(3)
         shot(host, shots, "4-host-css-alone")
+        if args.scenario == "leave-host-alone":
+            ok = leave_host_alone(host, shots)
+            return ok
         for k, g in enumerate(guests):
             # Join opens the lobby browser (B1), which lists the host's lobby.
             walk(g, TO_ONLINE + [("X", 7), ("Down", 7), ("X", 7)])
@@ -523,6 +588,8 @@ def run(args):
         if args.scenario == "leave-host":
             ok = leave_host(insts, shots)
             return ok
+        if args.scenario == "css-b-hold" and not css_b_hold(insts, shots):
+            return False
         if args.scenario != "ready" and not drive_css(insts):
             print("FAIL: no CSS pick reached the SSS")
             return False
@@ -573,14 +640,16 @@ def main():
     ap.add_argument("--block", default="")
     ap.add_argument("--scenario", default="",
                     choices=("", "sss-host-b", "ready", "leave-guest", "leave-host", "sss-repick", "sss-timeout",
-                             "sss-same"),
+                             "sss-same", "css-b-hold", "leave-host-alone"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
                          "leave-host: the host holds B and closes the lobby; "
                          "sss-repick: picks change, one racing the last pick; "
                          "sss-timeout: P3 never picks, the 15 s timer ends it; "
-                         "sss-same: everyone picks Battlefield, no draw")
+                         "sss-same: everyone picks Battlefield, no draw; "
+                         "css-b-hold: B held over the grid leaves the token and the pick alone; "
+                         "leave-host-alone: the host alone holds B and leaves its lobby")
     ap.add_argument("--url", default="", help="a running service instead of a local wrangler dev")
     ap.add_argument("--exe", default=os.path.join(HERE, "..", "build", "linux", "melee"))
     ap.add_argument("--disc", default=os.path.expanduser(

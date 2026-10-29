@@ -2920,6 +2920,10 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                 cancel_or_costume:
                                     if (trigger & HSD_PAD_B) {
                                         if (mnCharSel_8025FDEC(door) == 0) {
+#ifdef TARGET_PC
+                                            /* tools/net_test_xn_menu.py counts these */
+                                            pc_log_line("css: P%d B put the token down", door + 1);
+#endif
                                             mnCharSel_8025DB34(door);
                                             cursor->x5 = 2;
                                         }
@@ -3512,6 +3516,9 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                             f32 cy8 = cursor->x10;
                             if (cy8 > 0.2f && cy8 < 22.0f) {
                                 if (mnCharSel_804A0BD0[cursor->x4]->x5 == 0) {
+#ifdef TARGET_PC
+                                    pc_log_line("css: P%d B took the token back", cport5 + 1);
+#endif
                                     mnCharSel_804A0BD0[cport5]->x5 =
                                         (u8) (cport5 + 1);
                                     mnCharSel_804A0BC0[cport5]->x5 = 1;
@@ -5607,6 +5614,7 @@ s32 mnCharSel_802640A0(void)
 static u8 css_xn_ready;                       /* port bits */
 static u8 css_xn_hold[4];                     /* frames each has held B */
 static u8 css_xn_armed;                       /* port bits: B was up since the CSS came */
+static u8 css_xn_b_down;                      /* port bits: B held last frame */
 static HSD_CObj* css_xn_cobj;                 /* the CSS camera, for the hand's ring */
 static u8 css_xn_icon[4], css_xn_costume[4];  /* the pick Ready was given on */
 static int css_xn_count = -1;                 /* frames to go; -1: none */
@@ -5713,6 +5721,7 @@ static void cssXnReadyReset(void)
     css_xn_count = -1;
     css_xn_others = 0;
     css_xn_armed = 0;
+    css_xn_b_down = 0xF; /* a B held into the CSS is no press */
     css_xn_cobj = NULL;
     memset(css_xn_hold, 0, sizeof css_xn_hold);
 }
@@ -5737,6 +5746,14 @@ static bool cssXnReadyFrame(void)
         if (cssXnPicked(i)) {
             picked |= bit;
         }
+        /* B's press, worked out here: the pad library takes last frame's
+         * buttons from this copy, which has no B in it (below), so to it a
+         * held B is pressed again every frame. */
+        pad->trigger &= ~HSD_PAD_B;
+        if ((pad->button & HSD_PAD_B) && !(css_xn_b_down & bit)) {
+            pad->trigger |= HSD_PAD_B;
+        }
+        css_xn_b_down = (pad->button & HSD_PAD_B) ? css_xn_b_down | bit : css_xn_b_down & ~bit;
         if (!(pad->button & HSD_PAD_B)) {
             css_xn_armed |= bit; /* a B held from the screen before doesn't count */
             css_xn_hold[i] = 0;
@@ -5758,6 +5775,15 @@ static bool cssXnReadyFrame(void)
             css_xn_ready &= ~bit;
             sfxBack();
             pc_log_line("css: P%d not ready", i + 1);
+        }
+        /* Over the character grid, Melee's B takes the token back and puts
+         * it down again. In a lobby B is Ready's and leaving's; A picks the
+         * token up. The grid is where those take it (mnCharSel_8025FDEC's
+         * callers test the hand's height the same way). */
+        if ((pad->trigger & HSD_PAD_B) && mnCharSel_804A0BC0[i] != NULL &&
+            mnCharSel_804A0BC0[i]->x10 > 0.2F && mnCharSel_804A0BC0[i]->x10 < 22.0F)
+        {
+            pad->trigger &= ~HSD_PAD_B;
         }
         if (pad->trigger & HSD_PAD_START) {
             pad->trigger &= ~HSD_PAD_START;
