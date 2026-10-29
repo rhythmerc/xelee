@@ -59,6 +59,17 @@ typedef enum PcXnStatus {
     PC_XN_FAILED,  /* pc_xn_error says why */
 } PcXnStatus;
 
+/* Which network the lobbies are on: the XeleeNet service, or this local
+ * network, where the host's game is the lobby service (xeleenet_lan.c,
+ * docs/lan-lobbies-plan.md). Every call below goes to the one set. Refused
+ * (false) while a run on the other is working or in. */
+typedef enum PcXnNet {
+    PC_XN_NET_SERVICE,
+    PC_XN_NET_LAN,
+} PcXnNet;
+bool pc_xn_set_network(PcXnNet net);
+PcXnNet pc_xn_network(void);
+
 /* Open a lobby (`code` NULL) or join one by its code, reachable at the given
  * addresses (network order). `url` is the service; `seats` only matters to a
  * host. False when a run is already going. */

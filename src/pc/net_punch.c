@@ -573,7 +573,9 @@ static void stun_begin(void) {
     const char* list = getenv("MELEE_XN_STUN");
     list = list != NULL ? list : DEFAULT_STUN;
     s_nstun = 0;
-    if (strcmp(list, "off") == 0) {
+    /* On this network, the LAN address is all anyone needs (and the
+     * internet may not be there at all). */
+    if (strcmp(list, "off") == 0 || pc_xn_network() == PC_XN_NET_LAN) {
         return;
     }
     char copy[256];
@@ -1094,11 +1096,16 @@ bool pc_xn_punch_from_env(void) {
     const char* name = getenv("MELEE_XN_NAME");
     const char* seats = getenv("MELEE_XN_SEATS");
     const char* wait = getenv("MELEE_XN_WAIT_S");
+    const char* net_env = getenv("MELEE_XN_NET");
     bool join = strncmp(xn, "join:", 5) == 0;
-    if (url == NULL || url[0] == '\0' || (!join && strcmp(xn, "host") != 0)) {
-        pc_log_line("xeleenet: MELEE_XN wants host or join:CODE, with MELEE_XN_URL");
+    /* MELEE_XN_NET=lan: the lobby is on this network, with no service. */
+    bool lan = net_env != NULL && strcmp(net_env, "lan") == 0;
+    pc_xn_set_network(lan ? PC_XN_NET_LAN : PC_XN_NET_SERVICE);
+    if ((!lan && (url == NULL || url[0] == '\0')) || (!join && strcmp(xn, "host") != 0)) {
+        pc_log_line("xeleenet: MELEE_XN wants host or join:CODE, with MELEE_XN_URL (or MELEE_XN_NET=lan)");
         return true;
     }
+    url = url != NULL ? url : "";
     if (name == NULL || name[0] == '\0') {
         name = pc_get_net_name();
     }

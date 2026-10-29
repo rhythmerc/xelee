@@ -408,6 +408,7 @@ set(PC_SOURCES
         src/pc/net_watchdog.c
         src/pc/net_wire.c
         src/pc/xeleenet.c
+        src/pc/xeleenet_lan.c
         # The GameCube's own trig: platform libm differs by an ULP between
         # targets, which is a cross-platform desync (docs/netcode-plan.md
         # section 5), and so does any libm from the GameCube's, which a

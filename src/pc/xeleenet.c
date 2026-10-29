@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "xeleenet.h"
+#include "xeleenet_backend.h"
 #include "net.h"
 #include "net_lan.h"
 #include "pc.h"
@@ -462,6 +463,8 @@ static bool join(void) {
     }
 }
 
+static PcXnStatus svc_status(void);
+
 static void wait_ms(int ms) {
     for (int t = 0; t < ms && !SDL_GetAtomicInt(&s_stop); t += 50) {
         SDL_Delay(50);
@@ -476,7 +479,7 @@ static int thread_main(void* unused) {
     }
     while (hosting && !SDL_GetAtomicInt(&s_stop)) {
         wait_ms(HEARTBEAT_MS);
-        if (!SDL_GetAtomicInt(&s_stop) && !heartbeat() && pc_xn_status() == PC_XN_FAILED) {
+        if (!SDL_GetAtomicInt(&s_stop) && !heartbeat() && svc_status() == PC_XN_FAILED) {
             return 0;
         }
     }
@@ -491,7 +494,7 @@ static int thread_main(void* unused) {
     return 0;
 }
 
-bool pc_xn_start(const char* url, const PcNetIdentity* id, const char* name, const char* code,
+static bool svc_start(const char* url, const PcNetIdentity* id, const char* name, const char* code,
     int seats, const uint32_t* ip, const uint16_t* udp, int ncands) {
     if (s_lock == NULL) {
         s_lock = SDL_CreateMutex();
@@ -537,7 +540,7 @@ bool pc_xn_start(const char* url, const PcNetIdentity* id, const char* name, con
     return true;
 }
 
-PcXnStatus pc_xn_status(void) {
+static PcXnStatus svc_status(void) {
     if (s_lock == NULL) {
         return PC_XN_OFF;
     }
@@ -547,15 +550,15 @@ PcXnStatus pc_xn_status(void) {
     return s;
 }
 
-const char* pc_xn_error(const char** reason) {
+static const char* svc_error(const char** reason) {
     if (reason != NULL) {
         *reason = s_reason;
     }
     return s_error;
 }
 
-bool pc_xn_lobby(char id[33], char code[8], int* port) {
-    if (pc_xn_status() != PC_XN_IN) {
+static bool svc_lobby(char id[33], char code[8], int* port) {
+    if (svc_status() != PC_XN_IN) {
         return false;
     }
     SDL_LockMutex(s_lock);
@@ -566,7 +569,7 @@ bool pc_xn_lobby(char id[33], char code[8], int* port) {
     return true;
 }
 
-int pc_xn_members(PcXnMember* out, int max) {
+static int svc_members(PcXnMember* out, int max) {
     if (s_lock == NULL) {
         return 0;
     }
@@ -577,7 +580,7 @@ int pc_xn_members(PcXnMember* out, int max) {
     return n;
 }
 
-void pc_xn_set_roster(const uint8_t (*keys)[32], int n) {
+static void svc_set_roster(const uint8_t (*keys)[32], int n) {
     if (s_lock == NULL) {
         return;
     }
@@ -587,7 +590,7 @@ void pc_xn_set_roster(const uint8_t (*keys)[32], int n) {
     SDL_UnlockMutex(s_lock);
 }
 
-void pc_xn_stop(void) {
+static void svc_stop(void) {
     if (s_thread == NULL) {
         return;
     }
@@ -599,14 +602,14 @@ void pc_xn_stop(void) {
     SDL_UnlockMutex(s_lock);
 }
 
-void pc_xn_host_options(const char* name, bool open, const char* settings_json) {
+static void svc_host_options(const char* name, bool open, const char* settings_json) {
     snprintf(s_host_opts.name, sizeof s_host_opts.name, "%s", name != NULL ? name : "");
     s_host_opts.open = open;
     snprintf(s_host_opts.settings, sizeof s_host_opts.settings, "%s", settings_json != NULL ? settings_json : "");
 }
 
-bool pc_xn_lobby_info(PcXnListing* out) {
-    if (s_lock == NULL || pc_xn_status() != PC_XN_IN) {
+static bool svc_lobby_info(PcXnListing* out) {
+    if (s_lock == NULL || svc_status() != PC_XN_IN) {
         return false;
     }
     SDL_LockMutex(s_lock);
@@ -656,7 +659,7 @@ static int browse_main(void* unused) {
     return 0;
 }
 
-bool pc_xn_browse(const char* url, const PcNetIdentity* id, bool full) {
+static bool svc_browse(const char* url, const PcNetIdentity* id, bool full) {
     if (s_lock == NULL) {
         s_lock = SDL_CreateMutex();
     }
@@ -688,7 +691,7 @@ bool pc_xn_browse(const char* url, const PcNetIdentity* id, bool full) {
     return s_browse_thread != NULL;
 }
 
-int pc_xn_browse_poll(PcXnListing* out, int max, int* n, int* others) {
+static int svc_browse_poll(PcXnListing* out, int max, int* n, int* others) {
     if (s_lock == NULL) {
         return -1;
     }
@@ -701,4 +704,80 @@ int pc_xn_browse_poll(PcXnListing* out, int max, int* n, int* others) {
     }
     SDL_UnlockMutex(s_lock);
     return st;
+}
+
+/* ---- the network: the service above, or this network (xeleenet_lan.c) ---- */
+
+const PcXnBackend pc_xn_service_backend = {
+    svc_start, svc_status, svc_error, svc_lobby, svc_members, svc_set_roster, svc_stop,
+    svc_host_options, svc_lobby_info, svc_browse, svc_browse_poll,
+};
+
+static PcXnNet s_net = PC_XN_NET_SERVICE;
+
+static const PcXnBackend* backend(void) {
+    return s_net == PC_XN_NET_LAN ? &pc_xn_lan_backend : &pc_xn_service_backend;
+}
+
+bool pc_xn_set_network(PcXnNet net) {
+    if (net == s_net) {
+        return true;
+    }
+    PcXnStatus st = backend()->status();
+    if (st == PC_XN_WORKING || st == PC_XN_IN) {
+        return false; /* a run on the other network owns the client */
+    }
+    backend()->stop();
+    s_net = net;
+    pc_log_line("xeleenet: network %s", net == PC_XN_NET_LAN ? "LAN" : "service");
+    return true;
+}
+
+PcXnNet pc_xn_network(void) {
+    return s_net;
+}
+
+bool pc_xn_start(const char* url, const PcNetIdentity* id, const char* name, const char* code,
+    int seats, const uint32_t* ip, const uint16_t* udp, int ncands) {
+    return backend()->start(url, id, name, code, seats, ip, udp, ncands);
+}
+
+PcXnStatus pc_xn_status(void) {
+    return backend()->status();
+}
+
+const char* pc_xn_error(const char** reason) {
+    return backend()->error(reason);
+}
+
+bool pc_xn_lobby(char id[33], char code[8], int* port) {
+    return backend()->lobby(id, code, port);
+}
+
+int pc_xn_members(PcXnMember* out, int max) {
+    return backend()->members(out, max);
+}
+
+void pc_xn_set_roster(const uint8_t (*keys)[32], int n) {
+    backend()->set_roster(keys, n);
+}
+
+void pc_xn_stop(void) {
+    backend()->stop();
+}
+
+void pc_xn_host_options(const char* name, bool open, const char* settings_json) {
+    backend()->host_options(name, open, settings_json);
+}
+
+bool pc_xn_lobby_info(PcXnListing* out) {
+    return backend()->lobby_info(out);
+}
+
+bool pc_xn_browse(const char* url, const PcNetIdentity* id, bool full) {
+    return backend()->browse(url, id, full);
+}
+
+int pc_xn_browse_poll(PcXnListing* out, int max, int* n, int* others) {
+    return backend()->browse_poll(out, max, n, others);
 }
