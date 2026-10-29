@@ -26,6 +26,11 @@ const char* pc_tr(const char* key);
  * returns: the arguments after `key` are name, value pairs of strings, ending
  * with NULL. */
 const char* pc_trf(char* out, size_t size, const char* key, ...);
+/* From now on a key starting with `from` is looked up with `to` in its place
+ * first, and as written when that has no text: XeleeNet's pages read LAN's
+ * lines ("xeleenet." over "xeleenet.lan.") while the network is LAN. NULL
+ * ends it. Not thread-safe: the game thread's. */
+void pc_lang_overlay(const char* from, const char* to);
 void pc_lang_reload(void);
 
 #ifdef __cplusplus

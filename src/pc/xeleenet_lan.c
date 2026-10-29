@@ -185,6 +185,7 @@ static uint8_t s_roster[3][32];
 static int s_nroster;
 static PcXnListing s_info;
 static bool s_info_known;
+static char s_address[64]; /* the host's lobby socket, as the banner shows it */
 static struct {
     char name[40];
     char settings[320];
@@ -263,6 +264,16 @@ static void send_to(const void* buf, size_t n, const struct sockaddr_in* to) {
 static uint16_t lobby_port_default(void) {
     const char* p = getenv("MELEE_XN_LAN_PORT");
     return (uint16_t)(p != NULL && atoi(p) > 0 ? atoi(p) : LOBBY_PORT);
+}
+
+/* The lobby's address for the banner, under s_lock: the port only when it
+ * isn't the one a typed address assumes. */
+static void set_address(const char* ip, uint16_t port) {
+    if (port == LOBBY_PORT) {
+        snprintf(s_address, sizeof s_address, "%s", ip);
+    } else {
+        snprintf(s_address, sizeof s_address, "%s:%u", ip, port);
+    }
 }
 
 /* ---- the host --------------------------------------------------------------- */
@@ -454,6 +465,9 @@ static bool host_begin(void) {
     s_status = PC_XN_IN;
     SDL_UnlockMutex(s_lock);
     pc_mdns_open(SERVICE);
+    SDL_LockMutex(s_lock);
+    set_address(pc_mdns_self_ip(), s_lobby_port);
+    SDL_UnlockMutex(s_lock);
     host_announce();
     pc_log_line("xeleenet: hosting lobby %s, code %s, %d seats on LAN %s:%u (build %s, disc %s)", s_lobby_hex,
                 s_code, s_args.seats, pc_mdns_self_ip(), s_lobby_port, pc_app_rev(), pc_lan_disc_id());
@@ -559,6 +573,12 @@ static void on_welcome(const LWelcome* w) {
     s_info.seats = w->seats;
     s_info.taken = 1 + w->nmembers;
     s_info_known = true;
+    struct sockaddr_in at;
+    if (parse_address(s_host_addr, &at)) {
+        char ip[64];
+        net_addr_text((const struct sockaddr*)&at, ip, sizeof ip);
+        set_address(ip, ntohs(at.sin_port));
+    }
     s_status = PC_XN_IN;
     SDL_UnlockMutex(s_lock);
     pc_log_line("xeleenet: joined lobby %s as P%d with %d others on LAN %s (build %s, disc %s)", s_lobby_hex,
@@ -648,6 +668,7 @@ static void guest_leave(void) {
 /* ---- browsing ---------------------------------------------------------------- */
 
 static void browse_tick(void) {
+    pc_mdns_open(SERVICE); /* a browse alone (M_OFF) has opened nothing yet */
     pc_mdns_poll();
     PcMdnsRecord r[PC_MDNS_RECORDS];
     int n = pc_mdns_records(r, PC_MDNS_RECORDS);
@@ -926,6 +947,16 @@ static int lan_browse_poll(PcXnListing* out, int max, int* n, int* others) {
     *others = s_others;
     SDL_UnlockMutex(s_lock);
     return 1; /* live: whatever has been heard */
+}
+
+bool pc_xn_lan_address(char* out, size_t size) {
+    if (s_lock == NULL || lan_status() != PC_XN_IN) {
+        return false;
+    }
+    SDL_LockMutex(s_lock);
+    snprintf(out, size, "%s", s_address);
+    SDL_UnlockMutex(s_lock);
+    return out[0] != '\0';
 }
 
 bool pc_xn_lan_unavailable(void) {

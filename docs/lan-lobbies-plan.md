@@ -157,7 +157,39 @@ The plan as written:
 Test: `net_test_n.py --xn --lan` (3 players), joining from the browse and by
 address. Then 4 players with a guest pair blocked (`--block`), as XN2.
 
-### L3 · The pages (medium)
+### L3 · The pages (medium) — done 2026-10-29
+
+Built as planned, with these specifics:
+- **Entry:** Online Mode's LAN row sets the network to LAN and opens the
+  XeleeNet sub-menu (Host, Join, Name). Back from it returns to the row it
+  came from. The XeleeNet row sets the network back to the service.
+- **Text:** a language overlay (`pc_lang_overlay`). While the network is
+  LAN, `xeleenet.X` is read as `xeleenet.lan.X` first, so `en.yaml`'s
+  `xeleenet.lan` holds only LAN's differing lines, and the C menus, the
+  pages and the banner all follow without branching.
+- **The list:** live (read every frame), with "Looking on this network..."
+  for its first 3 s. X is always Join by address; the legend has no Y and
+  no Refresh. The blocked state (B2) shows when
+  `pc_xn_lan_unavailable()`.
+- **Join by address:** a 3×4 keypad (digits, a dot, DEL). X deletes, B is
+  Back, START joins once the address has four parts. The join goes to the
+  punch as `@address`. A wrong or silent address fails with Edit address.
+  A listed lobby that has gone fails as "That lobby closed".
+- **The banner:** the address pill comes from `pc_xn_lan_address()` (the
+  host's own address, or the one the guest reached), with `:port` only off
+  42424.
+- **Found on the way:** a browse alone never opened mDNS (L2's tests only
+  joined by code), so the list stayed empty. Fixed: `browse_tick` opens it.
+
+Tests and previews:
+- `net_test_xn_menu.py --net lan` (3 players, no wrangler) passes. The
+  first guest joins by typing 127.0.0.1, the second from the list; all three
+  agree the stage and play the match with no DESYNC.
+- The service run (`net_test_xn_menu.py`, 3 players) still passes.
+- `tools/xn_preview.py lan-host lan-lobbies lan-empty lan-blocked
+  lan-address lan-banner`.
+
+The plan as written:
 
 1. Online Mode's LAN row opens the XeleeNet menu with the network set to
    LAN (`ONLINE_KIND_XN`), with LAN's hint lines.

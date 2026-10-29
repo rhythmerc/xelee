@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "xeleenet.h"
+#include "lang.h"
 #include "xeleenet_backend.h"
 #include "net.h"
 #include "net_lan.h"
@@ -740,6 +741,8 @@ bool pc_xn_set_network(PcXnNet net) {
     }
     backend()->stop();
     s_net = net;
+    /* XeleeNet's pages and menus read LAN's lines where they differ. */
+    pc_lang_overlay("xeleenet.", net == PC_XN_NET_LAN ? "xeleenet.lan." : NULL);
     pc_log_line("xeleenet: network %s", net == PC_XN_NET_LAN ? "LAN" : "service");
     return true;
 }

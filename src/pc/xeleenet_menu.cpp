@@ -316,7 +316,7 @@ void view(PcXnPunchView* v) {
     }
     std::memset(v, 0, sizeof *v);
     v->phase = PC_XN_PUNCH_LOBBY;
-    v->host = s_preview == "banner" || s_preview.rfind("css-", 0) == 0;
+    v->host = s_preview == "banner" || s_preview == "lan-banner" || s_preview.rfind("css-", 0) == 0;
     std::snprintf(v->code, sizeof v->code, "K7MQ2D");
     const char* names[3] = {"PIXEL#3MPA", "KOOPA#Z2RW", "RHYTHM#K7Q2"};
     for (int i = 0; i < 3; i++) {
@@ -348,6 +348,18 @@ struct Item {
 
 int s_result = PC_XN_MENU_STAY;
 int s_what = PC_XN_MENU_HOST;
+
+// LAN: these pages on this network, with the host's game for the lobby
+// service (docs/lan-lobbies-plan.md). Their text is LAN's where it differs
+// (xeleenet.lan.*, the language overlay pc_xn_set_network sets).
+bool lan() { return pc_xn_network() == PC_XN_NET_LAN; }
+// An address typed on LAN's keypad (after the code's '@'): four numbers.
+bool address_ok(const std::string& a) {
+    return std::count(a.begin(), a.end(), '.') == 3 && a.front() != '.' && a.back() != '.' &&
+           a.find("..") == std::string::npos;
+}
+// How long LAN's list says it's looking before it says there's nothing.
+constexpr uint64_t kLanLookMs = 3000;
 
 // Melee's keyboard, when a page wants it: for the player's name or the lobby's.
 enum class Typing { None, Player, Lobby };
@@ -414,6 +426,7 @@ struct Screen : Rml::EventListener {
     bool showFull = false;
     int fetch = 0; // 0 fetching, 1 have rows, -1 failed
     uint64_t fetchedAt = 0, fetchAsked = 0;
+    uint64_t lookFrom = 0; // LAN: when the list started looking
 
     std::string hintText;
     std::string lastLegend;
@@ -504,9 +517,10 @@ struct Screen : Rml::EventListener {
             it.hint = tr("xeleenet.host.hints.name");
             items.push_back(std::move(it));
         }
-        choice(r, "vis", 0, 2, "xeleenet.host.rows.visibility",
-               tr(h.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private"),
-               [](int) { s_host.open = !s_host.open; }, "xeleenet.host.hints.visibility");
+        if (!lan()) // every LAN lobby is listed
+            choice(r, "vis", 0, 2, "xeleenet.host.rows.visibility",
+                   tr(h.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private"),
+                   [](int) { s_host.open = !s_host.open; }, "xeleenet.host.hints.visibility");
         choice(r, "seats", 0, 3, "xeleenet.host.rows.seats", std::to_string(h.seats),
                [custom](int d) { s_host.seats = 2 + (s_host.seats - 2 + d + 3) % 3, custom(); },
                "xeleenet.host.hints.seats");
@@ -548,8 +562,9 @@ struct Screen : Rml::EventListener {
         group(r, "xeleenet.host.groups.joining");
         choice(r, "ask", 1, 6, "xeleenet.host.rows.ask", on_off(false), [](int) {}, "xeleenet.host.hints.ask", false,
                "xeleenet.host.soon");
-        choice(r, "hide", 1, 7, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
-               [](int) { s_host.hide_code = !s_host.hide_code; }, "xeleenet.host.hints.hide_code");
+        if (!lan()) // no codes on LAN
+            choice(r, "hide", 1, 7, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
+                   [](int) { s_host.hide_code = !s_host.hide_code; }, "xeleenet.host.hints.hide_code");
         r += "<button id=\"open\" class=\"gold\">" + enc(tr("xeleenet.host.open")) + "</button></div>";
         {
             Item it{"open", 1, 9, true};
@@ -630,12 +645,12 @@ struct Screen : Rml::EventListener {
         if (!s_preview.empty())
             return;
         const char* url = pc_xn_url();
-        if (url[0] == '\0') {
+        if (url[0] == '\0' && !lan()) {
             hostNote = tr("xeleenet.host.no_server");
             sfx(SFX_BACK);
             return;
         }
-        pc_xn_host_options(lobby_name().c_str(), s_host.open, settings_json().c_str());
+        pc_xn_host_options(lobby_name().c_str(), s_host.open || lan(), settings_json().c_str());
         if (!pc_xn_punch_start(url, pc_xn_name(), nullptr, s_host.seats)) {
             hostNote = pc_xn_punch_error();
             sfx(SFX_BACK);
@@ -670,11 +685,17 @@ struct Screen : Rml::EventListener {
                        false),
             };
             others = 2, fetch = 1, fetchedAt = SDL_GetTicks() - 4000;
+            if (lan()) {
+                rows.resize(s_preview == "lan-lobbies" ? 3 : 0);
+                for (PcXnListing& x : rows)
+                    x.country[0] = '\0';
+                others = rows.empty() ? 0 : 1, lookFrom = 0;
+            }
             return;
         }
         PcNetIdentity id;
         const char* url = pc_xn_url();
-        if (url[0] == '\0' || !pc_xn_identity(&id)) {
+        if ((url[0] == '\0' && !lan()) || !pc_xn_identity(&id)) {
             fetch = -1;
             return;
         }
@@ -683,8 +704,8 @@ struct Screen : Rml::EventListener {
     }
 
     void poll_browse() {
-        if (page != Page::Lobbies || fetch != 0 || !s_preview.empty())
-            return;
+        if (page != Page::Lobbies || (fetch != 0 && !lan()) || !s_preview.empty())
+            return; // LAN's list is live: read every frame
         PcXnListing out[PC_XN_LIST_MAX];
         int n = 0, o = 0;
         const int st = pc_xn_browse_poll(out, PC_XN_LIST_MAX, &n, &o);
@@ -707,8 +728,11 @@ struct Screen : Rml::EventListener {
         std::string r = "<div class=\"bhead\"><div id=\"full\" class=\"chipx" + std::string(showFull ? " on" : "") +
                         "\">" + enc(tr(showFull ? "xeleenet.lobbies.show_full.on" : "xeleenet.lobbies.show_full.off")) +
                         "</div><div class=\"upd\">";
-        if (fetch == 0)
+        const bool looking = fetch == 0 || (lan() && rows.empty() && SDL_GetTicks() - lookFrom < kLanLookMs);
+        if (looking)
             r += enc(tr("xeleenet.lobbies.looking"));
+        else if (lan()) // live: no "updated"
+            r += enc(rows.empty() ? std::string() : tr("xeleenet.lobbies.count", {{"n", rows.size()}}));
         else
             r += enc((rows.empty() ? std::string() : tr("xeleenet.lobbies.count", {{"n", rows.size()}}) + kDot) +
                      tr("xeleenet.lobbies.updated", {{"n", (SDL_GetTicks() - fetchedAt) / 1000}}));
@@ -721,12 +745,15 @@ struct Screen : Rml::EventListener {
         if (cur >= scrollTop + kListRows)
             scrollTop = cur - kListRows + 1;
         scrollTop = std::clamp(scrollTop, 0, std::max(0, n - kListRows));
-        if (fetch < 0) {
+        if (blocked()) {
+            r += "<div class=\"empty bad\">" + enc(tr("xeleenet.lobbies.blocked.title")) +
+                 "</div><div class=\"empty sub\">" + enc(tr("xeleenet.lobbies.blocked.line")) + "</div>";
+        } else if (fetch < 0 && !lan()) {
             const char* reason = nullptr;
             const char* err = pc_xn_error(&reason);
             r += "<div class=\"empty bad\">" +
                  enc(err != nullptr && err[0] ? std::string(err) : tr("xeleenet.lobbies.unreachable")) + "</div>";
-        } else if (rows.empty() && fetch == 1) {
+        } else if (rows.empty() && fetch == 1 && !looking) {
             r += "<div class=\"empty\">" + enc(tr("xeleenet.lobbies.empty")) + "</div>";
         }
         for (size_t i = 0; i < rows.size(); i++) {
@@ -774,7 +801,54 @@ struct Screen : Rml::EventListener {
         set_board(r);
     }
 
+    // LAN's list with nothing at all heard, not even our own query: the
+    // network blocks discovery, and joining is by address (B2).
+    bool blocked() const {
+        return lan() && rows.empty() &&
+               (s_preview == "lan-blocked" || (s_preview.empty() && pc_xn_lan_unavailable()));
+    }
+
+    // J1's code, or on LAN the host's address after an '@'.
+    bool code_ready() const {
+        return lan() && !code.empty() && code[0] == '@' ? address_ok(code.substr(1)) : code.size() == 6;
+    }
+
+    // LAN's J2: the host's address, typed on a keypad of digits and a dot.
+    void build_address() {
+        if (code.empty() || code[0] != '@')
+            code = "@";
+        std::string r = "<div id=\"addr\"><div class=\"al\">" + enc(tr("xeleenet.code.address")) +
+                        "</div><div class=\"av\">" + enc(code.substr(1)) + "<span class=\"caret\">|</span></div></div>" +
+                        "<div id=\"keys\" class=\"addr\">";
+        static const char keys[] = "123456789.0";
+        for (int i = 0; i < 12; i++) {
+            const bool del = i == 11;
+            const std::string id = del ? "k-del" : keys[i] == '.' ? "k-dot" : std::string("k-") + keys[i];
+            r += "<div id=\"" + id + "\" class=\"key" + (del ? " del" : "") + "\">" +
+                 (del ? enc(tr("xeleenet.code.del")) : std::string(1, keys[i])) + "</div>";
+            Item it{id, i % 3, i / 3, true};
+            if (del)
+                it.act = [this] {
+                    if (code.size() > 1)
+                        code.pop_back();
+                };
+            else
+                it.act = [this, c = keys[i]] {
+                    if (code.size() < 22) // "@" and 255.255.255.255:65535
+                        code += c;
+                };
+            it.hint = tr("xeleenet.code.hints.type");
+            items.push_back(std::move(it));
+        }
+        r += "</div>";
+        set_board(r);
+    }
+
     void build_code() {
+        if (lan()) {
+            build_address();
+            return;
+        }
         // Placed one by one: three tiles, a dash, three tiles.
         std::string r = "<div id=\"tiles\" class=\"six\"><div class=\"dash\" style=\"left: 318px;\">-</div>";
         for (int i = 0; i < 6; i++) {
@@ -828,6 +902,8 @@ struct Screen : Rml::EventListener {
             return info.name;
         if (joiningKnown && joining.name[0])
             return joining.name;
+        if (!code.empty() && code[0] == '@')
+            return tr("xeleenet.joining.lobby_at", {{"address", code.substr(1)}});
         return tr("xeleenet.joining.lobby",
                   {{"code", code.substr(0, 3) + " " + code.substr(std::min<size_t>(3, code.size()))}});
     }
@@ -936,9 +1012,11 @@ struct Screen : Rml::EventListener {
         failHost.clear();
         failErr.clear();
         failStep = 0;
+        const bool byAddress = !code.empty() && code[0] == '@';
         if (why == "not_found" || why == "bad_code") {
-            failWhy = "not_found";
-            failCode = true;
+            // On LAN a listed lobby that's gone isn't the code's fault.
+            failWhy = lan() && !byAddress ? "gone" : "not_found";
+            failCode = !lan() || byAddress;
         } else if (why == "full" || why == "declined" || why == "version" || why == "banned" || why == "closed") {
             failWhy = why;
         } else if (punch.find("host") != std::string::npos || s_preview == "failed") {
@@ -950,7 +1028,8 @@ struct Screen : Rml::EventListener {
             failStep = 1;
         } else {
             failWhy = "offline";
-            if (err != nullptr)
+            failCode = byAddress; // LAN: nothing answered at that address
+            if (err != nullptr && !lan())
                 failErr = err;
         }
         pc_log_line("xeleenet pages: join failed: %s (%s)", fail_title().c_str(), why.c_str());
@@ -959,14 +1038,14 @@ struct Screen : Rml::EventListener {
     }
 
     void join() {
-        if (code.size() != 6)
+        if (!code_ready())
             return;
         if (!s_preview.empty()) {
             go(Page::Joining);
             return;
         }
         const char* url = pc_xn_url();
-        if (url[0] == '\0' || !pc_xn_punch_start(url, pc_xn_name(), code.c_str(), 4)) {
+        if ((url[0] == '\0' && !lan()) || !pc_xn_punch_start(url, pc_xn_name(), code.c_str(), 4)) {
             failed();
             return;
         }
@@ -977,6 +1056,7 @@ struct Screen : Rml::EventListener {
     void to_lobbies() {
         joiningKnown = false;
         code.clear();
+        lookFrom = SDL_GetTicks();
         go(Page::Lobbies);
         browse();
     }
@@ -1012,11 +1092,20 @@ struct Screen : Rml::EventListener {
         case Page::Lobbies:
             if (!rows.empty())
                 r += key("a", "xeleenet.legend.join");
-            r += key("y", "xeleenet.legend.enter_code") + key("x", "xeleenet.legend.refresh") +
-                 key("start", showFull ? "xeleenet.legend.hide_full" : "xeleenet.legend.show_full") +
+            r += lan() ? key("x", "xeleenet.legend.join_address")
+                       : key("y", "xeleenet.legend.enter_code") + key("x", "xeleenet.legend.refresh");
+            r += key("start", showFull ? "xeleenet.legend.hide_full" : "xeleenet.legend.show_full") +
                  key("b", "xeleenet.legend.back");
             break;
         case Page::Code:
+            if (lan()) { // X deletes; B is Back
+                r += key("a", id == "k-del" ? "xeleenet.legend.delete" : "xeleenet.legend.type") +
+                     key("x", "xeleenet.legend.delete");
+                if (code_ready())
+                    r += key("start", "xeleenet.legend.join");
+                r += key("b", "xeleenet.legend.back");
+                break;
+            }
             r += key("a", id == "k-ok" ? "xeleenet.legend.join" : "xeleenet.legend.type");
             if (code.size() == 6 && id != "k-ok")
                 r += key("start", "xeleenet.legend.join");
@@ -1194,7 +1283,7 @@ struct Screen : Rml::EventListener {
             go(Page::Host, "slist");
             break;
         case Page::Code:
-            if (!code.empty()) {
+            if (!code.empty() && !lan()) {
                 code.pop_back();
                 refresh();
             } else {
@@ -1240,10 +1329,20 @@ struct Screen : Rml::EventListener {
             }
             break;
         case PC_XN_IN_X:
-            if (page == Page::Lobbies) {
+            if (page == Page::Lobbies && lan()) {
+                sfx(SFX_CONFIRM);
+                code = "@";
+                go(Page::Code);
+            } else if (page == Page::Lobbies) {
                 sfx(SFX_CONFIRM);
                 browse();
                 refresh();
+            } else if (page == Page::Code && lan()) {
+                if (code.size() > 1) {
+                    code.pop_back();
+                    sfx(SFX_BACK);
+                    refresh();
+                }
             } else if (page == Page::Stages) {
                 s_host.stages = s_host.stages == kCompetitive ? kAllStages : kCompetitive;
                 s_host.preset = kCustom;
@@ -1252,7 +1351,7 @@ struct Screen : Rml::EventListener {
             }
             break;
         case PC_XN_IN_Y:
-            if (page == Page::Lobbies) {
+            if (page == Page::Lobbies && !lan()) {
                 sfx(SFX_CONFIRM);
                 code.clear();
                 go(Page::Code);
@@ -1275,9 +1374,9 @@ struct Screen : Rml::EventListener {
         } else if (!hostNote.empty() && (page == Page::Host || page == Page::Lobbies)) {
             hintText = hostNote;
         } else if (page == Page::Lobbies && items.empty()) {
-            hintText = tr("xeleenet.lobbies.hints.empty");
+            hintText = tr(blocked() ? "xeleenet.lobbies.hints.blocked" : "xeleenet.lobbies.hints.empty");
         } else if (page == Page::Code) {
-            hintText = tr(code.size() == 6 ? "xeleenet.code.hints.join" : "xeleenet.code.hints.type");
+            hintText = tr(code_ready() ? "xeleenet.code.hints.join" : "xeleenet.code.hints.type");
         } else {
             hintText = items.empty() ? std::string() : items[cursor].hint;
         }
@@ -1487,7 +1586,10 @@ struct Banner {
                               kItemIds[s_host.items + 1])
                  : known ? rules_line(info.teams, info.seats, info.stock, info.stocks, info.time_min, info.items) : "";
         std::string code = v.code[0] ? std::string(v.code, 3) + " " + std::string(v.code + 3, 3) : "";
-        if (host && s_host.hide_code)
+        char addr[64];
+        if (lan()) // the host's address, for Join by address, where the code sits
+            code = s_preview == "lan-banner" ? "192.168.0.57" : pc_xn_lan_address(addr, sizeof addr) ? addr : "";
+        else if (host && s_host.hide_code)
             code = "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2 \xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2";
         const int seats = host ? s_host.seats : known && info.seats ? info.seats : 4;
         // The CSS's Ready, while it keeps telling it.
@@ -2040,6 +2142,8 @@ extern "C" void pc_xn_menu_begin(int what) {
     host_load();
     const char* preview = std::getenv("MELEE_XN_PREVIEW");
     s_preview = preview != nullptr ? preview : "";
+    if (s_preview.rfind("lan-", 0) == 0)
+        pc_xn_set_network(PC_XN_NET_LAN);
     s_what = what;
     s_result = PC_XN_MENU_STAY;
     s_active = true;
@@ -2055,8 +2159,8 @@ extern "C" void pc_xn_menu_begin(int what) {
         s_screen.go(Page::Stages);
     } else if (s_preview == "more") {
         s_screen.go(Page::More);
-    } else if (s_preview == "code") {
-        s_screen.code = "K7M";
+    } else if (s_preview == "code" || s_preview == "lan-address") {
+        s_screen.code = lan() ? "@192.168.0.5" : "K7M";
         s_screen.go(Page::Code);
     } else if (s_preview == "joining" || s_preview == "progress") {
         s_screen.joining = sample("K7MQ2D", "Friday netplay", "PIXEL", "3MPA", "US", 3, 4, true, true, 4, 8, true,
@@ -2067,7 +2171,8 @@ extern "C" void pc_xn_menu_begin(int what) {
     } else if (s_preview == "failed") {
         s_screen.code = "K7MQ2D";
         s_screen.failed();
-    } else if (what == PC_XN_MENU_JOIN || s_preview == "lobbies") {
+    } else if (what == PC_XN_MENU_JOIN || s_preview == "lobbies" || s_preview == "lan-lobbies" ||
+               s_preview == "lan-empty" || s_preview == "lan-blocked") {
         s_screen.to_lobbies();
     } else {
         s_screen.go(Page::Host);
@@ -2151,11 +2256,13 @@ extern "C" void pc_xn_menu_update(void) {
         read_env = true;
         if (const char* p = std::getenv("MELEE_XN_PREVIEW"))
             s_preview = p;
+        if (s_preview == "lan-banner")
+            pc_xn_set_network(PC_XN_NET_LAN);
     }
     reload_styles();
     if (s_active)
         s_screen.update();
-    const bool css_preview = s_preview == "banner" || s_preview.rfind("css-", 0) == 0;
+    const bool css_preview = s_preview == "banner" || s_preview == "lan-banner" || s_preview.rfind("css-", 0) == 0;
     if (s_banner.shown || css_preview) {
         if (css_preview && !s_banner.shown) {
             const char* boot = std::getenv("MELEE_BOOT_SCENE");

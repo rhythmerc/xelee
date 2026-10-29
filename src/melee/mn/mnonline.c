@@ -18,6 +18,7 @@
 #include "pc/slippi/slp_user.h"
 #include "pc/xr_calibrate.h"
 #include "pc/xr_place.h"
+#include "pc/xeleenet.h"
 
 /* Main Menu > Online Mode. Each entry selects its GM_ONLINE lobby mode. The
  * labels are drawn text (the menu's own labels are textures with no room for
@@ -34,7 +35,7 @@ static const char* const online_labels[] = {
 static const char* const online_descriptions[] = {
     "xeleenet.menu.online.desc",
     "Play over the internet with Slippi.",
-    "Play another player on your local network.",
+    "Host or join a lobby on your local network.",
 };
 
 /* Online Mode > Slippi: signed out it is Login and Register; signed in it is
@@ -237,15 +238,17 @@ void mnOnline_Think(HSD_GObj* gp)
     if (buttons & MenuInput_Confirm) {
         switch (mn_804A04F0.hovered_selection) {
         case SEL_ONLINE_XN:
+        case SEL_ONLINE_LAN:
+            /* LAN is XeleeNet's menu and pages on this network: the lobby
+             * service is the host's game (docs/lan-lobbies-plan.md). */
             sfxForward();
+            pc_xn_set_network(mn_804A04F0.hovered_selection == SEL_ONLINE_LAN ? PC_XN_NET_LAN
+                                                                              : PC_XN_NET_SERVICE);
             mn_80229894(MENU_KIND_ONLINE_XN, SEL_XN_HOST, 1);
             break;
         case SEL_ONLINE_SLIPPI:
             sfxForward();
             mn_80229894(MENU_KIND_ONLINE_SLIPPI, SEL_SLIPPI_UNRANKED, 1);
-            break;
-        case SEL_ONLINE_LAN:
-            enterAfterPlacing(ONLINE_KIND_LAN);
             break;
         default:
             break;
@@ -304,7 +307,7 @@ void mnOnline_SlippiThink(HSD_GObj* gp)
     }
 }
 
-/// @brief Online Mode > XeleeNet think: Host Lobby, Join with Code, Name.
+/// @brief Online Mode > XeleeNet or LAN think: Host Lobby, Join, Name.
 /// Each goes to the lobby scene (gmonlinemode.c), which asks for a name the
 /// first time and shows the keyboard, the joining steps and the room.
 void mnOnline_XnThink(HSD_GObj* gp)
@@ -332,7 +335,7 @@ void mnOnline_XnThink(HSD_GObj* gp)
     } else if (buttons & MenuInput_Back) {
         sfxBack();
         mn_804A04F0.entering_menu = 0;
-        mn_80229894(MENU_KIND_ONLINE, SEL_ONLINE_XN, 3);
+        mn_80229894(MENU_KIND_ONLINE, pc_xn_network() == PC_XN_NET_LAN ? SEL_ONLINE_LAN : SEL_ONLINE_XN, 3);
     } else {
         moveHover(buttons, (int) ARRAY_SIZE(xn_descriptions));
     }

@@ -81,6 +81,7 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
 .lrow.full { opacity: 0.5; }
 .empty { margin-top: 140px; text-align: center; font-size: 25px; color: #c9b77c; }
 .empty.bad { color: #ff8a5c; }
+.empty.sub { margin-top: 18px; padding: 0 190px; font-size: 21px; line-height: 31px; color: #c9b77c; }
 #sbar { position: absolute; left: 1100px; top: 60px; width: 6px; height: 468px; border-radius: 3px; background-color: #f0c22630; }
 #sbar .thumb { position: absolute; left: 0; width: 6px; border-radius: 3px; background-color: #f0c226; }
 .foot { position: absolute; left: 0; width: 1120px; top: 562px; text-align: center; font-size: 18px; color: #8d8468; }
@@ -97,6 +98,21 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
 #keys.xn .key.join { width: 340px; font-size: 26px; font-weight: 800; letter-spacing: 2px; color: #1a1406;
                      background-color: #f0c226; border-color: #f0c226; }
 #keys.xn .key.join.cursor { border-color: #fff4c4; background-color: #ffd84a; }
+
+/* ---- LAN's J2: the host's address on a phone-style keypad ---------------- */
+
+#addr { position: absolute; left: 300px; top: 24px; width: 520px; height: 116px; border: 3px #f0c226b0;
+        border-radius: 10px; background-color: #0c0b08e8; }
+#addr .al { position: absolute; left: 0; right: 0; top: 14px; text-align: center; font-size: 15px; font-weight: bold;
+            letter-spacing: 3px; color: #c9b77c; }
+#addr .av { position: absolute; left: 0; right: 0; top: 42px; text-align: center; font-size: 44px; font-weight: 800;
+            color: #ffffff; }
+#addr .caret { display: inline; margin-left: 2px; color: #f0c226; font-weight: normal; }
+#keys.addr { left: 390px; top: 166px; width: 360px; }
+#keys.addr .key { width: 102px; height: 76px; margin: 0 12px 12px 0; line-height: 72px; font-size: 34px;
+                  vertical-align: top; }
+#keys.addr .key.cursor { line-height: 70px; }
+#keys.addr .key.del { font-size: 22px; font-weight: 800; letter-spacing: 2px; }
 
 /* ---- J2-J4: joining ------------------------------------------------------------ */
 

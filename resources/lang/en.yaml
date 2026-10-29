@@ -220,7 +220,7 @@ xeleenet:
     first_to: First to {n}
     endless: Endless
     others:
-      one: "{n} more lobby is on another Xelee version. Update to see them."
+      one: "{n} more lobby is on another Xelee version. Update to see it."
       other: "{n} more lobbies are on another Xelee version. Update to see them."
     hints:
       row: Join a public lobby, or enter a friend's code.
@@ -321,6 +321,7 @@ xeleenet:
     stage_sets: Competitive / all
     join: Join
     enter_code: Enter code
+    join_address: Join by address    # LAN's list
     refresh: Refresh
     show_full: Show full
     hide_full: Hide full
@@ -365,3 +366,63 @@ xeleenet:
     brand: XeleeNet
     lobby: XeleeNet lobby            # a lobby whose name isn't known yet
     code: CODE {code}
+
+  # LAN: XeleeNet's menu and pages on this network, with the host's game for
+  # the lobby service (docs/lan-lobbies-plan.md). While the network is LAN a
+  # key here stands in for XeleeNet's of the same path (xeleenet.X is read as
+  # xeleenet.lan.X first); anything not here reads as XeleeNet's.
+  lan:
+    menu:
+      online:
+        host:
+          desc: Open a lobby on this network. No internet needed.
+        join:
+          desc: Join a lobby on this network.
+      tab: LAN
+      place: LAN
+    host:
+      hints:
+        name: The lobby's name in everyone's list.
+        open: Open the lobby. Everyone on this network sees it in their list.
+    lobbies:
+      looking: Looking on this network...
+      count:
+        one: "{n} lobby on this network"
+        other: "{n} lobbies on this network"
+      empty: No lobbies on this network yet.
+      # Nothing at all heard, not even our own query (B2).
+      blocked:
+        title: This network won't let Xelee look for lobbies
+        line: It blocks local discovery (multicast), as many hotel and campus networks do. Ask the host for the address on their lobby banner.
+      hints:
+        row: Join a lobby on this network.
+        empty: Host a lobby from Online Mode, or join one by its address.
+        blocked: "X: join by the host's address."
+    # Join by address (J2): XeleeNet's code keypad, digits and a dot.
+    code:
+      title: Join
+      address: HOST'S ADDRESS
+      del: DEL
+      hints:
+        type: The address is on the host's lobby banner.
+        join: Join the lobby at this address.
+    joining:
+      lobby_at: "Lobby at {address}"
+    failed:
+      edit: EDIT ADDRESS
+      not_found:
+        title: That isn't an address on this network
+        line: An address is four numbers with dots, like 192.168.0.57.
+      # A listed lobby that went before we got there.
+      gone:
+        title: That lobby closed
+        line: It isn't on this network any more. Try another lobby.
+      host:
+        line: Something on this network blocks connections between players' devices.
+      offline:
+        title: No lobby answered
+        line: Check the address with the host, and that you're on their network.
+    banner:
+      brand: LAN
+      lobby: LAN lobby
+      code: "{code}"                 # the host's address

@@ -72,6 +72,9 @@ PcXnNet pc_xn_network(void);
 /* LAN: nothing at all heard on mDNS for a while, not even our own query:
  * this network blocks discovery, and joining is by address. */
 bool pc_xn_lan_unavailable(void);
+/* LAN: the lobby's address on this network ("192.168.0.57", with ":port" off
+ * the usual one), host or guest, once in. */
+bool pc_xn_lan_address(char* out, size_t size);
 
 /* Open a lobby (`code` NULL) or join one by its code, reachable at the given
  * addresses (network order). `url` is the service; `seats` only matters to a

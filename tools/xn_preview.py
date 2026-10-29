@@ -5,9 +5,10 @@ look (src/pc/xeleenet_menu.cpp, resources/xeleenet*.rcss).
     tools/xn_preview.py [PAGE ...] [--share] [--out build/xn-preview]
 
 PAGE is host, more, stages, lobbies, code, joining, progress, failed, banner,
-css-ready, css-countdown, css-waiting, css-leaving, css-left, or the stage
-select's sss-N, sss-draw-N or sss-landed-N for N players (all of them by
-default). Each boots the game straight into the page
+css-ready, css-countdown, css-waiting, css-leaving, css-left, the stage
+select's sss-N, sss-draw-N or sss-landed-N for N players, or LAN's lan-host,
+lan-lobbies, lan-empty, lan-blocked, lan-address and lan-banner (all of them
+by default). Each boots the game straight into the page
 (MELEE_BOOT_SCENE=xn-host or css, MELEE_XN_PREVIEW=PAGE: no network, no
 service), waits for it to fade in and captures the window. --share puts the
 pictures on the tailnet share as xn-preview-PAGE.png.
@@ -27,7 +28,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 PAGES = ["host", "more", "stages", "lobbies", "code", "joining", "progress", "failed", "banner",
          "css-ready", "css-countdown", "css-waiting", "css-leaving", "css-left",
-         "sss-2", "sss-3", "sss-4", "sss-draw-2", "sss-draw-4", "sss-landed-2", "sss-landed-4"]
+         "sss-2", "sss-3", "sss-4", "sss-draw-2", "sss-draw-4", "sss-landed-2", "sss-landed-4",
+         "lan-host", "lan-lobbies", "lan-empty", "lan-blocked", "lan-address", "lan-banner"]
 DISC = os.path.expanduser("~/Downloads/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).iso")
 SHARE = os.path.expanduser("~/.claude/skills/tailnet-share/scripts/share.py")
 
@@ -39,15 +41,16 @@ def shoot(page, args):
     os.makedirs(ident, exist_ok=True)
     title = f"xn-preview-{page}"
     sss = page.startswith("sss-")
+    banner = page in ("banner", "lan-banner") or page.startswith("css-")
     env = dict(os.environ,
-               MELEE_BOOT_SCENE="sss" if sss else "css" if page == "banner" or page.startswith("css-") else "xn-host",
+               MELEE_BOOT_SCENE="sss" if sss else "css" if banner else "xn-host",
                MELEE_XN_PREVIEW=page, MELEE_XN_NAME="RHYTHM", MELEE_XN_IDENTITY=ident,
                MELEE_WINDOW_TITLE=title, MELEE_VSYNC="0", MELEE_NO_CARD="1",
                SDL_VIDEO_DRIVER=os.environ.get("SDL_VIDEO_DRIVER", "x11"))
     with open(log_path, "wb") as log:
         proc = subprocess.Popen([args.exe, "--no-card", args.disc], env=env, stdout=log, stderr=subprocess.STDOUT)
         try:
-            css = page == "banner" or page.startswith("css-") or sss
+            css = banner or sss
             want = b"MnSlMap" if sss else b"MnSlChr" if css else b"xeleenet pages: preview"
             deadline = time.time() + 90
             seen = False

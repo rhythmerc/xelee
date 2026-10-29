@@ -16,6 +16,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <set>
@@ -156,7 +157,10 @@ const Texts& texts() {
     return *s_texts.back();
 }
 
-const Entry* find(const char* key) {
+// pc_lang_overlay's: keys under `from` are looked up under `to` first.
+std::string s_overlay_from, s_overlay_to;
+
+const Entry* find_exact(const std::string& key) {
     const Texts& t = texts();
     if (auto it = t.lang.find(key); it != t.lang.end())
         return &it->second;
@@ -164,8 +168,15 @@ const Entry* find(const char* key) {
     if (it == t.en.end())
         return nullptr;
     if (t.code != "en" && s_fallen.insert(key).second)
-        pc_log_line("lang: %s has no %s; English used", t.code.c_str(), key);
+        pc_log_line("lang: %s has no %s; English used", t.code.c_str(), key.c_str());
     return &it->second;
+}
+
+const Entry* find(const char* key) {
+    if (!s_overlay_from.empty() && std::strncmp(key, s_overlay_from.c_str(), s_overlay_from.size()) == 0)
+        if (const Entry* e = find_exact(s_overlay_to + (key + s_overlay_from.size())))
+            return e;
+    return find_exact(key);
 }
 
 // A key with no text shows as itself.
@@ -237,6 +248,11 @@ extern "C" const char* pc_trf(char* out, size_t size, const char* key, ...) {
     va_end(ap);
     std::snprintf(out, size, "%s", tr_args(key, args.data(), args.size()).c_str());
     return out;
+}
+
+extern "C" void pc_lang_overlay(const char* from, const char* to) {
+    s_overlay_from = from != nullptr && to != nullptr ? from : "";
+    s_overlay_to = from != nullptr && to != nullptr ? to : "";
 }
 
 extern "C" void pc_lang_reload(void) {

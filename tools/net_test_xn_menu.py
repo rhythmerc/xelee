@@ -16,6 +16,11 @@ instance must agree one stage at the SSS and play a match with no DESYNC. Each s
 
 The names come from MELEE_XN_NAME, so the first-visit keyboard is skipped,
 and each instance has its own key (MELEE_XN_IDENTITY).
+
+--net lan does the same on LAN (docs/lan-lobbies-plan.md), with no service:
+Online Mode > LAN, the host's game is the lobby service, and the first
+guest joins by typing the address (127.0.0.1) on LAN's keypad instead of
+the code.
 """
 import argparse
 import os
@@ -33,6 +38,8 @@ import test_service  # noqa: E402
 KEYS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # xeleenet_menu.cpp kCodeKeys
 COLS = 9                                   # its kKeysAcross
 TO_ONLINE = [("Down", 7), ("Down", 7), ("X", 7)]  # main menu > Online Mode
+TO_LAN_ROW = [("Down", 7), ("Down", 7)]          # Online Mode: XeleeNet, Slippi, LAN
+ADDRESS_KEYS = "123456789.0"                     # LAN's keypad, 3 across, then DEL
 STEP = 0.35
 # Players' names as people pick them; one at the service's cap (12).
 NAMES = ["RHYTHM", "PIXEL", "WAVEDASH KID", "KOOPA"]
@@ -76,9 +83,15 @@ def step(items, cur, key):
     return best
 
 
-def type_code(inst, code):
+def address_keypad():
+    items = [(ch, i // 3, i % 3) for i, ch in enumerate(ADDRESS_KEYS)]
+    items.append(("del", 3, 2))
+    return items
+
+
+def type_code(inst, code, items=None):
     """The keypad: arrows to each character the way the game moves, A types it."""
-    items = keypad()
+    items = items or keypad()
     cur = 0
     for ch in code:
         want = next(i for i, it in enumerate(items) if it[0] == ch)
@@ -539,7 +552,9 @@ def run(args):
                 print(f"[{inst.name}] FAIL: never reached the main menu")
                 return False
         host, guests = insts[0], insts[1:]
-        walk(host, TO_ONLINE)
+        lan = args.net == "lan"
+        to_menu = TO_ONLINE + (TO_LAN_ROW if lan else [])
+        walk(host, to_menu)
         shot(host, shots, "1-online-mode")
         walk(host, [("X", 7)])
         shot(host, shots, "2-xeleenet-menu")
@@ -564,10 +579,17 @@ def run(args):
             return ok
         for k, g in enumerate(guests):
             # Join opens the lobby browser (B1), which lists the host's lobby.
-            walk(g, TO_ONLINE + [("X", 7), ("Down", 7), ("X", 7)])
+            walk(g, to_menu + [("X", 7), ("Down", 7), ("X", 7)])
             time.sleep(2.5)
             shot(g, shots, f"5-lobbies-{g.name}")
-            if k == 0:
+            if k == 0 and lan:
+                # The first guest joins by address: X opens LAN's keypad.
+                nt.press((g,), "C", 7, 1.0)
+                shot(g, shots, "6-join-address")
+                type_code(g, "127.0.0.1", address_keypad())
+                shot(g, shots, "7-join-address-typed")
+                nt.press((g,), "Return", 9, 0.4)
+            elif k == 0:
                 # The first guest types the code: Y opens the keypad (J1).
                 nt.press((g,), "V", 7, 1.0)
                 shot(g, shots, "6-join-keypad")
@@ -646,6 +668,9 @@ def run(args):
         ok = not any(nt.re.search(r"net: DESYNC", t) for t in texts)
         # The old netplay's quick chat (its D-pad prompt) has no place in a
         # XeleeNet lobby (a Quest find: XR's placement step left it on).
+        if lan and not all("xeleenet: network LAN" in t for t in texts):
+            print("FAIL: an instance never switched to LAN")
+            ok = False
         if any("net: quick chat on" in t for t in texts):
             print("FAIL: quick chat came on in a XeleeNet lobby")
             ok = False
@@ -677,6 +702,8 @@ def main():
                          "leave-host-alone: the host alone holds B and leaves its lobby")
     ap.add_argument("--join-shots", action="store_true", help="shots every 0.35 s through the first join")
     ap.add_argument("--url", default="", help="a running service instead of a local wrangler dev")
+    ap.add_argument("--net", choices=("service", "lan"), default="service",
+                    help="lan: Online Mode > LAN, no service")
     ap.add_argument("--exe", default=os.path.join(HERE, "..", "build", "linux", "melee"))
     ap.add_argument("--disc", default=os.path.expanduser(
         "~/Downloads/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).iso"))
@@ -685,7 +712,7 @@ def main():
     ap.add_argument("--shots", default="")
     args = ap.parse_args()
     service = None
-    if not args.url:
+    if not args.url and args.net == "service":
         proc, args.url, state = test_service.start_wrangler(short=False)
         service = (proc, state)
     try:

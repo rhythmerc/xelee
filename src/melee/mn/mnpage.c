@@ -566,7 +566,15 @@ void mnPage_PanelMainTitle(HSD_JObj* panel, bool ours)
     }
     HSD_JObjSetFlagsAll(joint, JOBJ_HIDDEN);
     mnPage_mainHidden = true;
+    /* XeleeNet's tab, or LAN's (the language overlay): made again when the
+     * network changed since. */
+    static const char* mainTitleText;
+    if (mnPage_mainTitle != NULL && mainTitleText != pc_tr("xeleenet.menu.tab")) {
+        HSD_SisLib_803A5CC4(mnPage_mainTitle);
+        mnPage_mainTitle = NULL;
+    }
     if (mnPage_mainTitle == NULL) {
+        mainTitleText = pc_tr("xeleenet.menu.tab");
         mnPage_mainTitle = HSD_SisLib_803A6754(0, mn_804D6BB4);
         mnPage_mainTitle->default_kerning = 1;
         mnPage_mainTitle->font_size.x = 0.034f;
