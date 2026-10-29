@@ -565,6 +565,12 @@ def run(args):
                 nt.press((g,), "X", 7, 0.4)
             time.sleep(0.6)
             shot(g, shots, f"8-joining-{g.name}")
+            if args.join_shots and k == 0:
+                # What the joiner sees until the CSS (a Quest find: the list
+                # came back for a few seconds).
+                for n in range(16):
+                    time.sleep(0.35)
+                    shot(g, shots, f"8-joining-{g.name}-{n:02d}")
             # Seated: this guest's own session agreed and its CSS entered.
             if not g.wait_log(r"lobby: entering CSS", 90):
                 print(f"[{g.name}] FAIL: never got into the lobby")
@@ -650,6 +656,7 @@ def main():
                          "sss-same: everyone picks Battlefield, no draw; "
                          "css-b-hold: B held over the grid leaves the token and the pick alone; "
                          "leave-host-alone: the host alone holds B and leaves its lobby")
+    ap.add_argument("--join-shots", action="store_true", help="shots every 0.35 s through the first join")
     ap.add_argument("--url", default="", help="a running service instead of a local wrangler dev")
     ap.add_argument("--exe", default=os.path.join(HERE, "..", "build", "linux", "melee"))
     ap.add_argument("--disc", default=os.path.expanduser(

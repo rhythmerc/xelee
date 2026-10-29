@@ -2656,6 +2656,10 @@ extern "C" void pc_menu_init(SDL_Window* window) {
     slippi_auth.account = SlippiAuth::load_account();
     pc_widescreen_set_mode(prefs.widescreen);
     VISetFrameBufferScale(prefs.render_scale);
+    /* MELEE_RENDER_SCALE: this run's scale, the saved one left alone (tests,
+     * and a desktop look at the Quest's 1x). */
+    if (const char* rs = std::getenv("MELEE_RENDER_SCALE"); rs != nullptr && rs[0] != '\0')
+        VISetFrameBufferScale(static_cast<float>(std::atof(rs)));
     pc_audio_set_volume(prefs.mute ? 0 : prefs.volume);
     pc_audio_set_music_volume(prefs.music_volume);
     pc_audio_set_sfx_volume(prefs.sfx_volume);

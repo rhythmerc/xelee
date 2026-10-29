@@ -22,6 +22,7 @@
 #include <SDL3/SDL_timer.h>
 #include <aurora/rmlui.hpp>
 #include <dolphin/gx/GXAurora.h>
+#include <dolphin/vi.h>
 #ifdef AURORA_ENABLE_OPENXR
 #include <aurora/xr.h>
 #endif
@@ -330,6 +331,10 @@ void view(PcXnPunchView* v) {
 // ---- the screens --------------------------------------------------------------
 
 enum class Page { Host, Stages, More, Lobbies, Code, Joining, Failed };
+const char* page_name(Page p) {
+    static const char* const names[] = {"Host", "Stages", "More", "Lobbies", "Code", "Joining", "Failed"};
+    return names[static_cast<int>(p)];
+}
 
 // A focusable thing: its element id, its place (col, row) and what it does.
 struct Item {
@@ -432,6 +437,8 @@ struct Screen : Rml::EventListener {
     }
 
     void go(Page p, const char* focus = nullptr) {
+        if (p != page)
+            pc_log_line("xeleenet pages: %s -> %s", page_name(page), page_name(p));
         page = p;
         cursorId = focus != nullptr ? focus : "";
         cursor = 0;
@@ -1840,10 +1847,9 @@ struct SssOverlay {
     // left). A tile per player, their colour round the picture, and the pick
     // timer once it runs.
     std::string card(const Rml::Vector2i d, const std::array<std::string, 4>& names, int me) const {
-        bool any = st.timer >= 0;
-        for (int i = 0; i < 4; i++)
-            any |= (st.ports & (1u << i)) && st.pick[i] >= 0;
-        if (!any)
+        // From the stage select's first frame: everyone "Choosing…" until
+        // they pick.
+        if (st.ports == 0)
             return "";
         const float k = d.y / 720.f;
         int n = 0;
@@ -1938,6 +1944,21 @@ struct SssOverlay {
 Screen s_screen;
 Banner s_banner;
 SssOverlay s_sss;
+
+// While the CSS's or the stage select's overlay is up, the game's frame is as
+// tall as the picture it's shown as, so the overlay drawn inside it
+// (aurora_rmlui_draw_here, under the hands and cursors) isn't resampled down
+// to the render scale's EFB: on the Quest that's 480 lines on a 1080-line
+// screen. Menus draw little; the fights keep the player's scale.
+void frame_size_for_overlays() {
+    static bool on = false;
+    const bool want = s_banner.shown || s_sss.shown;
+    if (want != on) {
+        on = want;
+        VISetFrameBufferPresentSize(want);
+        pc_log_line("xeleenet: the frame at %s size for the overlay", want ? "the screen's" : "the render scale's");
+    }
+}
 bool s_active = false;
 bool s_shown = false;
 bool s_f5_was = false;
@@ -1970,6 +1991,7 @@ extern "C" void pc_xn_menu_hide_lobby(const char* code) {
 }
 
 extern "C" void pc_xn_menu_begin(int what) {
+    pc_log_line("xeleenet pages: begin (%d)", what);
     host_load();
     const char* preview = std::getenv("MELEE_XN_PREVIEW");
     s_preview = preview != nullptr ? preview : "";
@@ -2095,6 +2117,7 @@ extern "C" void pc_xn_menu_update(void) {
             if (boot != nullptr && std::strcmp(boot, "css") == 0 && SDL_GetTicks() > 6000) {
                 preset(kDoubles); // three players of four
                 s_banner.show(true);
+                frame_size_for_overlays();
             }
         }
         s_banner.update();
@@ -2108,6 +2131,7 @@ extern "C" void pc_xn_banner_show(bool show) {
     if (show)
         s_left_reload = false;
     s_banner.show(show);
+    frame_size_for_overlays();
 }
 
 extern "C" void pc_xn_css_frame(const PcXnCssState* state) {
@@ -2146,9 +2170,13 @@ extern "C" void pc_xn_css_left(const char* name) {
 extern "C" void pc_xn_sss_frame(uint32_t mask) {
     s_sss.mask = mask;
     s_sss.show(true);
+    frame_size_for_overlays();
 }
 
-extern "C" void pc_xn_sss_show(bool show) { s_sss.show(show); }
+extern "C" void pc_xn_sss_show(bool show) {
+    s_sss.show(show);
+    frame_size_for_overlays();
+}
 
 extern "C" void pc_xn_sss_picks(const PcXnSssState* state) {
     s_sss.st = *state;
