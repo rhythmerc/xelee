@@ -1463,14 +1463,13 @@ struct Banner {
     }
 };
 
-// ---- the stage select's overlay: the stages off the list, its name, the legend
+// ---- the stage select's overlay: the list's name, the legend
 
 struct SssOverlay {
     Rml::ElementDocument* document = nullptr;
     bool shown = false;
     std::string last;
     unsigned mask = 0;
-    std::vector<std::array<float, 4>> off; // fractions of the screen
 
     void show(bool on) {
         if (on && document == nullptr) {
@@ -1502,19 +1501,7 @@ struct SssOverlay {
         if (context == nullptr || root == nullptr)
             return;
         const Rml::Vector2i d = context->GetDimensions();
-        // The off-list stages: a dark card each, struck corner to corner.
         std::string r;
-        for (const auto& q : off) {
-            // The icons' hover extents run a little past their art, onto
-            // their neighbours: inset by 6%.
-            const float iw = (q[2] - q[0]) * d.x, ih = (q[3] - q[1]) * d.y;
-            const float x = q[0] * d.x + iw * 0.06f, y = q[1] * d.y + ih * 0.06f, w = iw * 0.88f, h = ih * 0.88f;
-            const float len = std::sqrt(w * w + h * h), deg = std::atan2(h, w) * 57.29578f;
-            r += "<div class=\"off\" style=\"left: " + fmt(x) + "px; top: " + fmt(y) + "px; width: " + fmt(w) +
-                 "px; height: " + fmt(h) + "px;\"><div class=\"strike\" style=\"left: " + fmt((w - len) / 2) +
-                 "px; top: " + fmt(h / 2 - 1.5f) + "px; width: " + fmt(len) + "px; transform: rotate(-" + fmt(deg) +
-                 "deg);\"></div></div>";
-        }
         // The list's name, top right; the legend, bottom centre. Laid out at
         // 720 px tall, scaled to the window as the banner is.
         const float scale = d.y / 720.f;
@@ -1694,11 +1681,8 @@ extern "C" void pc_xn_menu_update(void) {
 
 extern "C" void pc_xn_banner_show(bool show) { s_banner.show(show); }
 
-extern "C" void pc_xn_sss_frame(uint32_t mask, int n, const float rects[][4]) {
+extern "C" void pc_xn_sss_frame(uint32_t mask) {
     s_sss.mask = mask;
-    s_sss.off.assign(n, {});
-    for (int i = 0; i < n; i++)
-        s_sss.off[i] = {rects[i][0], rects[i][1], rects[i][2], rects[i][3]};
     s_sss.show(true);
 }
 

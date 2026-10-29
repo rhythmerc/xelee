@@ -131,16 +131,14 @@ def sss_host_b(insts, shots):
     refused = False
     for frames in (12, 12, 12, 12, 12):
         nt.press((guest,), "Up", frames, 0.4)
-        nt.press((guest,), "X", 7, 0.8)
         if "is off the lobby's list" in guest.text():
-            refused = True
-            break
-        if "sss: we picked" in guest.text():
+            nt.press((guest,), "X", 7, 1.2)  # A there: nothing to pick
+            refused = "sss: we picked" not in guest.text()
             break
     if not refused:
-        print("FAIL: no off-list stage refused a pick (or a pick went through)")
+        print("FAIL: no off-list stage under the cursor, or A there picked it")
         return False
-    print("net_test_xn_menu: an off-list pick was refused", flush=True)
+    print("net_test_xn_menu: an off-list stage took no hover and no pick", flush=True)
     shot(guest, shots, "10b-sss-guest")
     nt.press((host,), "Z", 9, 1.0)
     deadline = time.time() + 30

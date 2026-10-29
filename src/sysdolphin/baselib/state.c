@@ -253,11 +253,37 @@ static void setupTevMode_last(void)
     }
 }
 
+#ifdef TARGET_PC
+bool HSD_PcTevDim;
+
+/* One stage more at the end: the colour so far times 3/8, alpha as it is. A
+ * fixed constant (KCSEL_3_8) needs no konst register, which the material's
+ * own expressions may hold (texp.c allocates them). */
+static void pc_tev_dim_stage(void)
+{
+    GXTevStageID stage = (GXTevStageID) HSD_StateAssignTev();
+    GXSetTevOrder(stage, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR_NULL);
+    GXSetTevKColorSel(stage, GX_TEV_KCSEL_3_8);
+    GXSetTevKAlphaSel(stage, GX_TEV_KASEL_1);
+    GXSetTevColorIn(stage, GX_CC_ZERO, GX_CC_CPREV, GX_CC_KONST, GX_CC_ZERO);
+    GXSetTevColorOp(stage, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+    GXSetTevAlphaIn(stage, GX_CA_ZERO, GX_CA_ZERO, GX_CA_ZERO, GX_CA_APREV);
+    GXSetTevAlphaOp(stage, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+    GXSetTevSwapMode(stage, GX_TEV_SWAP0, GX_TEV_SWAP0);
+}
+#endif
+
 void HSD_SetupRenderModeWithCustomPE(u32 rendermode, HSD_PEDesc* pe)
 {
     setupTevMode_last();
     HSD_SetupPEMode(rendermode, pe);
     HSD_SetTevRegAll();
+#ifdef TARGET_PC
+    if (HSD_PcTevDim) {
+        HSD_PcTevDim = false;
+        pc_tev_dim_stage();
+    }
+#endif
     HSD_StateSetNumTevStages();
     HSD_StateSetNumTexGens();
     HSD_SetupChannelMode(rendermode);

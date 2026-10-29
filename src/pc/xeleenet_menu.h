@@ -80,11 +80,10 @@ void pc_xn_menu_update(void);
 void pc_xn_banner_show(bool show);
 
 /* The stage select in a XeleeNet lobby, once a frame: the lobby's stage list
- * (RULES stage_mask) and the rectangles of the stages off it (fractions of
- * the screen: left, top, right, bottom), which it dims and strikes, with the
- * list's name and the legend. Shows the overlay; pc_xn_sss_show(false) on the
- * way out. */
-void pc_xn_sss_frame(uint32_t mask, int n, const float rects[][4]);
+ * (RULES stage_mask), for the overlay's pill and legend (mnstagesel.c dims
+ * the stages off it). Shows the overlay; pc_xn_sss_show(false) on the way
+ * out. */
+void pc_xn_sss_frame(uint32_t mask);
 void pc_xn_sss_show(bool show);
 
 #ifdef __cplusplus

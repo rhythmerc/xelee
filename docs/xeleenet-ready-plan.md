@@ -75,10 +75,13 @@ of repro before fix.
 
 ### P1 · Stage select: the list and host-only B (small) — done 2026-10-28
 
-Built as planned, with one change: the icons' materials don't take a colour
-or alpha, so the dimming is an overlay (`xeleenet-sss.rml`) of a dark card and
-a strike per off-list icon, placed by projecting each icon's hover box with
-`lbVector_WorldToScreen`. `net_test_xn_menu.py --scenario sss-host-b` passes.
+Built as planned. Off-list icons are dimmed where Melee draws them: their
+materials get a last TEV stage scaling the colour by 3/8 (`HSD_MObjPcDim`;
+their own colour and alpha did nothing, the textures carry their own TEV).
+Hovering one is as empty space: no highlight, name or preview, and A picks
+nothing. An overlay of struck cards was tried first and dropped (it spilled
+past the art and drew over the cursor). `xeleenet-sss.rml` keeps the list's
+pill and the legend. `net_test_xn_menu.py --scenario sss-host-b` passes.
 
 1. **Off-list stages:**
    - With `gmOnline_XnFlow()` and a RULES `stages` mask, dim each icon outside

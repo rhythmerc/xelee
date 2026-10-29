@@ -195,6 +195,12 @@ void HSD_MObjSetup(HSD_MObj* mobj, u32 rendermode);
 void HSD_MObjUnset(HSD_MObj* mobj, u32 rendermode);
 void HSD_MObjSetToonTextureImage(HSD_ImageDesc* imagedesc);
 void HSD_MObjSetDiffuseColor(HSD_MObj* mobj, u8 r, u8 g, u8 b);
+#ifdef TARGET_PC
+/* PC: materials drawn dimmed, by a screen showing items it has disabled (the
+ * stage select's stages off a lobby's list). Clear before the materials go. */
+void HSD_MObjPcDim(HSD_MObj* mobj);
+void HSD_MObjPcDimClear(void);
+#endif
 void HSD_MObjSetAlpha(HSD_MObj* mobj, f32 alpha);
 void HSD_MObjAddShadowTexture(HSD_TObj* tobj);
 extern HSD_TObj* tobj_shadows;

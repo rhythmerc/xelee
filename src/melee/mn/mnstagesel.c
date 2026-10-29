@@ -131,8 +131,9 @@ struct StageSelUserData {
 #include "pc/pc.h"
 #include "mnstagesel_slippi.h"
 #include <melee/gm/gmonlinemode.h>
-#include <melee/lb/lbvector.h>
 #include "pc/xeleenet_menu.h"
+#include <sysdolphin/baselib/dobj.h>
+#include <sysdolphin/baselib/mobj.h>
 
 /* A compact ranked list uses synchronized pads and makes both bans visible.
  * It does not depend on the archive's cursor geometry. */
@@ -215,56 +216,37 @@ static bool sss_off_list(int cell)
            !(u8) gm_80164330(mnStageSel_803F06D0[cell].xA);
 }
 
-/* Each frame: the off-list icons' rectangles (fractions of the camera's
- * viewport) and the lobby's mask, for the overlay that dims and strikes them
- * and names the list (xeleenet_menu.cpp). The icons' own materials don't
- * take a colour or alpha (tried: no change on screen). */
+/* An off-list icon drawn dim: its materials, over its joint and everything
+ * under it (not its siblings: the next icon), get a last TEV stage scaling
+ * their colour (HSD_MObjPcDim). Their own colour and alpha changed nothing:
+ * the icons' textures carry their own TEV. */
+static void sss_dim_icon(HSD_JObj* j, bool siblings)
+{
+    for (; j != NULL; j = siblings ? j->next : NULL) {
+        if (!(j->flags & (JOBJ_INSTANCE | JOBJ_PTCL | JOBJ_SPLINE))) {
+            HSD_DObj* d;
+            for (d = j->u.dobj; d != NULL; d = d->next) {
+                HSD_MObjPcDim(d->mobj);
+            }
+        }
+        sss_dim_icon(j->child, true);
+    }
+}
+
+/* Each frame in a XeleeNet lobby: dim the off-list icons, and tell the
+ * overlay (xeleenet_menu.cpp) the lobby's list for its pill and legend. */
 static void sss_mark_off_list(void)
 {
-    float rects[NUM_STAGES][4];
-    int n = 0;
     int i;
-    HSD_CObj* cobj;
-    if (!gmOnline_XnFlow() || mnStageSel_804D6C9C == NULL) {
+    if (!gmOnline_XnFlow()) {
         return;
     }
-    cobj = GET_COBJ(mnStageSel_804D6C9C);
     for (i = 0; i < NUM_STAGES; i++) {
-        const struct StageListInfo* st = &mnStageSel_803F06D0[i];
-        Vec3 c, a, b, sa, sb;
-        float vw = cobj->viewport.xmax - cobj->viewport.xmin;
-        float vh = cobj->viewport.ymax - cobj->viewport.ymin;
-        if (!sss_off_list(i) || st->x0 == NULL || st->x8 < 2 || vw <= 0 || vh <= 0) {
-            continue;
+        if (sss_off_list(i) && mnStageSel_803F06D0[i].x0 != NULL) {
+            sss_dim_icon(mnStageSel_803F06D0[i].x0, false);
         }
-        lb_8000B1CC(st->x0, NULL, &c);
-        {
-            /* The stacked rows' cells pair up by column (i ^ 1), and a pair's
-             * art is as wide as the wider: one hover box is narrower (2.1
-             * against 3.1) and its card covered half the icon. */
-            float half_x = st->xC;
-            if (i < 22 && mnStageSel_803F06D0[i ^ 1].xC > half_x) {
-                half_x = mnStageSel_803F06D0[i ^ 1].xC;
-            }
-            a = c;
-            b = c;
-            a.x -= half_x;
-            a.y -= st->x10;
-            b.x += half_x;
-            b.y += st->x10;
-        }
-        if (lbVector_WorldToScreen(cobj, &a, &sa, 0) == NULL ||
-            lbVector_WorldToScreen(cobj, &b, &sb, 0) == NULL)
-        {
-            continue;
-        }
-        rects[n][0] = (MIN(sa.x, sb.x) - cobj->viewport.xmin) / vw;
-        rects[n][1] = (MIN(sa.y, sb.y) - cobj->viewport.ymin) / vh;
-        rects[n][2] = (MAX(sa.x, sb.x) - cobj->viewport.xmin) / vw;
-        rects[n][3] = (MAX(sa.y, sb.y) - cobj->viewport.ymin) / vh;
-        n++;
     }
-    pc_xn_sss_frame(gmMainLib_GetGamePrefs()->stage_mask, n, rects);
+    pc_xn_sss_frame(gmMainLib_GetGamePrefs()->stage_mask);
 }
 
 static bool netStageSel_Active(void)
@@ -801,6 +783,20 @@ void fn_8025A310(HSD_GObj* gobj)
                 if (sp10.y - mnStageSel_803F06D0[i].x10 < sp1C.y &&
                     sp10.y + mnStageSel_803F06D0[i].x10 > sp1C.y)
                 {
+#ifdef TARGET_PC
+                    if (sss_off_list(i)) {
+                        /* Off the lobby's list: as empty space, no hover,
+                         * name or preview, and A picks nothing (cell 30:
+                         * only START, Random from the list). */
+                        static int logged = -1;
+                        if (mnStageSel_804D6CAE != 0x1E || logged != i) {
+                            logged = i;
+                            pc_log_line("sss: cell %d is off the lobby's list", i);
+                        }
+                        mnStageSel_804D6CAE = 0x1E;
+                        return;
+                    }
+#endif
 #ifdef TARGET_PC
                     if (pointed) {
                         pc_xr_pointer_target(true);
@@ -1450,6 +1446,7 @@ void mnStageSel_Scene_OnExit(UNUSED void* exit_data)
 {
 #ifdef TARGET_PC
     pc_xn_sss_show(false);
+    HSD_MObjPcDimClear(); /* the icons' materials go with the scene */
     if (rank_text) { HSD_SisLib_803A5CC4(rank_text); rank_text = NULL; }
 #endif
     if (mnStageSel_804D6C94 != NULL) {

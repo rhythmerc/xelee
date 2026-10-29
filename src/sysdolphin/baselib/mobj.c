@@ -433,6 +433,35 @@ void MObjSetupTev(HSD_MObj* mobj, HSD_TObj* tobj, u32 arg2)
     HSD_TObjSetupVolatileTev(tobj, arg2);
 }
 
+#ifdef TARGET_PC
+#define PC_DIM_MAX 96
+static HSD_MObj* s_pc_dim[PC_DIM_MAX];
+static int s_pc_dim_n;
+
+static bool pc_dimmed(HSD_MObj* mobj)
+{
+    int i;
+    for (i = 0; i < s_pc_dim_n; i++) {
+        if (s_pc_dim[i] == mobj) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void HSD_MObjPcDim(HSD_MObj* mobj)
+{
+    if (mobj != NULL && s_pc_dim_n < PC_DIM_MAX && !pc_dimmed(mobj)) {
+        s_pc_dim[s_pc_dim_n++] = mobj;
+    }
+}
+
+void HSD_MObjPcDimClear(void)
+{
+    s_pc_dim_n = 0;
+}
+#endif
+
 void HSD_MObjSetup(HSD_MObj* mobj, u32 rendermode)
 {
     HSD_TObj *tobj, **tail;
@@ -472,6 +501,9 @@ void HSD_MObjSetup(HSD_MObj* mobj, u32 rendermode)
     HSD_TObjSetup(tobj);
     HSD_TObjSetupTextureCoordGen(tobj);
     HSD_MOBJ_METHOD(mobj)->setup_tev(mobj, tobj, rendermode);
+#ifdef TARGET_PC
+    HSD_PcTevDim = pc_dimmed(mobj);
+#endif
     HSD_SetupRenderModeWithCustomPE(rendermode, mobj->pe);
     if (tail != NULL) {
         *tail = NULL;

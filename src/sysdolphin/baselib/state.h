@@ -35,6 +35,11 @@ typedef struct HSD_Chan {
 void HSD_SetupChannelMode(u32 arg0);
 void HSD_SetupPEMode(u32 flags, HSD_PEDesc* pe);
 void HSD_SetupRenderModeWithCustomPE(u32 rendermode, HSD_PEDesc* pe);
+#ifdef TARGET_PC
+/* Set by HSD_MObjSetup for a material drawn dimmed (HSD_MObjPcDim): the next
+ * render-mode setup appends a TEV stage scaling the colour by 3/8. */
+extern bool HSD_PcTevDim;
+#endif
 void HSD_SetupRenderMode(u32);
 void HSD_SetMaterialColor(GXColor ambient, GXColor diffuse, GXColor specular,
                           f32 alpha);
