@@ -341,7 +341,6 @@ xeleenet:
     waiting_on: "Waiting on {name}"
     tag_ready: READY
     tag_start: START when ready
-    tag_choosing: choosing...
     tag_waiting: Waiting on you · START
 
   banner:

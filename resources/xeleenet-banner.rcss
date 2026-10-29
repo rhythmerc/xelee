@@ -44,8 +44,6 @@ div, span { display: block; }
 .tag { position: absolute; left: 10%; right: 10%; text-align: center; font-weight: 800; color: #d6d3cb;
        border: 1px #aeaba399; border-radius: 11px; background-color: #0b0b10d8; }
 .tag.warn { color: #ffe066; border-color: #f0c226; background-color: #2a1f08; }
-.choosing { position: absolute; left: 3px; right: 3px; top: 3px; bottom: 3px; text-align: center; color: #c9cde8;
-            border-radius: 6px; background-color: #05060f8c; } /* no italic: no italic face ships */
 .dash { position: absolute; left: 0; right: 0; top: 0; bottom: 0; border: 3px #fff4c4; border-radius: 8px; }
 #clegend { position: absolute; width: 1120px; height: 46px; text-align: center; transform-origin: 0 0; }
 #clegend .keys { display: inline-block; height: 46px; padding: 0 14px; border: 1px #f0c22650; border-radius: 23px;

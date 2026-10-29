@@ -1534,9 +1534,6 @@ struct Banner {
                     tag = "<div class=\"tag\" style=\"bottom: " + fmt(0.1f * w) + "px; font-size: " + fmt(11.f * k) +
                           "px; height: " + fmt(22.f * k) + "px; line-height: " + fmt(20.f * k) + "px;\">" +
                           enc(tr("xeleenet.css.tag_start")) + "</div>";
-                } else {
-                    tag = "<div class=\"choosing\" style=\"font-size: " + fmt(13.f * k) + "px; line-height: " +
-                          fmt(h) + "px;\">" + enc(tr("xeleenet.css.tag_choosing")) + "</div>";
                 }
                 r += "<div class=\"door\" style=\"left: " + fmt(x) + "px; top: " + fmt(y) + "px; width: " + fmt(w) +
                      "px; height: " + fmt(h) + "px;\">" + tag + "</div>";

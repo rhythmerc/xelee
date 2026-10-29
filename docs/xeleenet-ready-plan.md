@@ -162,7 +162,7 @@ The plan as written:
      kinds: info, warn, gold countdown with a draining bar, and red;
    - `#legend` above the doors, with the menus' GC glyphs (reuse the `.lg`,
      `.gl` rules from xeleenet.rcss);
-   - one tag per door: the READY ribbon, *START when ready*, *choosing…*,
+   - one tag per door: the READY ribbon, *START when ready*,
      *Waiting on you · START*, and the dashed outline.
 2. **Positions:** door rectangles come from the CSS model's door joints
    (`mnCharSel_803F0DFC.doors[i].door_joint` world position, projected the way
