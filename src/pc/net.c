@@ -2985,6 +2985,74 @@ intptr_t pc_net_release_socket(void) {
     return (intptr_t)session_stop(true);
 }
 
+void pc_net_check_from(int32_t frame) {
+    net.ck_from = frame;
+}
+
+void pc_net_port_leave(int port, int32_t last) {
+    if (!net.active || s_slippi_on || port < 0 || port >= PORTS || !(s_remote_mask & (1u << port)) ||
+        s_port_end[port] >= 0)
+    {
+        return;
+    }
+    /* drop_end's release without its void, and the host keeps passing on what
+     * it holds of the port: a guest that hears it through the host may not
+     * have every frame up to `last` yet. */
+    static const WirePad released;
+    int32_t upto = simulated_upto();
+    for (int32_t f = last + 1; f <= upto && f > upto - RING; f++) {
+        s_remote_ring[port][f & (RING - 1)] = released;
+    }
+    s_port_end[port] = last;
+    s_gone |= (uint8_t)(1u << port);
+    remote_marks_update();
+    pc_log_line("net: P%d left the session after frame %d (planned; we are at %d)", port + 1, last,
+        net.frame);
+}
+
+void pc_net_leave_quietly(int32_t last, int ms) {
+    if (!net.active || s_slippi_on) {
+        pc_net_disconnect();
+        return;
+    }
+    const uint64_t t0 = SDL_GetTicksNS();
+    uint64_t last_send = 0;
+    bool all = false;
+    while (!all && SDL_GetTicksNS() - t0 < (uint64_t)ms * 1000000ull && !s_peer_left) {
+        recv_inputs();
+        all = true;
+        SDL_LockMutex(net.tx_lock);
+        for (int i = 0; i < net.npeers; i++) {
+            if ((s_gone & (1u << s_peer[i].port)) || net.link_dead[i]) {
+                continue;
+            }
+            all &= s_peer[i].last_acked >= last;
+            for (int o = 0; o < PORTS; o++) {
+                if ((s_fwd[o] & (1u << i)) && s_port_have[o] >= 0) {
+                    const int32_t want = s_port_have[o] < last ? s_port_have[o] : last;
+                    all &= s_fwd_acked[o][i] >= want;
+                }
+            }
+        }
+        SDL_UnlockMutex(net.tx_lock);
+        if (all) {
+            break;
+        }
+        const uint64_t now = SDL_GetTicksNS();
+        if (now - last_send > 8000000ull) {
+            send_inputs();
+            last_send = now;
+        }
+        SDL_DelayNS(500000);
+    }
+    pc_log_line("net: leaving after frame %d; every peer %s it after %.0f ms", last,
+        all ? "holds" : "may not hold", (SDL_GetTicksNS() - t0) / 1e6);
+    sock_t sock = session_stop(true);
+    if (sock != SOCK_INVALID) {
+        sock_close(sock);
+    }
+}
+
 static sock_t session_stop(bool keep) {
     sock_t kept = SOCK_INVALID;
     if (s_slippi_on) {

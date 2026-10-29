@@ -27,6 +27,7 @@ typedef struct PcXnMember {
     int ncands;
     uint32_t ip[PC_XN_CANDS]; /* network order */
     uint16_t udp[PC_XN_CANDS];
+    double joined; /* when they took the seat (service ms): a rejoin is a new stay */
 } PcXnMember;
 
 /* A lobby as the browser lists it (and as joining learns it): the

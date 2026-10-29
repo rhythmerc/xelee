@@ -266,5 +266,8 @@ export class Lobby extends DurableObject {
 }
 
 function publicMember(m) {
-  return { key: m.key, name: m.name, tag: m.tag, xr: m.xr, port: m.port, candidates: m.candidates };
+  // `joined` tells one stay in a seat from the next: a player who left and
+  // joined again has the same key, and often the same port.
+  return { key: m.key, name: m.name, tag: m.tag, xr: m.xr, port: m.port, candidates: m.candidates,
+    joined: m.joined || 0 };
 }

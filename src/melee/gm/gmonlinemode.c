@@ -82,6 +82,16 @@ static char slpcss_notice[48];
 /* XeleeNet: the CSS leaves for itself, the roster having changed (see
  * gmOnline_XnCssFrame). */
 static bool xn_reload;
+/* A newcomer's first CSS of a lobby: it starts from the host's picks too. */
+static bool xn_join_css;
+/* The reloaded CSS's first frame re-seeds (gmOnline_XnCssFrame). */
+static bool xn_reseed;
+/* The picks a roster reload keeps (gmOnline_XnKeepPicks): the host's, which
+ * it sends to everyone. */
+#define NET_MSG_XN_PICKS 0x21
+static u8 xn_pick_ckind[4], xn_pick_color[4], xn_pick_mask;
+static void xnPicksTake(void);
+static uint32_t xn_seed; /* the running session's (xnAgreeFrame, below) */
 /* The player set the doors' teams were last dealt for (XeleeNet). */
 static int xn_team_ports;
 static void routeAfterFailure(void);
@@ -449,11 +459,17 @@ void onEnterCss(GameModeState* state)
         if (ports == 0) {
             ports = 1; /* the host, alone until someone joins */
         }
-        if (xn_reload) {
+        if (xn_reload || xn_join_css) {
             /* A roster reload: everyone starts from the same CSS, the newcomer
-             * included (gm_InitVsMode, as entering the lobby does). */
+             * included (gm_InitVsMode, as entering the lobby does), with the
+             * picks that stood kept. */
             gm_InitVsMode(&online_vs);
-            xn_reload = false;
+            xnPicksTake();
+            xn_reload = xn_join_css = false;
+            /* Every CSS starts from the session's seed on its first frame
+             * (gmOnline_XnCssFrame): a draw here, between ticks, the engine
+             * puts back. */
+            xn_reseed = pc_net_active();
         }
         for (int i = 0; i < GM_MAX_PLAYERS; ++i) {
             PlayerInitData* p = &online_vs.start.players[i];
@@ -524,14 +540,14 @@ void onExitCss(GameModeState* state)
     if (online_kind == ONLINE_KIND_XN &&
         ((CSSData*) gm_GetGameModeStateExitData(state))->pending_scene_change == CSSPendingSceneChange_2)
     {
-        /* B leaves the lobby (a host closes it) for the XeleeNet menu. The
-         * session's end is ours, not a failure: no stale "opponent left"
-         * may greet the next lobby's CSS (it left at once, to the lobby,
-         * which ended the new punch). */
+        /* A B hold left the lobby (gmOnline_XnLeave ended the session): back
+         * to the XeleeNet pages, a host's Host page or a guest's lobby list.
+         * The end is ours, not a failure: no stale "opponent left" may greet
+         * the next lobby's CSS. */
         pc_net_disconnect();
         pc_net_peer_status_clear();
         pc_xn_punch_end();
-        gm_ChangeGameModeAfterCurrentScene(GM_MENU);
+        gm_SetNextGameModeStateId(state_lobby);
         return;
     }
     if (pc_net_peer_status() != PC_NET_PEER_OK) {
@@ -1630,6 +1646,10 @@ static bool xnAgreeFrame(void)
     if (xn_agreed && !xn_entered && pc_net_frame() >= xn_start_frame) {
         xn_entered = true;
         *HSD_RandSeedPtr = xn_seed;
+        /* Until the CSS is entered (onEnterCss), the players run different
+         * scenes: those in the CSS draw random numbers there (a pick on
+         * Random does), a newcomer's Joining page doesn't. */
+        pc_net_check_from(INT32_MAX);
         return true;
     }
     return false;
@@ -1663,6 +1683,7 @@ static void xnLobbyFrame(void)
         pc_xn_punch_poll();
         if (xnAgreeFrame()) {
             pc_log_line("lobby: entering CSS at frame %d, seed %u", pc_net_frame(), xn_seed);
+            xn_join_css = true;
             gm_801A4B60();
         }
     }
@@ -1681,10 +1702,129 @@ bool gmOnline_XnFlow(void)
            (gm_GetCurrentGameMode() == GM_ONLINE && online_kind == ONLINE_KIND_XN);
 }
 
+void gmOnline_XnKeepPicks(const u8 ckind[4], const u8 color[4], u8 mask)
+{
+    u8 b[9];
+    int i;
+    if (pc_net_active() && pc_net_local_player() != 0) {
+        return; /* a guest's CSS agrees with the host's; the host's go out */
+    }
+    memcpy(xn_pick_ckind, ckind, 4);
+    memcpy(xn_pick_color, color, 4);
+    xn_pick_mask = mask;
+    if (!pc_net_active()) {
+        return; /* the host alone again: its own pick stays */
+    }
+    b[0] = mask;
+    for (i = 0; i < 4; i++) {
+        b[1 + 2 * i] = ckind[i];
+        b[2 + 2 * i] = color[i];
+    }
+    pc_net_send_reliable(NET_MSG_XN_PICKS, b, sizeof b);
+}
+
+/* Into the reloaded CSS: the host's picks (a guest waits for them; its own
+ * CSS may not have had them, a newcomer's never did), for the ports still in
+ * it. Every player's CSS has to start the same, or the lockstep desyncs. */
+static void xnPicksTake(void)
+{
+    const int ports = pc_net_active() ? pc_net_port_mask() : 1;
+    int i;
+    if (pc_net_active() && pc_net_local_player() != 0) {
+        const u64 t0 = SDL_GetTicks();
+        bool got = false;
+        xn_pick_mask = 0;
+        while (!got && SDL_GetTicks() - t0 < 5000 && pc_net_active()) {
+            u8 type, b[9];
+            int n;
+            pc_net_poll();
+            while ((n = pc_net_recv_reliable(&type, b, sizeof b)) >= 0) {
+                if (type == NET_MSG_XN_PICKS && n == (int) sizeof b) {
+                    xn_pick_mask = b[0];
+                    for (i = 0; i < 4; i++) {
+                        xn_pick_ckind[i] = b[1 + 2 * i];
+                        xn_pick_color[i] = b[2 + 2 * i];
+                    }
+                    got = true;
+                }
+            }
+            if (!got) {
+                SDL_Delay(1);
+            }
+        }
+        if (!got) {
+            pc_log_line("online: XeleeNet no picks from the host after %u ms; the CSS starts empty",
+                        (unsigned) (SDL_GetTicks() - t0));
+        }
+    }
+    for (i = 0; i < 4; i++) {
+        if ((xn_pick_mask & ports & (1 << i)) && xn_pick_ckind[i] < ChKind_Max) {
+            online_vs.start.players[i].ckind = xn_pick_ckind[i];
+            online_vs.start.players[i].color = xn_pick_color[i];
+        }
+    }
+    pc_log_line("online: XeleeNet picks kept %02x (of %02x)", xn_pick_mask & ports, ports);
+    xn_pick_mask = 0;
+}
+
+int gmOnline_XnLeave(int port)
+{
+    const int me = pc_net_local_player();
+    const int32_t f = pc_net_frame();
+    if (!pc_net_active() || me < 0) {
+        return 0; /* tools/xn_preview.py's CSS: no lobby to leave */
+    }
+    if (port == me || port == 0) {
+        /* We leave: our own hold, or the host's, which closes the lobby. The
+         * others need our input up to this frame (they leave too, or play on
+         * without us), so the session ends once they hold it. */
+        if (port != me) {
+            PcXnPunchView v;
+            pc_xn_punch_view(&v);
+            pc_xn_menu_note("xeleenet.lobbies.host_closed");
+            pc_xn_menu_hide_lobby(v.code);
+        }
+        pc_log_line("online: XeleeNet %s at frame %d", port == me ? "we leave the lobby" :
+                                                                    "the host closed the lobby", f);
+        pc_net_leave_quietly(f, 1500);
+        pc_net_peer_status_clear();
+        pc_xn_punch_end();
+        return 1;
+    }
+    {
+        PcXnPunchView v;
+        int k;
+        pc_xn_punch_view(&v);
+        for (k = 0; k < v.nplayers; k++) {
+            if (v.players[k].port == port) {
+                pc_xn_css_left(v.players[k].name);
+            }
+        }
+    }
+    pc_net_port_leave(port, f);
+    if (pc_xn_punch_left(port)) {
+        xn_reload = true;
+        xn_seq = pc_xn_punch_session_seq(); /* the next session is a new one */
+        pc_log_line("online: XeleeNet host alone again; the CSS reloads at frame %d", f);
+        return 2;
+    }
+    return 0;
+}
+
 bool gmOnline_XnCssFrame(void)
 {
     if (online_kind != ONLINE_KIND_XN) {
         return false;
+    }
+    if (xn_reseed) {
+        /* The first frame of a reloaded CSS, the same tick for everyone: the
+         * players ran different scenes since the agreed frame (those in the
+         * CSS drew random numbers there, a newcomer's Joining page didn't). */
+        xn_reseed = false;
+        if (pc_net_active()) {
+            *HSD_RandSeedPtr = xn_seed;
+            pc_net_check_from(pc_net_frame() + 1);
+        }
     }
     if (pc_xn_punch_poll() < 0) {
         return false; /* the lobby closed; the game goes on with whoever is here */
@@ -1713,6 +1853,11 @@ void gm_Scene_OnlineLobby_OnEnter(UNUSED void* unused)
 #ifdef TARGET_PC
     if (online_kind == ONLINE_KIND_XN) {
         xn_joined = false;
+        /* A new punch counts its sessions from 1 again: the last lobby's
+         * agreement must not pass for this one's (a second Join in a run
+         * waited on the Joining page for ever). */
+        xn_seq = 0;
+        xn_agreed = xn_entered = false;
         xn_team_ports = 0; /* a new lobby deals its teams afresh */
         pc_net_peer_status_clear(); /* an earlier session's end is not this lobby's */
         mnXeleeNet_Begin(xn_intent == XN_INTENT_JOIN ? PC_XN_MENU_JOIN :

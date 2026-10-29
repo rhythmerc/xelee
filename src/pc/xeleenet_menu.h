@@ -90,8 +90,20 @@ typedef struct PcXnCssState {
     uint8_t waiting;               /* the one everyone else waits on, or 0 */
     int countdown;                 /* frames to the stage select; -1: none */
     int countdown_total;
+    int hold, hold_total; /* this player's B hold toward leaving (P4), in frames */
+    bool hand_ok;         /* their hand on screen, as fractions of it */
+    float hand_x, hand_y;
 } PcXnCssState;
 void pc_xn_css_frame(const PcXnCssState* state);
+/* A player left the lobby (gmonlinemode.c): the notice slot says so for a few
+ * seconds, through the CSS's reload. */
+void pc_xn_css_left(const char* name);
+/* A line for the next XeleeNet page (pc_xn_menu_begin), e.g. why the player
+ * is back there. A lang key. */
+void pc_xn_menu_note(const char* key);
+/* A lobby that just closed under us: the list leaves it out for a while,
+ * though the service may not have heard yet. */
+void pc_xn_menu_hide_lobby(const char* code);
 
 /* The stage select in a XeleeNet lobby, once a frame: the lobby's stage list
  * (RULES stage_mask), for the overlay's pill and legend (mnstagesel.c dims

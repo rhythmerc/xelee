@@ -238,6 +238,7 @@ static int parse_members(const PcSlippiJson* list, PcXnMember* out, int max) {
         pc_slippi_json_string(pc_slippi_json_get(m, "name"), x.name, sizeof x.name);
         pc_slippi_json_string(pc_slippi_json_get(m, "tag"), x.tag, sizeof x.tag);
         x.port = pc_slippi_json_int(pc_slippi_json_get(m, "port"), -1);
+        x.joined = pc_slippi_json_num(pc_slippi_json_get(m, "joined"), 0);
         const PcSlippiJson* cands = pc_slippi_json_get(m, "candidates");
         for (int c = 0; cands != NULL && c < cands->child_count && x.ncands < PC_XN_CANDS; c++) {
             char text[64];

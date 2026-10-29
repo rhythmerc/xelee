@@ -41,6 +41,11 @@ int pc_xn_punch_session_seq(void);
 /* Leave the lobby (a host closes it) and forget this run, session or not.
  * The session itself is pc_net_disconnect's. */
 void pc_xn_punch_end(void);
+/* A guest left by holding B (every player still in the lobby calls this on
+ * the frame they see it): forget them, and the host starts the next session
+ * without them. True when that leaves the host alone: the session has ended
+ * and the lobby waits for the next to join, as it did when it opened. */
+bool pc_xn_punch_left(int port);
 
 /* What the waiting room shows (gmonlinemode.c). */
 enum {

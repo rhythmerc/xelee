@@ -207,6 +207,7 @@ xeleenet:
     updated: Updated {n} s ago
     unreachable: Couldn't reach XeleeNet     # when XeleeNet gave no reason
     empty: No public lobbies right now. Host one, or join a friend's with its code.
+    host_closed: The host closed the lobby.
     # A lobby's row: its mode, badges, and the line under its name.
     modes:
       1v1: 1V1
@@ -327,6 +328,7 @@ xeleenet:
     cancel: Cancel
     ready: Ready
     not_ready: Not ready
+    hold_leave: "Hold: leave lobby"    # the CSS: B held for a second
 
   # The lobby's banner over the CSS: its name, rules and code.
   # The stage select's overlay: the lobby's stage list, top right.
@@ -342,6 +344,8 @@ xeleenet:
     tag_ready: READY
     tag_start: START when ready
     tag_waiting: Waiting on you · START
+    holding: Keep holding B to leave the lobby
+    left: "{name} left the lobby"
 
   banner:
     brand: XeleeNet

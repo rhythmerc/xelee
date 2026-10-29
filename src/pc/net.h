@@ -93,6 +93,21 @@ bool pc_net_connect_links(
 /* End the session without a goodbye and hand its socket back (-1 when there
  * is none): XeleeNet restarts the session on it when a player joins. */
 intptr_t pc_net_release_socket(void);
+/* A planned leave (XeleeNet's hold B on the CSS, docs/xeleenet-ready-plan.md
+ * P4), which every player sees on the same lockstep frame `last` from the
+ * shared pads. The others call pc_net_port_leave(port, last) on that frame:
+ * nothing waits on that port past it, and it reads as released from the next
+ * frame on, with no goodbye, collection or void. Whoever leaves the session
+ * calls pc_net_leave_quietly(last), which first waits (up to `ms`) until
+ * every peer holds its input up to that frame (and, on the host, what it
+ * passes on for others), then ends the session with no goodbye: a goodbye
+ * would read as a drop to a peer that hasn't reached the frame yet. */
+void pc_net_port_leave(int port, int32_t last);
+/* The desync check compares frames from `frame` on (INT32_MAX: none until
+ * told again). XeleeNet's roster reload: from the agreed frame to the CSS's
+ * entry the players run different scenes (the CSS, the Joining page). */
+void pc_net_check_from(int32_t frame);
+void pc_net_leave_quietly(int32_t last, int ms);
 /* The controller ports in the session, ours included (bit per port); 0 offline. */
 int pc_net_port_mask(void);
 /* Connect over the Slippi transport (MELEE_NET_STACK=slippi,

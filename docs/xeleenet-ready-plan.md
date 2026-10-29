@@ -54,6 +54,10 @@ It builds on `docs/xeleenet-plan.md` (§3.4-§3.6) and the state in
       wireframe units) and moves down to make room.
 11. **In a headset:** the picks card and the draw float as a panel, as the
     placing cards do.
+12. **Picks across a roster change** (added 2026-10-29, during P4): when
+    someone joins or leaves, everyone still in the lobby keeps their
+    character and costume. Ready is still cleared (decision 2), and teams are
+    dealt again for the new player set. A newcomer starts with no pick.
 
 ## What the code does today
 
@@ -186,7 +190,55 @@ Test: preview shots of each state (`MELEE_XN_PREVIEW=css-ready|css-countdown|
 css-waiting|css-leaving`, rendered with `tools/xn_preview.py`), then a live
 3-instance run. The hand must pick every icon at its edges.
 
-### P4 · Leaving alone, and the host closing
+### P4 · Leaving alone, and the host closing — done 2026-10-29
+
+Built as planned, with these differences:
+
+- **No goodbye, no collection.** Every player sees the hold end on the same
+  lockstep frame F, so each one releases the leaver's port from F + 1 on
+  its own (`pc_net_port_leave`). The leaver waits until every peer has
+  acknowledged its input up to F (`pc_net_leave_quietly`, at most 1.5 s;
+  0 ms on loopback), then ends its session without a goodbye. A goodbye
+  would read as a drop to a peer that hasn't reached F yet.
+- **The hold counts only once B has been up** since the CSS came, so a B
+  held over from the stage select's host B doesn't count. Held B is taken out of
+  the pads, and Melee's back button is off in the lobby.
+- **A 1v1 lobby:** when the guest leaves, the host's session ends, the punch
+  gets its socket back, and the CSS reloads at once with one door. The next
+  joiner starts a new session, as in a fresh lobby.
+- **A departed player isn't re-learned:** guests' member lists never change,
+  and the host's lags. The punch remembers each leaver's key and the
+  service's `joined` stamp (now in the member list), so the same player
+  rejoining is a new stay.
+- **Landing:** the leaver goes to the XeleeNet pages (the Lobbies list for a
+  guest, H1 for a host). After the host closes, guests land on the Lobbies
+  list with "The host closed the lobby." on the hint line, and that lobby
+  is hidden from the list for 30 s.
+- **Picks (decision 12):** at a roster reload the host sends every port's
+  character and costume (`NET_MSG_XN_PICKS`). Everyone else waits for that
+  message on entering the CSS and starts from it, the newcomer included.
+- **The seed:** after the agreed frame, players run different scenes, and
+  those in the CSS draw random numbers (a pick on Random does). The engine
+  puts back any draw made between ticks, so the re-seed happens on the
+  reloaded CSS's first frame. The desync check pauses from the agreed frame
+  until then.
+- **Fixed on the way:** a second Join in the same run waited on the Joining
+  page forever, because the last lobby's session agreement still counted.
+
+Tests: `tools/net_test_xn_menu.py --scenario leave-guest` (3 players, and
+`--players 2`). The last guest leaves, the others reload with their picks,
+the leaver rejoins from the list, and everyone plays a match with no DESYNC.
+`--scenario leave-host` checks the host closing the lobby. Previews:
+`tools/xn_preview.py css-leaving css-left`.
+
+Not covered:
+- A leave while a join's start is in flight: the start in flight still
+  names the leaver.
+- A player who drops without leaving (a crash, a lost network) goes through
+  the engine's drop and void, as before.
+- B held anywhere but the CSS.
+
+The plan as written:
 
 1. **Hold B:** 60 frames of B held on a port in the CSS, counted from the
    shared pads, so every peer sees it on the same frame.

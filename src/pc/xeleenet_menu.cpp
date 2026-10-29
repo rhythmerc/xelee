@@ -63,6 +63,12 @@ void sfx(int which) { lbAudioAx_80024030(which); }
 
 // MELEE_XN_PREVIEW: the page shown with sample data, else "".
 std::string s_preview;
+// The next visit's note (pc_xn_menu_note), a lang key.
+std::string s_note;
+// A lobby that closed under us (pc_xn_menu_hide_lobby), and when.
+std::string s_hidden_code;
+uint64_t s_hidden_at = 0;
+constexpr uint64_t kHiddenMs = 30000;
 
 // ---- the stages (H2) ----------------------------------------------------------
 // GamePrefs.stage_mask's bit is a Random Stage Switch id (mnstagesw.c,
@@ -386,7 +392,7 @@ struct Screen : Rml::EventListener {
     std::string cursorId; // kept across rebuilds
     std::string last;     // the board as last built
 
-    std::string hostNote; // H1's error line
+    std::string hostNote; // H1's error line, or why we're back on H1 or B1 (pc_xn_menu_note)
     std::string code;     // J1's code
     std::string failWhy;          // J3: xeleenet.failed.<failWhy>
     std::string failHost, failErr; // what fills it in
@@ -674,7 +680,11 @@ struct Screen : Rml::EventListener {
         int n = 0, o = 0;
         const int st = pc_xn_browse_poll(out, PC_XN_LIST_MAX, &n, &o);
         if (st == 1) {
-            rows.assign(out, out + n);
+            rows.clear();
+            const bool hide = !s_hidden_code.empty() && SDL_GetTicks() - s_hidden_at < kHiddenMs;
+            for (int i = 0; i < n; i++)
+                if (!hide || s_hidden_code != out[i].code)
+                    rows.push_back(out[i]);
             others = o;
             fetch = 1;
             fetchedAt = SDL_GetTicks();
@@ -1253,12 +1263,12 @@ struct Screen : Rml::EventListener {
                              : tr("xeleenet.joining.hints.finding");
         } else if (page == Page::Failed) {
             hintText = tr("xeleenet.failed.hint");
+        } else if (!hostNote.empty() && (page == Page::Host || page == Page::Lobbies)) {
+            hintText = hostNote;
         } else if (page == Page::Lobbies && items.empty()) {
             hintText = tr("xeleenet.lobbies.hints.empty");
         } else if (page == Page::Code) {
             hintText = tr(code.size() == 6 ? "xeleenet.code.hints.join" : "xeleenet.code.hints.type");
-        } else if (!hostNote.empty() && page == Page::Host) {
-            hintText = hostNote;
         } else {
             hintText = items.empty() ? std::string() : items[cursor].hint;
         }
@@ -1398,6 +1408,15 @@ struct Screen : Rml::EventListener {
 // The CSS's Ready, as mncharsel.c last told it (pc_xn_css_frame), and when.
 PcXnCssState s_css{};
 uint64_t s_css_at = 0;
+// Who left the lobby last (pc_xn_css_left), and when: the notice slot says so
+// for a while, and for that long again once the CSS has reloaded without them
+// (the next session takes a few seconds to agree).
+std::string s_left_name;
+uint64_t s_left_at = 0;
+bool s_left_reload = false; // the reload without them hasn't come yet
+constexpr uint64_t kLeftNoticeMs = 5000, kLeftReloadMs = 15000;
+// The hold's notice shows from this many frames of it on.
+constexpr int kHoldNotice = 10;
 
 // The doors' rectangles in the CSS as Melee lays it out, as fractions of the
 // game's picture (the RmlUi context is that picture: Aurora's content
@@ -1474,9 +1493,12 @@ struct Banner {
                            {{"n", bits(s_css.ready & s_css.humans)}, {"m", bits(s_css.humans)}})) +
                     "</div>";
         }
-        // The notice slot, under the banner: the countdown, or who's waited on.
+        // The notice slot, under the banner: our own hold toward leaving, the
+        // countdown, who's waited on, or who left.
         std::string notice;
-        if (css && s_css.countdown > 0) {
+        if (css && s_css.hold >= kHoldNotice) {
+            notice = "<div class=\"notice red\">" + enc(tr("xeleenet.css.holding")) + "</div>";
+        } else if (css && s_css.countdown > 0) {
             const int secs = (s_css.countdown + 59) / 60;
             const float left = s_css.countdown_total > 0 ? float(s_css.countdown) / s_css.countdown_total : 0.f;
             notice = "<div class=\"notice gold\">" + enc(tr("xeleenet.css.countdown", {{"n", secs}})) +
@@ -1490,6 +1512,8 @@ struct Banner {
             notice = "<div class=\"notice warn\">" +
                      enc(tr("xeleenet.css.waiting_on", {{"name", hash == std::string::npos ? who : who.substr(0, hash)}})) +
                      "</div>";
+        } else if (s_left_at != 0 && SDL_GetTicks() - s_left_at < kLeftNoticeMs) {
+            notice = "<div class=\"notice info\">" + enc(tr("xeleenet.css.left", {{"name", s_left_name}})) + "</div>";
         }
         const std::string r =
             "<div class=\"brand\"><span>" + enc(tr("xeleenet.banner.brand")) +
@@ -1545,9 +1569,23 @@ struct Banner {
             if (s_css.countdown > 0)
                 keys = legend_key("b", "xeleenet.legend.cancel");
             else if (s_css.ready & mine)
-                keys = legend_key("b", "xeleenet.legend.not_ready");
+                keys = legend_key("b", "xeleenet.legend.not_ready") + legend_key("b", "xeleenet.legend.hold_leave");
             else
-                keys = legend_key("start", "xeleenet.legend.ready");
+                keys = legend_key("start", "xeleenet.legend.ready") + legend_key("b", "xeleenet.legend.hold_leave");
+            // The ring around this player's hand while they hold B.
+            if (s_css.hold > 0 && s_css.hold_total > 0 && s_css.hand_ok) {
+                constexpr int kDots = 24;
+                const float cx = s_css.hand_x * d.x, cy = s_css.hand_y * d.y;
+                const float rad = 46.f * k, dot = 8.f * k;
+                const int on = kDots * s_css.hold / s_css.hold_total;
+                for (int j = 0; j < kDots; j++) {
+                    const float a = 6.2831853f * j / kDots;
+                    r += "<div class=\"rdot" + std::string(j < on ? " on" : "") + "\" style=\"left: " +
+                         fmt(cx + rad * std::sin(a) - dot / 2) + "px; top: " + fmt(cy - rad * std::cos(a) - dot / 2) +
+                         "px; width: " + fmt(dot) + "px; height: " + fmt(dot) + "px; border-radius: " + fmt(dot / 2) +
+                         "px;\"></div>";
+                }
+            }
             // Below the doors, centred in the room the zoom leaves.
             const float ls = 0.8f * k;
             const float below = (css_zoom(kDoorY0 + kDoorH) + 1.f) / 2.f;
@@ -1646,6 +1684,13 @@ void reload_styles() {
 
 } // namespace
 
+extern "C" void pc_xn_menu_note(const char* key) { s_note = key != nullptr ? key : ""; }
+
+extern "C" void pc_xn_menu_hide_lobby(const char* code) {
+    s_hidden_code.assign(code, strnlen(code, 6));
+    s_hidden_at = SDL_GetTicks();
+}
+
 extern "C" void pc_xn_menu_begin(int what) {
     host_load();
     const char* preview = std::getenv("MELEE_XN_PREVIEW");
@@ -1653,7 +1698,8 @@ extern "C" void pc_xn_menu_begin(int what) {
     s_what = what;
     s_result = PC_XN_MENU_STAY;
     s_active = true;
-    s_screen.hostNote.clear();
+    s_screen.hostNote = s_note.empty() ? std::string() : tr(s_note.c_str());
+    s_note.clear();
     // The player's name comes first: asked for when there is none, or when
     // Name was picked.
     if (s_preview.empty() && (what == PC_XN_MENU_NAME || pc_xn_name()[0] == '\0'))
@@ -1778,18 +1824,45 @@ extern "C" void pc_xn_menu_update(void) {
     s_sss.update();
 }
 
-extern "C" void pc_xn_banner_show(bool show) { s_banner.show(show); }
+extern "C" void pc_xn_banner_show(bool show) {
+    if (show && s_left_reload && SDL_GetTicks() - s_left_at < kLeftReloadMs)
+        s_left_at = SDL_GetTicks(); /* the CSS is back, without them */
+    if (show)
+        s_left_reload = false;
+    s_banner.show(show);
+}
 
 extern "C" void pc_xn_css_frame(const PcXnCssState* state) {
     s_css = *state;
     s_css_at = SDL_GetTicks();
-    // tools/xn_preview.py's CSS states: three players, as the wireframe's R1-R3.
+    // tools/xn_preview.py's CSS states: three players, as the wireframe's R1-R3
+    // and L1 (P1 holding B), with the real hand.
+    const auto sample = [](uint8_t humans, uint8_t ready, uint8_t picked, uint8_t waiting, int countdown, int hold) {
+        s_css.humans = humans, s_css.ready = ready, s_css.picked = picked, s_css.waiting = waiting;
+        s_css.countdown = countdown, s_css.countdown_total = 120;
+        s_css.hold = hold, s_css.hold_total = 60;
+    };
     if (s_preview == "css-ready")
-        s_css = {0x7, 0x1, 0x3, 0, -1, 120};
+        sample(0x7, 0x1, 0x3, 0, -1, 0);
     else if (s_preview == "css-countdown")
-        s_css = {0x7, 0x7, 0x7, 0, 70, 120};
+        sample(0x7, 0x7, 0x7, 0, 70, 0);
     else if (s_preview == "css-waiting")
-        s_css = {0x7, 0x5, 0x7, 0x2, -1, 120};
+        sample(0x7, 0x5, 0x7, 0x2, -1, 0);
+    else if (s_preview == "css-leaving")
+        sample(0x7, 0x2, 0x7, 0, -1, 40);
+    else if (s_preview == "css-left") {
+        sample(0x3, 0, 0x3, 0, -1, 0);
+        pc_xn_css_left("KOOPA");
+    }
+}
+
+extern "C" void pc_xn_css_left(const char* name) {
+    s_left_name = name != nullptr ? name : "";
+    const size_t hash = s_left_name.find('#');
+    if (hash != std::string::npos)
+        s_left_name.resize(hash);
+    s_left_at = SDL_GetTicks();
+    s_left_reload = true;
 }
 
 extern "C" void pc_xn_sss_frame(uint32_t mask) {

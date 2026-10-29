@@ -27,7 +27,8 @@ static bool cssXnPreviewSeat(int port)
         const char* p = getenv("MELEE_XN_PREVIEW");
         on = p != NULL && strncmp(p, "css-", 4) == 0;
     }
-    return on && port >= 0 && port < 3;
+    /* css-left: P3 has just left, so two seats. */
+    return on && port >= 0 && port < (strcmp(getenv("MELEE_XN_PREVIEW"), "css-left") == 0 ? 2 : 3);
 }
 
 static bool cssOnline(int* local)
@@ -365,6 +366,7 @@ static struct CSSDoorsData2 data2 = {
 #include "pc/xr_pointer.h"
 #include "pc/xeleenet_menu.h"
 #include <aurora/aurora.h>
+#include <melee/lb/lbvector.h>
 #include <sysdolphin/baselib/initialize.h>
 /* The character-select header and token counters are composed by index out
  * of SdSlChr, and the USA build's layout does not exist on PAL: there the
@@ -2951,7 +2953,14 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                     goto update_display;
                 }
 
-                if ((cursor->xC > 17.3f) && (cursor->x10 > 22.0f)) {
+                if ((cursor->xC > 17.3f) && (cursor->x10 > 22.0f)
+#ifdef TARGET_PC
+                    /* XeleeNet's lobby has no back button: leaving is a B hold
+                     * (cssXnReadyFrame), for that player alone. */
+                    && !gmOnline_XnFlow()
+#endif
+                )
+                {
                     cursor->x8 = 1;
                     if (trigger & HSD_PAD_A) {
                         mnCharSel_804D6CF6 = 2;
@@ -5594,7 +5603,11 @@ s32 mnCharSel_802640A0(void)
  * player keeps the same Ready without a message. */
 #define CSS_XN_COUNTDOWN 120 /* frames: 2 s */
 #define CSS_XN_WAITING 600   /* frames everyone else has been Ready */
+#define CSS_XN_LEAVE 60      /* frames of B held that leave the lobby (P4) */
 static u8 css_xn_ready;                       /* port bits */
+static u8 css_xn_hold[4];                     /* frames each has held B */
+static u8 css_xn_armed;                       /* port bits: B was up since the CSS came */
+static HSD_CObj* css_xn_cobj;                 /* the CSS camera, for the hand's ring */
 static u8 css_xn_icon[4], css_xn_costume[4];  /* the pick Ready was given on */
 static int css_xn_count = -1;                 /* frames to go; -1: none */
 static int css_xn_others;                     /* frames all but one Ready */
@@ -5634,6 +5647,30 @@ static void cssXnCameraProc(HSD_GObj* gobj)
 {
     mn_8022BA1C(gobj);
     cssXnCameraZoom(GET_COBJ(gobj));
+    css_xn_cobj = GET_COBJ(gobj);
+}
+
+/* Where port i's hand is on screen, as fractions of it (the overlay's ring
+ * around it while B is held). The hand's joint is its fingertip, the point it
+ * picks with; the glove's middle is 2.5 units right of it and 4.5 below
+ * (measured on the drawn hands). */
+static bool cssXnHandOnScreen(int i, float* x, float* y)
+{
+    Vec3 pos, out;
+    if (css_xn_cobj == NULL || i < 0 || i > 3 || mnCharSel_804A0BC0[i] == NULL ||
+        mnCharSel_804A0BC0[i]->gobj == NULL)
+    {
+        return false;
+    }
+    lb_8000B1CC(GET_JOBJ(mnCharSel_804A0BC0[i]->gobj), NULL, &pos);
+    pos.x += 2.5F;
+    pos.y -= 4.5F;
+    if (lbVector_WorldToScreen(css_xn_cobj, &pos, &out, 1) == NULL) {
+        return false;
+    }
+    *x = out.x / 640.0F;
+    *y = out.y / 480.0F;
+    return true;
 }
 
 /* The overlay (the banner, the notice, the doors' tags, the legend: RmlUi,
@@ -5653,20 +5690,42 @@ static void cssXnOverlayCreate(void)
     GObj_SetupGXLink(gobj, (GObj_RenderFunc) cssXnOverlayRender, 2, 0);
 }
 
+/* A roster reload: the picks that stand (a token down on a character) go on
+ * into the next CSS (gmOnline_XnKeepPicks), for everyone still in it. */
+static void cssXnKeepPicks(void)
+{
+    u8 ckind[4], color[4], mask = 0;
+    int i;
+    for (i = 0; i < 4; i++) {
+        const PlayerInitData* p = &mnCharSel_804D6CB0->vs.start.players[i];
+        ckind[i] = p->ckind;
+        color[i] = p->color;
+        if (i < (s32) mnCharSel_804D6CF5 && cssXnPicked(i) && p->ckind < ChKind_Max) {
+            mask |= 1 << i;
+        }
+    }
+    gmOnline_XnKeepPicks(ckind, color, mask);
+}
+
 static void cssXnReadyReset(void)
 {
     css_xn_ready = 0;
     css_xn_count = -1;
     css_xn_others = 0;
+    css_xn_armed = 0;
+    css_xn_cobj = NULL;
+    memset(css_xn_hold, 0, sizeof css_xn_hold);
 }
 
 /* Before the procs read the pads (Scene_OnFrame): START and a Ready player's
  * B are taken out of the pads, so the CSS never starts on START and a B that
- * takes Ready back doesn't also un-pick. */
-static void cssXnReadyFrame(void)
+ * takes Ready back doesn't also un-pick. Held B is taken out too: Melee's own
+ * hold leaves the CSS, for everyone. Here a second of it leaves the lobby
+ * for that player alone (P4). True when the CSS ends this frame. */
+static bool cssXnReadyFrame(void)
 {
     u8 humans = 0, picked = 0;
-    int i;
+    int i, leaver = -1;
     for (i = 0; i < 4 && i < (s32) mnCharSel_804D6CF5; i++) {
         HSD_PadStatus* pad = &HSD_PadCopyStatus[i];
         const u8 bit = 1 << i;
@@ -5678,6 +5737,15 @@ static void cssXnReadyFrame(void)
         if (cssXnPicked(i)) {
             picked |= bit;
         }
+        if (!(pad->button & HSD_PAD_B)) {
+            css_xn_armed |= bit; /* a B held from the screen before doesn't count */
+            css_xn_hold[i] = 0;
+        } else if ((css_xn_armed & bit) && css_xn_hold[i] < CSS_XN_LEAVE) {
+            if (++css_xn_hold[i] == CSS_XN_LEAVE && leaver < 0) {
+                leaver = i;
+            }
+        }
+        pad->button &= ~HSD_PAD_B;
         if ((css_xn_ready & bit) &&
             (!cssXnPicked(i) || mnCharSel_803F0DFC.doors[i].sel_icon != css_xn_icon[i] ||
              mnCharSel_803F0DFC.doors[i].costume != css_xn_costume[i]))
@@ -5746,9 +5814,31 @@ static void cssXnReadyFrame(void)
             st.waiting = css_xn_others >= CSS_XN_WAITING ? left : 0;
             st.countdown = css_xn_count;
             st.countdown_total = CSS_XN_COUNTDOWN;
+            {
+                /* Only the one holding sees their hold: the ring and the notice. */
+                const int me = pc_net_active() ? pc_net_local_player() : 0;
+                st.hold = me >= 0 && me < 4 ? css_xn_hold[me] : 0;
+                st.hold_total = CSS_XN_LEAVE;
+                st.hand_ok = cssXnHandOnScreen(me, &st.hand_x, &st.hand_y);
+            }
             pc_xn_css_frame(&st);
         }
     }
+    if (leaver >= 0) {
+        pc_log_line("css: P%d left the lobby", leaver + 1);
+        switch (gmOnline_XnLeave(leaver)) {
+        case 1: /* we left (or the host closed the lobby): the XeleeNet pages */
+            mnCharSel_804D6CF6 = 2;
+            break;
+        case 2: /* the host is alone again: a CSS with one door */
+            cssXnKeepPicks();
+            gm_801A4B60();
+            return true;
+        default:
+            break;
+        }
+    }
+    return false;
 }
 #endif
 
@@ -6063,11 +6153,12 @@ void mnCharSel_Scene_OnFrame(void)
         }
     }
     if (gmOnline_XnCssFrame()) {
+        cssXnKeepPicks();
         gm_801A4B60(); /* XeleeNet: a new player set; the CSS reloads */
         return;
     }
-    if (gmOnline_XnFlow()) {
-        cssXnReadyFrame();
+    if (gmOnline_XnFlow() && cssXnReadyFrame()) {
+        return;
     }
     {
         static bool dumped;

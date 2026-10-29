@@ -45,6 +45,10 @@ div, span { display: block; }
        border: 1px #aeaba399; border-radius: 11px; background-color: #0b0b10d8; }
 .tag.warn { color: #ffe066; border-color: #f0c226; background-color: #2a1f08; }
 .dash { position: absolute; left: 0; right: 0; top: 0; bottom: 0; border: 3px #fff4c4; border-radius: 8px; }
+/* The ring around a hand while its player holds B to leave: dots that fill
+ * red as the hold goes on. */
+.rdot { position: absolute; background-color: #ffffff40; }
+.rdot.on { background-color: #e0392b; }
 #clegend { position: absolute; width: 1120px; height: 46px; text-align: center; transform-origin: 0 0; }
 #clegend .keys { display: inline-block; height: 46px; padding: 0 14px; border: 1px #f0c22650; border-radius: 23px;
                  background-color: #0c0b08d8; }

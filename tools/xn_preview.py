@@ -5,7 +5,7 @@ look (src/pc/xeleenet_menu.cpp, resources/xeleenet*.rcss).
     tools/xn_preview.py [PAGE ...] [--share] [--out build/xn-preview]
 
 PAGE is host, more, stages, lobbies, code, joining, progress, failed, banner,
-css-ready, css-countdown or css-waiting (all of them by default). Each boots the game straight into the page
+css-ready, css-countdown, css-waiting, css-leaving or css-left (all of them by default). Each boots the game straight into the page
 (MELEE_BOOT_SCENE=xn-host or css, MELEE_XN_PREVIEW=PAGE: no network, no
 service), waits for it to fade in and captures the window. --share puts the
 pictures on the tailnet share as xn-preview-PAGE.png.
@@ -24,7 +24,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 PAGES = ["host", "more", "stages", "lobbies", "code", "joining", "progress", "failed", "banner",
-         "css-ready", "css-countdown", "css-waiting"]
+         "css-ready", "css-countdown", "css-waiting", "css-leaving", "css-left"]
 DISC = os.path.expanduser("~/Downloads/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).iso")
 SHARE = os.path.expanduser("~/.claude/skills/tailnet-share/scripts/share.py")
 

@@ -207,6 +207,107 @@ def sss_host_b(insts, shots):
     return True
 
 
+def menu_loads(inst):
+    return len(nt.re.findall(nt.SCENE_FILE["menu"], inst.text()))
+
+
+def leave_guest(insts, shots):
+    """A guest holding B leaves alone (P4 of docs/xeleenet-ready-plan.md): it
+    lands on the XeleeNet pages' lobby list; everyone else stays, and the CSS
+    reloads without it. The leaver joins again from the list straight away,
+    and run() goes on to a match with everyone."""
+    host, leaver = insts[0], insts[-1]
+    stay = insts[:-1]
+    nt.settle(insts, nt.MENU_SETTLE)
+    # Everyone picks first: the picks that stand go on through each reload.
+    for down in nt.CSS_ROWS[:2]:
+        nt.press(insts, "Left+Up", nt.CSS_PIN, 1.2)
+        nt.press(insts, "Down", down, 0.8)
+        nt.press(insts, "Right", nt.CSS_FIRST, 0.6)
+        for _ in range(nt.CSS_COLS):
+            nt.press(insts, "X", 7, 0.5)
+            nt.press(insts, "Right", nt.CSS_STEP, 0.4)
+    menus = [menu_loads(i) for i in insts]
+    # One hold of 1.5 s (the leave takes 1 s of it), shot two thirds of the
+    # way to leaving: the ring and the red notice.
+    leaver.key(f"Z {int(90 * nt.frame_ms(leaver))}")
+    time.sleep(40 * nt.frame_ms(leaver) / 1000)
+    shot(leaver, shots, "9c-css-leaving")
+    time.sleep(4.0)
+    if any(menu_loads(i) > n for i, n in zip(stay, menus)):
+        print("FAIL: a guest's B hold took others out of the lobby")
+        return False
+    if f"css: P{len(insts)} left the lobby" not in leaver.text():
+        print("FAIL: the leaver never left")
+        return False
+    stay_mask = (1 << len(stay)) - 1
+    if len(stay) == 1:
+        # A 1v1: the host is alone again, no session; its CSS reloads at once.
+        if not host.wait_log(r"the host is alone in the lobby again", 30):
+            print("FAIL: the host didn't go back to waiting alone")
+            return False
+    else:
+        want = f"(players {stay_mask:02x})"
+        for i in stay:
+            if not i.wait_log(nt.re.escape(want), 30):
+                print(f"[{i.name}] FAIL: no session without the leaver {want}")
+                return False
+        if not all(i.wait_log(r"online: XeleeNet roster changed", 30) for i in stay):
+            print("FAIL: the CSS never reloaded without the leaver")
+            return False
+    kept = nt.re.escape(f"picks kept {stay_mask:02x} (of {stay_mask:02x})")
+    if not all(i.wait_log(kept, 10) for i in stay):
+        print("FAIL: the stayers' picks didn't survive the reload")
+        return False
+    print("net_test_xn_menu: the guest left alone; the others reloaded without it, picks kept", flush=True)
+    time.sleep(3)
+    shot(host, shots, "9d-css-after-leave")
+    shot(leaver, shots, "9e-leaver-menu")
+    # Straight back in: the leaver lands on the lobby list, and A on it joins
+    # the same lobby again (the host must not take it for the stay it left).
+    full = f"(players {(1 << len(insts)) - 1:02x})"
+    seen = [i.text().count(full) for i in insts]
+    nt.press((leaver,), "X", 7, 0.4)
+    for i, n in zip(insts, seen):
+        deadline = time.time() + 60
+        while time.time() < deadline and i.text().count(full) <= n:
+            time.sleep(0.5)
+        if i.text().count(full) <= n:
+            print(f"[{i.name}] FAIL: the leaver never got back in {full}")
+            return False
+    kept = nt.re.escape(f"picks kept {stay_mask:02x} (of {(1 << len(insts)) - 1:02x})")
+    if not all(i.wait_log(kept, 60) for i in insts):
+        print("FAIL: the picks didn't reach everyone, the newcomer included")
+        return False
+    print("net_test_xn_menu: the leaver joined again from the list; the picks went on", flush=True)
+    time.sleep(4)
+    shot(host, shots, "9f-css-rejoined")
+    return True
+
+
+def leave_host(insts, shots):
+    """The host holding B closes the lobby (P4): every player lands on the
+    XeleeNet pages, the guests on the lobby list with a note."""
+    host, guests = insts[0], insts[1:]
+    nt.settle(insts, nt.MENU_SETTLE)
+    host.key(f"Z {int(90 * nt.frame_ms(host))}")
+    time.sleep(4.0)
+    if not all("css: P1 left the lobby" in i.text() for i in insts):
+        print("FAIL: not everyone saw the host's hold end")
+        return False
+    if not all("online: XeleeNet the host closed the lobby" in g.text() for g in guests):
+        print("FAIL: a guest didn't take it as the lobby closing")
+        return False
+    if any("DESYNC" in i.text() or "peer left" in i.text() for i in insts):
+        print("FAIL: the close went through as a failure")
+        return False
+    time.sleep(2)
+    shot(host, shots, "9g-host-after-close")
+    shot(guests[0], shots, "9h-guest-after-close")
+    print("net_test_xn_menu: the host closed the lobby; everyone is back on the XeleeNet pages", flush=True)
+    return True
+
+
 def run(args):
     names = "abcd"[:args.players]
     shots = args.shots or os.path.join(args.work, "shots")
@@ -290,7 +391,13 @@ def run(args):
         if args.scenario == "ready":
             if not ready_scenario(insts, shots):
                 return False
-        elif not drive_css(insts):
+        if args.scenario == "leave-guest":
+            if not leave_guest(insts, shots):
+                return False
+        if args.scenario == "leave-host":
+            ok = leave_host(insts, shots)
+            return ok
+        if args.scenario != "ready" and not drive_css(insts):
             print("FAIL: no CSS pick reached the SSS")
             return False
         time.sleep(2)
@@ -335,9 +442,11 @@ def main():
     ap.add_argument("--players", type=int, choices=(2, 3, 4), default=3)
     ap.add_argument("--seconds", type=float, default=40, help="of match after it loads")
     ap.add_argument("--block", default="")
-    ap.add_argument("--scenario", default="", choices=("", "sss-host-b", "ready"),
+    ap.add_argument("--scenario", default="", choices=("", "sss-host-b", "ready", "leave-guest", "leave-host"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
-                         "ready: Ready on the CSS (one START, the countdown, B stops it)")
+                         "ready: Ready on the CSS (one START, the countdown, B stops it); "
+                         "leave-guest: the last guest holds B and leaves alone, then joins again; "
+                         "leave-host: the host holds B and closes the lobby")
     ap.add_argument("--url", default="", help="a running service instead of a local wrangler dev")
     ap.add_argument("--exe", default=os.path.join(HERE, "..", "build", "linux", "melee"))
     ap.add_argument("--disc", default=os.path.expanduser(

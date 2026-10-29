@@ -102,6 +102,7 @@ typedef struct Who { /* another player, by controller port */
     uint64_t next_probe;
     uint8_t known_m, up_m, gave_m; /* host: this guest's last report */
     bool acked;                    /* host: it answered the start */
+    double joined;                 /* the service's stamp for their seat, 0 if introduced */
 } Who;
 
 static Phase s_phase;
@@ -147,6 +148,15 @@ static int s_ride_head, s_ride_n;
 static SDL_Mutex* s_ride_lock;
 static bool s_riding;
 static XnAck s_ack;     /* a guest's answer to it, for the late repeats */
+/* Players who left by holding B (pc_xn_punch_left): the member list goes on
+ * naming them until the service hears (a guest's own list never changes), and
+ * learn_members must not take them back. The same key with another `joined`
+ * is the same player in a new seat. */
+static struct {
+    uint8_t key[32];
+    double joined;
+} s_departed[4];
+static int s_ndeparted;
 
 static uint64_t now_ms(void) {
     return SDL_GetTicks();
@@ -646,6 +656,14 @@ static void learn_members(void) {
         if (m[i].port == s_local || w->known) {
             continue;
         }
+        bool departed = false;
+        for (int d = 0; d < s_ndeparted; d++) {
+            departed |= memcmp(s_departed[d].key, m[i].key, 32) == 0 && s_departed[d].joined == m[i].joined;
+        }
+        if (departed) {
+            continue;
+        }
+        w->joined = m[i].joined;
         memcpy(w->key, m[i].key, 32);
         snprintf(w->name, sizeof w->name, "%s", m[i].name);
         w->ncands = m[i].ncands;
@@ -874,14 +892,14 @@ static void start_tick(void) {
 }
 
 /* Host, with a session running: a guest the session doesn't have yet, linked
- * to everyone, means the next session. */
-static bool roster_grew(void) {
+ * to everyone, or one it has who left, means the next session. */
+static bool roster_changed(void) {
     uint8_t guests = 0;
     for (int g = 1; g < 4; g++) {
         guests |= s_who[g].known ? (uint8_t)(1u << g) : 0;
     }
     int players = 0;
-    return (guests & ~s_start.ports) != 0 && links_decided(&players);
+    return guests != (s_start.ports & ~1u) && links_decided(&players);
 }
 
 int pc_xn_punch_poll(void) {
@@ -961,7 +979,7 @@ int pc_xn_punch_poll(void) {
         punch_tick();
         if (s_local != 0 && s_switch_at >= 0 && pc_net_frame() >= s_switch_at) {
             begin_session(get32b(s_start.seed)); /* the frame the host named */
-        } else if (s_local == 0 && roster_grew()) {
+        } else if (s_local == 0 && roster_changed()) {
             start_build();
         }
         break;
@@ -984,6 +1002,7 @@ bool pc_xn_punch_start(const char* url, const char* name, const char* code, int 
     }
     memset(s_who, 0, sizeof s_who);
     memset(&s_start, 0, sizeof s_start);
+    s_ndeparted = 0;
     s_session_seq = 0;
     s_lobby_code[0] = '\0';
     s_start_req = false;
@@ -1103,6 +1122,46 @@ void pc_xn_punch_request_start(void) {
         s_start_req = true; /* a host: start as soon as anyone has joined */
         pc_log_line("xeleenet: the host starts the session with the first to join");
     }
+}
+
+bool pc_xn_punch_left(int port) {
+    if (port < 1 || port > 3 || port == s_local || !s_who[port].known) {
+        return false;
+    }
+    Who* w = &s_who[port];
+    const int d = s_ndeparted < 4 ? s_ndeparted++ : 3;
+    memcpy(s_departed[d].key, w->key, 32);
+    s_departed[d].joined = w->joined;
+    pc_log_line("xeleenet: P%d (%s) left the lobby", port + 1, w->name);
+    memset(w, 0, sizeof *w);
+    if (s_local != 0) {
+        return false; /* the host's next start names who plays */
+    }
+    for (int g = 1; g < 4; g++) {
+        if (s_who[g].known) {
+            return false; /* the others go on: roster_changed starts the next session */
+        }
+    }
+    /* Nobody left with the host: no session at all. Its socket comes back to
+     * the punch, and the lobby waits for the next to join, as when it opened. */
+    if (s_riding) {
+        pc_net_set_datagram_handler(NULL);
+        s_riding = false;
+    }
+    sock_t sock = (sock_t)pc_net_release_socket();
+    if (sock != SOCK_INVALID) {
+        s_sock = sock;
+    }
+    memset(&s_start, 0, sizeof s_start);
+    s_running_seed = 0;
+    s_switch_at = -1;
+    if (s_sock == SOCK_INVALID) {
+        fail("Couldn't keep the lobby's socket");
+        return true;
+    }
+    s_phase = PH_PUNCH;
+    pc_log_line("xeleenet: the host is alone in the lobby again");
+    return true;
 }
 
 void pc_xn_punch_end(void) {
