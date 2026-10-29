@@ -79,6 +79,10 @@ void pc_xn_menu_update(void);
 /* C1: the lobby's banner over the CSS's rules bar, while in a XeleeNet CSS. */
 void pc_xn_banner_show(bool show);
 
+/* XeleeNet's CSS draws smaller about the screen's centre by this (its camera
+ * pulled back, mncharsel.c), for the notice slot and the legend's room. */
+#define PC_XN_CSS_ZOOM 0.84f
+
 /* XeleeNet's CSS Ready (mncharsel.c), once a frame, for the overlay over it:
  * the READY count, the notice slot, the doors' tags and the legend. */
 typedef struct PcXnCssState {

@@ -351,6 +351,8 @@ static struct CSSDoorsData2 data2 = {
 #include "pc/region.h"
 #include "pc/xr_pointer.h"
 #include "pc/xeleenet_menu.h"
+#include <aurora/aurora.h>
+#include <sysdolphin/baselib/initialize.h>
 /* The character-select header and token counters are composed by index out
  * of SdSlChr, and the USA build's layout does not exist on PAL: there the
  * digits are string 73 (one byte per glyph, see sislib.static.h), 72 is the
@@ -4397,6 +4399,10 @@ static const GXColor mnCharSel_804DC58C = { 160, 160, 0, 255 };
 static const GXColor mnCharSel_804DC590 = { 180, 80, 0, 255 };
 static const GXColor mnCharSel_804DC594 = { 220, 0, 0, 255 };
 
+#ifdef TARGET_PC
+static void cssXnCameraProc(HSD_GObj* gobj); /* XeleeNet's CSS camera, zoomed */
+#endif
+
 s32 mnCharSel_802640A0(void)
 {
     HSD_JObj* sp108;
@@ -4496,7 +4502,11 @@ s32 mnCharSel_802640A0(void)
     }
     GObj_SetupGXLinkMax(gobj, HSD_GObj_803910D8, 0);
     gobj->gxlink_prios = 0x1F;
+#ifdef TARGET_PC
+    HSD_GObj_SetupProc(gobj, gmOnline_XnFlow() ? cssXnCameraProc : mn_8022BA1C, 5);
+#else
     HSD_GObj_SetupProc(gobj, mn_8022BA1C, 5);
+#endif
     ctx = HSD_SisLib_803A611C(0, gobj, 7, 8, 0x80, 1, 0x80, 0);
 #ifdef TARGET_PC
     css_text_ctx = ctx;
@@ -5578,78 +5588,51 @@ static bool cssXnPicked(int i)
            mnCharSel_804A0BC0[i] != NULL && mnCharSel_804A0BC0[i]->x5 != 1;
 }
 
-/* XeleeNet's CSS: the portraits shrink and sit lower, making room for the
- * notice slot under the banner and the legend above the doors (P3). Joints 2
- * and 15 of the menu model hold the side and middle portraits, both at the
- * origin; the icons' bounds (the hand's hit test, the tokens' spots and
- * drift) are moved the same way while the CSS is up, and put back after. */
-#define CSS_XN_GRID_S 0.76F
-#define CSS_XN_GRID_PX (-3.35F) /* the pivot: the grid's top centre */
-#define CSS_XN_GRID_PY 24.0F
-#define CSS_XN_GRID_DY (-3.3F) /* then this much lower */
-static float css_xn_bounds[25][4]; /* the icons' own, while shrunk */
-static bool css_xn_shrunk;
-
-static float cssXnGx(float x)
+/* XeleeNet's CSS: the camera pulls back so the whole screen (portraits,
+ * doors, hands, tokens and their text) draws smaller about the centre,
+ * leaving room for the notice slot under the banner and the legend under the
+ * doors (P3). Everything is still placed and hit-tested in world units, so
+ * nothing else changes; the overlay places its parts with the same factor
+ * (PC_XN_CSS_ZOOM, xeleenet_menu.h). The menu camera's proc re-inits the
+ * camera from its desc every frame (mn_8022BA1C), so the zoom goes on after
+ * it, in its place (cssXnCameraProc). */
+static void cssXnCameraZoom(HSD_CObj* cobj)
 {
-    return CSS_XN_GRID_PX + (x - CSS_XN_GRID_PX) * CSS_XN_GRID_S;
-}
-
-static float cssXnGy(float y)
-{
-    return CSS_XN_GRID_PY + (y - CSS_XN_GRID_PY) * CSS_XN_GRID_S + CSS_XN_GRID_DY;
-}
-
-static void cssXnGridJoints(void)
-{
-    static const int ids[] = { 2, 15 };
-    int k;
-    for (k = 0; k < 2; k++) {
-        HSD_JObj* j = NULL;
-        lb_80011E24(mnCharSel_804D6CC0, &j, ids[k], -1);
-        if (j != NULL) {
-            Vec3 sc = { CSS_XN_GRID_S, CSS_XN_GRID_S, 1.0F };
-            Vec3 t = { CSS_XN_GRID_PX * (1.0F - CSS_XN_GRID_S),
-                       CSS_XN_GRID_PY * (1.0F - CSS_XN_GRID_S) + CSS_XN_GRID_DY, 0.0F };
-            HSD_JObjSetScale(j, &sc);
-            HSD_JObjSetTranslate(j, &t);
-        }
+    if (HSD_CObjGetProjectionType(cobj) == PROJ_PERSPECTIVE) {
+        float half = cobj->projection_param.perspective.fov * (float) M_PI / 360.0F;
+        cobj->projection_param.perspective.fov =
+            atanf(tanf(half) / PC_XN_CSS_ZOOM) * 360.0F / (float) M_PI;
+    } else if (HSD_CObjGetProjectionType(cobj) == PROJ_ORTHO) {
+        float cx = (cobj->projection_param.ortho.left + cobj->projection_param.ortho.right) / 2;
+        float cy = (cobj->projection_param.ortho.top + cobj->projection_param.ortho.bottom) / 2;
+        cobj->projection_param.ortho.left = cx + (cobj->projection_param.ortho.left - cx) / PC_XN_CSS_ZOOM;
+        cobj->projection_param.ortho.right = cx + (cobj->projection_param.ortho.right - cx) / PC_XN_CSS_ZOOM;
+        cobj->projection_param.ortho.top = cy + (cobj->projection_param.ortho.top - cy) / PC_XN_CSS_ZOOM;
+        cobj->projection_param.ortho.bottom = cy + (cobj->projection_param.ortho.bottom - cy) / PC_XN_CSS_ZOOM;
     }
 }
 
-static void cssXnGridShrink(void)
+static void cssXnCameraProc(HSD_GObj* gobj)
 {
-    int i;
-    if (css_xn_shrunk) {
-        return;
-    }
-    for (i = 0; i < 25; i++) {
-        css_xn_bounds[i][0] = icons[i].bound_l;
-        css_xn_bounds[i][1] = icons[i].bound_r;
-        css_xn_bounds[i][2] = icons[i].bound_u;
-        css_xn_bounds[i][3] = icons[i].bound_d;
-        icons[i].bound_l = cssXnGx(icons[i].bound_l);
-        icons[i].bound_r = cssXnGx(icons[i].bound_r);
-        icons[i].bound_u = cssXnGy(icons[i].bound_u);
-        icons[i].bound_d = cssXnGy(icons[i].bound_d);
-    }
-    css_xn_shrunk = true;
-    cssXnGridJoints();
+    mn_8022BA1C(gobj);
+    cssXnCameraZoom(GET_COBJ(gobj));
 }
 
-static void cssXnGridRestore(void)
+/* The overlay (the banner, the notice, the doors' tags, the legend: RmlUi,
+ * xeleenet_menu.cpp) is drawn into the CSS's own frame here, after the menu
+ * model (link 1: the portraits and doors) and before the tokens (link 2) and
+ * the hands (link 3), so those stay on top of it. */
+static void cssXnOverlayRender(HSD_GObj* gobj, int pass)
 {
-    int i;
-    if (!css_xn_shrunk) {
-        return;
+    if (HSD_GetCurrentRenderPass() == HSD_RP_SCREEN) {
+        aurora_rmlui_draw_here();
     }
-    for (i = 0; i < 25; i++) {
-        icons[i].bound_l = css_xn_bounds[i][0];
-        icons[i].bound_r = css_xn_bounds[i][1];
-        icons[i].bound_u = css_xn_bounds[i][2];
-        icons[i].bound_d = css_xn_bounds[i][3];
-    }
-    css_xn_shrunk = false;
+}
+
+static void cssXnOverlayCreate(void)
+{
+    HSD_GObj* gobj = GObj_Create(4, 5, 0x80);
+    GObj_SetupGXLink(gobj, (GObj_RenderFunc) cssXnOverlayRender, 2, 0);
 }
 
 static void cssXnReadyReset(void)
@@ -5818,7 +5801,7 @@ void mnCharSel_Scene_OnEnter(void* arg0)
     mnCharSel_802640A0();
 #ifdef TARGET_PC
     if (gmOnline_XnFlow()) {
-        cssXnGridShrink();
+        cssXnOverlayCreate();
     }
     if (gmOnline_SlippiFlow()) {
         mnOnlineCss_Create(css_text_ctx);
@@ -6055,7 +6038,6 @@ void mnCharSel_Scene_OnFrame(void)
     }
     if (gmOnline_XnFlow()) {
         cssXnReadyFrame();
-        cssXnGridJoints(); /* over any animation of the two */
     }
     {
         static bool dumped;
@@ -6268,7 +6250,6 @@ void mnCharSel_Scene_OnExit(void* unused)
 
 #ifdef TARGET_PC
     mnOnlineCss_Destroy();
-    cssXnGridRestore(); /* the icons' bounds, for every other CSS */
 #endif
     HSD_SisLib_803A5FBC();
     if (mnCharSel_804D6CD0 != NULL) {

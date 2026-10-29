@@ -137,6 +137,9 @@ def ready_scenario(insts, shots):
         print("FAIL: not every player saw P1 ready")
         return False
     print("net_test_xn_menu: the host alone ready, the CSS stayed", flush=True)
+    # The hand onto the legend under the doors: it must draw on top of it.
+    nt.press((host,), "Down", 40, 0.3)
+    nt.press((host,), "Left", 22, 0.6)
     shot(host, shots, "9b-css-host-ready")
     nt.press((guest,), "Return", 9, 0.5)
     nt.press((guest,), "Z", 9, 3.5)  # inside the 2 s countdown

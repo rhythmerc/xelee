@@ -27,7 +27,7 @@ div, span { display: block; }
          letter-spacing: 1px; line-height: 28px; color: #fff8e0; border: 2px #f0c226; border-radius: 16px;
          background-color: #0b0b10; }
 .rpill.all { color: #1a1406; background-color: #f0c226; }
-.nslot { position: absolute; left: 0; right: 0; top: 89px; text-align: center; }
+.nslot { position: absolute; left: 0; right: 0; top: 91px; text-align: center; }
 .notice { display: inline-block; position: relative; height: 34px; padding: 0 22px; font-size: 16px; font-weight: 800;
           letter-spacing: 1px; line-height: 32px; border-radius: 17px; }
 .notice.gold { color: #1a1406; background-color: #f0c226; border: 1px #f0c226; }

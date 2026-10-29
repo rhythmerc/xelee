@@ -21,6 +21,7 @@
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_timer.h>
 #include <aurora/rmlui.hpp>
+#include <dolphin/gx/GXAurora.h>
 #ifdef AURORA_ENABLE_OPENXR
 #include <aurora/xr.h>
 #endif
@@ -1398,9 +1399,13 @@ struct Screen : Rml::EventListener {
 PcXnCssState s_css{};
 uint64_t s_css_at = 0;
 
-// The doors' rectangles, as fractions of the screen: four in a row under the
-// portraits (measured on the CSS, as the banner's place is).
-constexpr float kDoorX0 = 0.1042f, kDoorPitch = 0.2010f, kDoorW = 0.1896f, kDoorY0 = 0.539f, kDoorH = 0.394f;
+// The doors' rectangles in the CSS as Melee lays it out, as fractions of the
+// game's picture (the RmlUi context is that picture: Aurora's content
+// framebuffer, not the window): four in a row under the portraits, measured
+// on its frames. XeleeNet's CSS draws smaller about the centre
+// (PC_XN_CSS_ZOOM), and css_zoom() moves a point the same way.
+constexpr float kDoorX0 = 0.0668f, kDoorPitch = 0.2194f, kDoorW = 0.2080f, kDoorY0 = 0.536f, kDoorH = 0.4005f;
+constexpr float css_zoom(float f) { return 0.5f + (f - 0.5f) * PC_XN_CSS_ZOOM; }
 
 struct Banner {
     Rml::ElementDocument* document = nullptr;
@@ -1512,8 +1517,8 @@ struct Banner {
                 const unsigned bit = 1u << i;
                 if (!(s_css.humans & bit))
                     continue;
-                const float x = (kDoorX0 + i * kDoorPitch) * d.x, w = kDoorW * d.x;
-                const float y = kDoorY0 * d.y, h = kDoorH * d.y;
+                const float x = css_zoom(kDoorX0 + i * kDoorPitch) * d.x, w = kDoorW * PC_XN_CSS_ZOOM * d.x;
+                const float y = css_zoom(kDoorY0) * d.y, h = kDoorH * PC_XN_CSS_ZOOM * d.y;
                 std::string tag;
                 if (s_css.ready & bit) {
                     tag = "<div class=\"ribbon\" style=\"top: " + fmt(0.54f * h) + "px; height: " + fmt(0.10f * h) +
@@ -1544,9 +1549,11 @@ struct Banner {
                 keys = legend_key("b", "xeleenet.legend.not_ready");
             else
                 keys = legend_key("start", "xeleenet.legend.ready");
-            const float ls = 0.66f * k;
+            // Below the doors, centred in the room the zoom leaves.
+            const float ls = 0.8f * k;
+            const float below = (css_zoom(kDoorY0 + kDoorH) + 1.f) / 2.f;
             r += "<div id=\"clegend\" style=\"transform: scale(" + fmt(ls) + "); left: " + fmt(d.x / 2 - 560.f * ls) +
-                 "px; top: " + fmt(0.515f * d.y - 23.f * ls) + "px;\"><div class=\"keys\">" + keys + "</div></div>";
+                 "px; top: " + fmt(below * d.y - 23.f * ls) + "px;\"><div class=\"keys\">" + keys + "</div></div>";
         }
         if (r != lastDoors) {
             lastDoors = r;
