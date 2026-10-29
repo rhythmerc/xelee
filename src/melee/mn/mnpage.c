@@ -474,17 +474,19 @@ void mnPage_PanelMainTitle(HSD_JObj* panel, const char* text);
 
 /* The tab's main title over a PC kind, or NULL for the stock texture. The
  * Online Mode menus borrow VS. Mode's panel, whose title would read VS. Mode:
- * they read Online Mode, and XeleeNet's pages their network (XeleeNet or LAN,
- * the language overlay). */
+ * Online Mode itself reads Online Mode, and each of its rows' menus and pages
+ * its own name (Slippi; XeleeNet or LAN, the language overlay). */
 static const char* mnPage_MainTitle(MenuKind kind)
 {
     switch (kind) {
     case MENU_KIND_ONLINE:
-    case MENU_KIND_ONLINE_SLIPPI:
-    case MENU_KIND_ONLINE_XN:
         return "Online Mode";
+    case MENU_KIND_ONLINE_SLIPPI:
+        return "Slippi";
+    case MENU_KIND_ONLINE_XN:
+        return pc_tr("xeleenet.menu.tab");
     case MENU_KIND_SLIPPI_PAGE: /* Slippi's sign-in pages, or XeleeNet's */
-        return mnXeleeNet_Active() ? pc_tr("xeleenet.menu.tab") : "Online Mode";
+        return mnXeleeNet_Active() ? pc_tr("xeleenet.menu.tab") : "Slippi";
     default:
         return NULL;
     }
