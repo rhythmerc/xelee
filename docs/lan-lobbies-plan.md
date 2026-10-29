@@ -94,7 +94,41 @@ The plan as written:
 Test: `net_test_xn_menu.py` (default 3-player run) and `test_service.py`
 unchanged.
 
-### L2 · The LAN lobby service (large)
+### L2 · The LAN lobby service (large) — done 2026-10-29
+
+Built as planned, with these specifics:
+- **mDNS:** `net_mdns.c` is a module of its own. `net_lan.c` stays as it is
+  until L4 removes it; only its address text helper is shared. Records
+  expire after 5 s or on a goodbye. If nothing is heard for 5 s, not even
+  our own query looping back, multicast counts as blocked
+  (`pc_xn_lan_unavailable`).
+- **The host's game is the service:** a lobby socket on UDP 42424
+  (`MELEE_XN_LAN_PORT`), or an ephemeral port when that's taken. The TXT
+  keys are `v rev disc id name host tag seats taken port s`, where `s` holds
+  the listing settings' JSON, parsed by `pc_xn_listing_settings`.
+- **Messages:** JOIN, WELCOME and LEAVE are signed with the player's key.
+  REFUSE gives `full`, `version` or `not_found`. A guest sends JOIN every
+  300 ms and gives up after 6 s.
+- **Joining:** by the listed code (the first 6 hex characters of the lobby
+  id) or by `@address[:port]`. The punch's code field grew to 64 characters
+  for the address form.
+- **Timeouts:** a member the host stops hearing from is dropped after 20 s,
+  as on the service. Browsing stops 15 s after the list last asks.
+
+Tests:
+- `net_test_n.py --lan`: 3 players (browse) and `--by-address` both pass.
+- 4 players with `--block 2:3` passes: P3 and P4 relay through the host,
+  and the other links are direct.
+
+Two runs froze for 24-40 s in Aurora's `cache_stats()`, an old wedge rather
+than the LAN code:
+- **The cause:** the Dawn cache prune held the cache mutex while it marked
+  every used row's `last_session`. That rewrote each row's blob, gigabytes
+  per launch: 7.7 s with one instance, 24-40 s with four sharing the disk.
+- **The fix (Aurora):** the stats got their own lock, and the last-use marks
+  moved into a `cache_used` side table. The prune now takes 20 ms.
+
+The plan as written:
 
 1. **`net_mdns.c`**, out of `net_lan.c`: the sockets, the address choice, the
    announce timer, browse with expiry, the goodbye, and a TXT record API.

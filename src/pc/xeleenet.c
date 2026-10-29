@@ -280,6 +280,17 @@ static void parse_settings(const PcSlippiJson* st, PcXnListing* x) {
     x->first_to_n = pc_slippi_json_int(pc_slippi_json_get(st, "first_to"), 2);
 }
 
+bool pc_xn_listing_settings(const char* json, PcXnListing* x) {
+    PcSlippiJson* st = NULL;
+    char err[64];
+    if (json == NULL || !pc_slippi_json_parse(json, strlen(json), &st, err, sizeof err)) {
+        return false;
+    }
+    parse_settings(st, x);
+    pc_slippi_json_free(st);
+    return true;
+}
+
 static void parse_listing(const PcSlippiJson* row, PcXnListing* x) {
     char v[16];
     memset(x, 0, sizeof *x);

@@ -110,7 +110,7 @@ static char s_why[160];
 static sock_t s_sock = SOCK_INVALID;
 static uint16_t s_bound;
 static PcNetIdentity s_id;
-static char s_url[256], s_name[16], s_code[8];
+static char s_url[256], s_name[16], s_code[64]; /* a LAN join's may be "@address:port" */
 static int s_seats;
 static uint64_t s_t0, s_stun_next, s_tell_next, s_start_next, s_in_ms;
 static struct {

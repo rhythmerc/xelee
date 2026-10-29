@@ -399,6 +399,7 @@ set(PC_SOURCES
         extern/monocypher/monocypher-ed25519.c
         src/pc/net_handshake.c
         src/pc/net_lan.c
+        src/pc/net_mdns.c
         src/pc/net_reliable.c
         src/pc/net_sfx.c
         src/pc/net_sim.c

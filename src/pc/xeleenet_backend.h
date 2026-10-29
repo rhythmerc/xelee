@@ -22,6 +22,10 @@ typedef struct PcXnBackend {
     int (*browse_poll)(PcXnListing* out, int max, int* n, int* others);
 } PcXnBackend;
 
+/* A lobby's settings summary (the service's settings object, JSON) into a
+ * listing's fields: what the LAN lobby's announcement and welcome carry. */
+bool pc_xn_listing_settings(const char* json, PcXnListing* x);
+
 extern const PcXnBackend pc_xn_service_backend;
 extern const PcXnBackend pc_xn_lan_backend;
 

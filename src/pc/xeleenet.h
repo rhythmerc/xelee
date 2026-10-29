@@ -69,6 +69,9 @@ typedef enum PcXnNet {
 } PcXnNet;
 bool pc_xn_set_network(PcXnNet net);
 PcXnNet pc_xn_network(void);
+/* LAN: nothing at all heard on mDNS for a while, not even our own query:
+ * this network blocks discovery, and joining is by address. */
+bool pc_xn_lan_unavailable(void);
 
 /* Open a lobby (`code` NULL) or join one by its code, reachable at the given
  * addresses (network order). `url` is the service; `seats` only matters to a

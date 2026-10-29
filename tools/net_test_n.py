@@ -109,8 +109,8 @@ def run(args):
             ident = os.path.join(args.work, f"{name}.id")
             os.makedirs(ident)
             env = {
-                "MELEE_XN": f"join:{code}" if k else "host",
-                "MELEE_XN_URL": args.xn_url,
+                "MELEE_XN": f"join:{'@127.0.0.1' if args.by_address else code}" if k else "host",
+                "MELEE_XN_URL": "" if args.lan else args.xn_url,
                 "MELEE_XN_SEATS": str(args.players),
                 "MELEE_XN_NAME": f"PLAYER {k + 1}",
                 "MELEE_XN_IDENTITY": ident,
@@ -119,6 +119,8 @@ def run(args):
             }
             if args.stun:
                 env["MELEE_XN_STUN"] = args.stun
+            if args.lan:
+                env["MELEE_XN_NET"] = "lan"  # the host's game is the lobby service (xeleenet_lan.c)
         elif not args.no_key:
             env["MELEE_NET_KEY"] = nt.NET_KEY
         if args.loss:
@@ -149,7 +151,7 @@ def run(args):
             # Boot waits in the connect phase until the host starts everyone;
             # nothing reads the key FIFO before that.
             for inst in insts:
-                if not inst.wait_log(r"xeleenet: session up", 180):
+                if not inst.wait_log(r"xeleenet: session \d+ up", 180):
                     print(f"[{inst.name}] the XeleeNet connect phase did not finish", flush=True)
                     ok = False
             if not ok:
@@ -197,7 +199,7 @@ def run(args):
               if not (args.kill and names[k] == args.kill.partition("@")[0])]
     if args.xn_url:
         for inst in judged:
-            if not nt.re.search(rf"xeleenet: session up as P\d with {args.players - 1} others", inst.text()):
+            if not nt.re.search(rf"xeleenet: session \d+ up as P\d with {args.players - 1} others", inst.text()):
                 print(f"[{inst.name}] FAIL: the XeleeNet connect phase did not finish")
                 ok = False
             print(f"[{inst.name}] " + "; ".join(nt.re.findall(
@@ -254,12 +256,18 @@ def main():
     ap.add_argument("--xn", action="store_true", help="join by code through a local XeleeNet service")
     ap.add_argument("--xn-url", default="", help="an XeleeNet service already running (implies --xn)")
     ap.add_argument("--stun", default="", help="MELEE_XN_STUN for every instance, e.g. off")
+    ap.add_argument("--lan", action="store_true", help="XeleeNet on this network: no service, the guests "
+                                                       "find the host's lobby over mDNS")
+    ap.add_argument("--by-address", action="store_true", help="with --lan: the guests join by the host's "
+                                                              "address, not the list")
     ap.add_argument("--exe", default=os.path.join(HERE, "..", "build", "melee"))
     ap.add_argument("--disc", default=os.path.join(HERE, "..", "..", "melee.ciso"))
     ap.add_argument("--port", type=int, default=42150, help="P1's UDP port; P2.. use +1..")
     ap.add_argument("--work", default="/tmp/net_test_n")
     args = ap.parse_args()
     service = None
+    if args.lan:
+        args.xn, args.xn_url = True, "lan"  # no service: the code path stays --xn's
     if args.xn and not args.xn_url:
         sys.path.insert(0, os.path.join(HERE, "xeleenet"))
         import test_service  # noqa: E402
