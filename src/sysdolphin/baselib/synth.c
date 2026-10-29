@@ -435,7 +435,21 @@ void HSD_SynthSFXGroupDataReaddress(struct SfxLoadStreamNode* bank,
     int j;
 
     e = (struct foo*) (bank + 1);
+#ifdef TARGET_PC
+    {
+        /* The request's completion takes one off on an aurora worker thread,
+         * under the interrupt mutex (devcom.c); on GameCube it was an
+         * interrupt, which nothing here could overlap. Take the mutex for the
+         * add too, or the two race, one is lost, and a later completion finds
+         * the count at 0 (the Quest crashed on this assert loading a stage's
+         * sounds). */
+        BOOL intr = OSDisableInterrupts();
+        sfxGroupDataReaddressCounter += 1;
+        OSRestoreInterrupts(intr);
+    }
+#else
     sfxGroupDataReaddressCounter += 1;
+#endif
     HSD_DevComRequest(
         0, bank->x10, aram_offset, bank->x14, 0x1B, 0,
         (HSD_DevComCallback) (Event) HSD_SynthSFXGroupDataReaddressCallback,
