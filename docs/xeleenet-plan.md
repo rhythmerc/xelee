@@ -261,6 +261,13 @@ but not scheduled.
 
 ### 3.1 Service
 
+> **2026-10-30: rewritten as a Go service** (`tools/xeleenet`, one static
+> binary, in-memory state with a save on shutdown, its own STUN). The goal was
+> no dependence on one vendor: it runs on any VPS or container host. The API
+> and every behaviour below are unchanged. Only the Durable Object mechanics
+> (alarms, wall-clock billing) no longer apply. The README is current; the
+> rest of this section is the original Worker design.
+
 **Cloudflare Worker + Durable Objects.** We already deploy a Worker (the log
 drop, `tools/log-drop`, `.github/workflows/log-drop.yml`). The lobby service
 is `tools/xeleenet/`, deployed the same way (`.github/workflows/xeleenet.yml`).

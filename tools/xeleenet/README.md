@@ -1,21 +1,28 @@
 # XeleeNet lobby service
 
-The server half of XeleeNet lobbies (`docs/xeleenet-plan.md` §3.1). A
-Cloudflare Worker with two kinds of Durable Object:
+The server half of XeleeNet lobbies (`docs/xeleenet-plan.md` §3.1). It's one
+static Go binary that needs no outside services and no particular host: it
+runs the same on a laptop, a $4 VPS or a container platform.
 
-- **`Lobby`**, one per lobby. It holds the members, their addresses, the
+- **Lobbies** (`lobby.go`). Each one holds its members, their addresses, the
   "Ask before joining" queue and the ban list, and it decides every join.
-- **`Directory`**, one in all. It hands out codes, resolves them, and keeps
-  the browser's summary rows.
+- **The directory** (also `lobby.go`) hands out codes, resolves them, and
+  answers the browser.
+- **STUN** (`stun.go`, optional) tells a game its public address, so
+  connecting doesn't need Google's or Cloudflare's STUN servers.
 
-The service only introduces players: it passes each one the others'
+The service only introduces players. It passes each one the others'
 addresses, and the games then connect directly. Match traffic never touches
-it, and neither do the full lobby settings or the roster's day-to-day changes;
+it. Neither do the full lobby settings or the roster's day-to-day changes:
 the host's game owns those and tells the others over the players' own links.
+
+State is in memory behind one lock. With `-state FILE`, the open lobbies are
+written on shutdown and read back on start, so a restart or upgrade doesn't
+close them. Hosts get a fresh heartbeat window when the service comes back.
 
 ## The API
 
-`src/index.js` has the full list. In short:
+`api.go` has the full list. In short:
 
 | Call | Who | |
 |---|---|---|
@@ -28,76 +35,94 @@ the host's game owns those and tells the others over the players' own links.
 | `POST /v1/join` | joiner | By code; answers joined (with everyone's addresses), pending, or a refusal |
 | `GET /v1/lobbies/<id>/join` | joiner | Asks again after "pending" |
 | `POST /v1/lobbies/<id>/leave` | member | |
+| `GET /healthz` | monitoring | `ok` |
 
 A refusal is `{"error", "reason"}`. The `reason` is a stable word for the game
 to switch on: `not_found`, `closed`, `full`, `version`, `banned`, `declined`,
-`seats`, `bad_name`, `bad_settings`, `rate_limited`, `unauthorized`, … and
-`error` is a line it can show as is.
+`seats`, `bad_name`, `bad_settings`, `rate_limited`, `unauthorized`, …. The
+`error` is a line the game can show as is.
 
-**Only the host polls.** Durable Objects bill wall-clock time while a request
-is open, so long-polling by every member would keep every lobby running all
-the time. Instead the host's heartbeat is short and carries the joins; a
-joiner gets everyone's addresses in its join reply; the others hear about a
-newcomer from the host's game. The one request that waits is a joiner on "Ask
-before joining" (at most `JOIN_WAIT_SECS`, then "pending").
+**Only the host polls.** Its heartbeat is short and carries the joins. A
+joiner gets everyone's addresses in its join reply, and the others hear about
+a newcomer from the host's game. The one request that waits is a joiner on
+"Ask before joining" (at most `-join-wait`, then "pending").
 
-**What's public.** Joining a lobby gives you its members' addresses (as in
-any peer-to-peer game, Slippi included). The browser shows names, tags,
-country and rules, never addresses. Coordinates from Cloudflare only sort the
-list.
+**What's public.** Joining a lobby gives you its members' addresses, as in
+any peer-to-peer game (Slippi included). The browser shows names, tags,
+country and rules, never addresses. Coordinates only sort the list.
 
-**Names** can repeat: the key is the identity, and the 8-character tag
+**Names** can repeat. The key is the identity, and the 8-character tag
 (SHA-1 of the key, as `net_identity.c` makes a connect code) tells two players
 with the same name apart. Names and lobby names are checked against
-`NAME_BLOCKLIST`, a secret, so the word list isn't in the repository.
+`XELEENET_NAME_BLOCKLIST`, so the word list isn't in the repository.
 
 ## Running it locally
 
+Needs Go 1.27 or later (on `PATH`, `$GO`, or unpacked to `~/.local/opt/go`).
+
 ```sh
 cd tools/xeleenet
-npm ci
-npx wrangler dev --var TOKEN_KEY:dev                    # http://127.0.0.1:8787
+go build -o xeleenet .
+XELEENET_TOKEN_KEY=dev ./xeleenet                       # http://127.0.0.1:8787
 python3 tools/xn_cli.py keygen                          # from the repo root
 python3 tools/xn_cli.py host --seats 4                  # another terminal
 python3 tools/xn_cli.py --key /tmp/b.key --name PIXEL list
 ```
 
 `tools/xn_cli.py` is a headless client for the whole API. The end-to-end test
-starts its own `wrangler dev` with short timeouts and plays every flow:
+builds the service and runs every flow against it with short timeouts. It
+then checks the rate limits, STUN, and a restart that keeps the lobbies:
 
 ```sh
 python3 tools/xeleenet/test_service.py
 ```
 
-`wrangler dev` doesn't enforce the rate limits, so those are only checked
-deployed.
+`tools/net_test_n.py --xn` and `tools/net_test_xn_menu.py` start their own
+copy the same way.
 
-## Deploying
+## Flags and secrets
 
-`.github/workflows/xeleenet.yml` tests on every push that touches the
-service and deploys from `main`. It uses the same Cloudflare secrets as the log
-drop (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`), plus:
+| Flag | Default | |
+|---|---|---|
+| `-listen` | `127.0.0.1:8787` | HTTP address (plain HTTP: behind a proxy, or for tests) |
+| `-tls-domain` | | Serve HTTPS on :443 with a Let's Encrypt certificate for this name (needs :80 too) |
+| `-tls-cache` | `/var/lib/xeleenet/certs` | Where certificates are kept |
+| `-state` | | Save lobbies here on shutdown, read them back on start |
+| `-stun` | | Also answer STUN on this UDP address (`:3478`) |
+| `-geoip` | | A MaxMind-format city database for country and nearest-first ([DB-IP's free IP to City Lite](https://db-ip.com/db/download/ip-to-city-lite), CC BY 4.0, monthly) |
+| `-geo-headers` | off | Take location from Cloudflare's visitor location headers instead, if proxied by Cloudflare |
+| `-ip-header` | | The header a trusted proxy puts the client address in. Only set this behind that proxy |
+| `-expire`, `-join-wait`, `-roster-grace` | 30s, 20s, 20s | Lobby timings |
+| `-limit-ip`, `-limit-host`, `-limit-join` | 120, 6, 20 | Per minute: calls per address, lobbies per player, joins per address (0 turns one off) |
 
-| Secret | What |
+| Environment | |
 |---|---|
-| `XELEENET_TOKEN_KEY` | Signs session tokens; becomes the Worker's `TOKEN_KEY`. Changing it signs everyone out. |
-| `XELEENET_NAME_BLOCKLIST` | Optional: comma-separated words refused in names. |
+| `XELEENET_TOKEN_KEY` | Required. Signs session tokens: any long random string (`openssl rand -hex 32`). Changing it signs everyone out. |
+| `XELEENET_NAME_BLOCKLIST` | Optional. Comma-separated words refused in names. |
+
+Without `-geoip` or `-geo-headers`, the browser shows no country and lists
+lobbies newest first.
+
+## Running it on a server
+
+CI (`.github/workflows/xeleenet.yml`) tests every push and builds
+`xeleenet-linux-amd64` and `-arm64` as a workflow artifact. On a VPS with a
+DNS name pointing at it:
 
 ```sh
-openssl rand -hex 32 | gh secret set -R rhythmerc/xelee XELEENET_TOKEN_KEY
-gh secret set -R rhythmerc/xelee XELEENET_NAME_BLOCKLIST
+scp xeleenet-linux-amd64 server:/usr/local/bin/xeleenet
+scp deploy/xeleenet.service server:/etc/systemd/system/
+ssh server 'printf "XELEENET_TOKEN_KEY=%s\nXELEENET_DOMAIN=xn.example.com\n" "$(openssl rand -hex 32)" > /etc/xeleenet.env &&
+  chmod 600 /etc/xeleenet.env && systemctl enable --now xeleenet'
 ```
 
-The game will take the service URL the way it takes the log drop's: from a
-repository secret compiled in at build time (not wired up yet; XN3).
+Open TCP 80 and 443 and UDP 3478. Put the city database at
+`/var/lib/xeleenet/city.mmdb`, or drop `-geoip` from the unit. To upgrade,
+copy the new binary and run `systemctl restart xeleenet`. The lobbies come
+back from `-state`.
 
-## Cost
+`deploy/Dockerfile` builds an image for container hosts. It serves plain HTTP
+on 8787 and STUN on 3478/udp, and expects the platform to terminate TLS.
 
-Rough numbers from Cloudflare's published limits; check the current ones
-before relying on them. The free plan allows about 100,000 Durable Object
-requests a day. A lobby at the CSS costs ~1,800 requests an hour (the host's
-2 s heartbeat) and one in a game ~360, so the free plan covers somewhere
-around 50-100 lobby-hours a day. The $5 Workers paid plan includes a million a
-month and charges cents per million after. If XeleeNet grows past that, the
-next step is hibernating WebSockets for the host, which bill almost nothing
-while idle.
+The game takes the service URL from `XELEENET_URL` at configure time (the
+`XELEENET_URL` repository variable in CI) or `MELEE_XN_URL` at run time.

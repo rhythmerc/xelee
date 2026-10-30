@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""End-to-end test of the XeleeNet lobby service against `wrangler dev`.
+"""End-to-end test of the XeleeNet lobby service.
 
-Starts the Worker locally (Durable Objects included) with short timeouts,
-plays hosts and joiners through tools/xn_cli.py's XnClient, and checks every
-answer. Needs `npm ci` in tools/xeleenet and the `cryptography` package.
+Builds and starts the service locally with short timeouts, plays hosts and
+joiners through tools/xn_cli.py's XnClient, and checks every answer; then
+the rate limits, STUN, and a restart that keeps the lobbies. Needs Go and the
+`cryptography` package.
 
-    python3 tools/xeleenet/test_service.py            # start wrangler dev, run, stop
-    python3 tools/xeleenet/test_service.py --url URL  # against a running service
-
-The rate limits aren't covered: wrangler dev doesn't enforce them.
+    python3 tools/xeleenet/test_service.py            # build, start, run, stop
+    python3 tools/xeleenet/test_service.py --url URL  # the API part against a running service
 """
 import argparse
 import os
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -56,42 +56,64 @@ def free_port():
         return s.getsockname()[1]
 
 
-def start_wrangler(short=True):
-    """wrangler dev on a free port. `short`: this test's short timeouts and
-    word list; otherwise the service's own (tools/net_test_n.py --xn)."""
-    port = free_port()
+def go_tool():
+    """The Go toolchain: $GO, `go` on PATH, or ~/.local/opt/go (README.md)."""
+    for g in (os.environ.get("GO"), shutil.which("go"), os.path.expanduser("~/.local/opt/go/bin/go")):
+        if g and os.access(g, os.X_OK):
+            return g
+    sys.exit("no Go toolchain: install Go 1.27+ or set $GO")
+
+
+def build(out_dir):
+    exe = os.path.join(out_dir, "xeleenet")
+    subprocess.run([go_tool(), "build", "-o", exe, "."], cwd=HERE, check=True,
+                   env=dict(os.environ, CGO_ENABLED="0"))
+    return exe
+
+
+def start_service(short=True, limits=False, stun=False, host="127.0.0.1", port=None):
+    """The service on a free port. `short`: this test's short timeouts and
+    word list; otherwise the service's own (tools/net_test_n.py --xn).
+    `limits` turns the rate limits on (off by default: one machine plays
+    every player). Returns (proc, url, state dir[, stun port])."""
+    port = port or free_port()
     state = tempfile.mkdtemp(prefix="xn-test-")
-    cmd = ["npx", "wrangler", "dev", "--ip", "127.0.0.1", "--port", str(port), "--persist-to", state,
-           "--var", "TOKEN_KEY:test-token-key"]
+    cmd = [build(state), "-listen", f"{host}:{port}"]
     if short:
-        cmd += ["--var", f"EXPIRE_SECS:{EXPIRE}", "--var", f"JOIN_WAIT_SECS:{JOIN_WAIT}",
-                "--var", f"ROSTER_GRACE_SECS:{GRACE}", "--var", f"NAME_BLOCKLIST:{BLOCKED}"]
-    env = dict(os.environ, WRANGLER_SEND_METRICS="false", CI="1")
-    log = open(os.path.join(state, "wrangler.log"), "w")
-    proc = subprocess.Popen(cmd, cwd=HERE, stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
+        cmd += ["-expire", f"{EXPIRE}s", "-join-wait", f"{JOIN_WAIT}s", "-roster-grace", f"{GRACE}s"]
+    if not limits:
+        cmd += ["-limit-ip", "0", "-limit-host", "0", "-limit-join", "0"]
+    stun_port = None
+    if stun:
+        stun_port = free_port()
+        cmd += ["-stun", f"127.0.0.1:{stun_port}"]
+    env = dict(os.environ, XELEENET_TOKEN_KEY=os.environ.get("XELEENET_TOKEN_KEY", "test-token-key"))
+    if short:
+        env["XELEENET_NAME_BLOCKLIST"] = BLOCKED
+    log = open(os.path.join(state, "service.log"), "w")
+    proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
     url = f"http://127.0.0.1:{port}"
-    for _ in range(120):
+    for _ in range(100):
         if proc.poll() is not None:
             break
         try:
-            urllib.request.urlopen(urllib.request.Request(url + "/v1/nothing"), timeout=2)
-        except urllib.error.HTTPError:
-            return proc, url, state  # it answers (404): ready
+            urllib.request.urlopen(url + "/healthz", timeout=2)
+            return (proc, url, state, stun_port) if stun else (proc, url, state)
         except OSError:
-            time.sleep(0.5)
+            time.sleep(0.1)
     log.close()
-    print(open(os.path.join(state, "wrangler.log")).read())
-    sys.exit("wrangler dev didn't come up")
+    print(open(os.path.join(state, "service.log")).read())
+    sys.exit("the lobby service didn't come up")
 
 
-def stop_wrangler(proc, state):
+def stop_service(proc, state):
     try:
         os.killpg(proc.pid, 15)
         proc.wait(timeout=10)
     except Exception:
         os.killpg(proc.pid, 9)
     if failures:
-        print(f"wrangler log: {os.path.join(state, 'wrangler.log')}")
+        print(f"service log: {os.path.join(state, 'service.log')}")
     else:
         shutil.rmtree(state, ignore_errors=True)
 
@@ -231,19 +253,103 @@ def run(url):
           f"a host's heartbeats stopping for {EXPIRE} s closes its lobby too")
 
 
+def run_limits():
+    print("-- rate limits")
+    proc, url, state = start_service(limits=True)
+    try:
+        a = XnClient(url, name="FLOOD")
+        a.sign_in()
+        for i in range(20):
+            refused(lambda: a.join("ZZZZZZ", ["203.0.113.9:41000"]), "not_found", "a guess") if i == 0 else \
+                _quiet(lambda: a.join("ZZZZZZ", ["203.0.113.9:41000"]))
+        refused(lambda: a.join("ZZZZZZ", ["203.0.113.9:41000"]), "rate_limited", "the 21st join in a minute")
+        for i in range(6):
+            a.host(f"Lobby {i}", ["198.51.100.1:41000"])
+        refused(lambda: a.host("Lobby 7", ["198.51.100.1:41000"]), "rate_limited", "the 7th lobby in a minute")
+    finally:
+        stop_service(proc, state)
+
+
+def _quiet(fn):
+    try:
+        fn()
+    except XnError:
+        pass
+
+
+def run_stun():
+    print("-- STUN")
+    proc, url, state, stun_port = start_service(stun=True)
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(2)
+            sock.bind(("127.0.0.1", 0))
+            txid = os.urandom(12)
+            sock.sendto(struct.pack(">HHI", 1, 0, 0x2112A442) + txid, ("127.0.0.1", stun_port))
+            reply = sock.recv(1500)
+            mine = sock.getsockname()
+        kind, length, cookie = struct.unpack(">HHI", reply[:8])
+        check(kind == 0x0101 and cookie == 0x2112A442 and reply[8:20] == txid and length == len(reply) - 20,
+              "a Binding request gets a success with our transaction id")
+        atype, alen, _, family, xport = struct.unpack(">HHBBH", reply[20:28])
+        port = xport ^ 0x2112
+        ip = ".".join(str(b ^ k) for b, k in zip(reply[28:32], struct.pack(">I", 0x2112A442)))
+        check(atype == 0x0020 and family == 1 and (ip, port) == mine,
+              f"XOR-MAPPED-ADDRESS is our address ({ip}:{port})")
+    finally:
+        stop_service(proc, state)
+
+
+def run_restart():
+    print("-- a restart keeps the lobbies")
+    port = free_port()
+    url = f"http://127.0.0.1:{port}"
+    a, b = XnClient(url, name="STAYS"), XnClient(url, name="LATER")
+    state = tempfile.mkdtemp(prefix="xn-test-")
+    saved = os.path.join(state, "state.json")
+    exe = build(state)
+    env = dict(os.environ, XELEENET_TOKEN_KEY="test-token-key")
+    proc = None
+    try:
+        def up():
+            p = subprocess.Popen([exe, "-listen", f"127.0.0.1:{port}", "-state", saved, "-expire", f"{EXPIRE}s"],
+                                 env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            for _ in range(100):
+                try:
+                    urllib.request.urlopen(url + "/healthz", timeout=2)
+                    return p
+                except OSError:
+                    time.sleep(0.1)
+            sys.exit("the lobby service didn't come back")
+
+        proc = up()
+        r = a.host("Survivor", ["198.51.100.1:41000"])
+        os.killpg(proc.pid, 15)
+        proc.wait(timeout=10)
+        check(os.path.exists(saved), "stopping writes the state file")
+        proc = up()
+        check(any(x["code"] == r["code"] for x in b.list()["lobbies"]), "the lobby is listed after the restart")
+        check(a.heartbeat(r["id"])["state"] == "open", "and its host's token and heartbeat still work")
+        check(b.join(r["code"], ["203.0.113.2:41000"])["port"] == 1, "and it can be joined")
+    finally:
+        stop_service(proc, state)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--url", help="test a running service instead of starting wrangler dev")
+    ap.add_argument("--url", help="test a running service (the API part only)")
     args = ap.parse_args()
-    proc = state = None
-    url = args.url
-    if not url:
-        proc, url, state = start_wrangler()
-    try:
-        run(url)
-    finally:
-        if proc:
-            stop_wrangler(proc, state)
+    if args.url:
+        run(args.url)
+    else:
+        proc, url, state = start_service()
+        try:
+            run(url)
+        finally:
+            stop_service(proc, state)
+        run_limits()
+        run_stun()
+        run_restart()
     print(f"\n{len(failures)} failed" if failures else "\nall passed")
     sys.exit(1 if failures else 0)
 
