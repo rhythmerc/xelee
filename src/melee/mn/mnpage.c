@@ -412,8 +412,11 @@ static HSD_JObj* mnPage_titleJoint;
 
 /* The stock titles are slanted (italic) textures on the tab's joint; the
  * font is upright. Before the glyphs go out, the text's position matrix is
- * the joint's world rotation with an x-by-y shear, about the joint's origin
- * (as mnmain.c's mn_PcLabelLean leans the PC row labels). */
+ * the joint's world matrix with an x-by-y shear, about the joint's origin
+ * (as mnmain.c's mn_PcLabelLean leans the PC row labels). The joint's scale
+ * stays in: the tab's slide out squeezes the title to nothing across (x
+ * 1 to 0.001 in 9 frames, sliding right) and the slide in grows it back,
+ * so the text goes and comes with the stock textures. */
 static void mnPage_TitleItalic(void* gobj_)
 {
     HSD_JObj* jobj = mnPage_titleJoint;
@@ -431,11 +434,9 @@ static void mnPage_TitleItalic(void* gobj_)
     for (c = 0; c < 3; c++) {
         len = sqrtf(jobj->mtx[0][c] * jobj->mtx[0][c] + jobj->mtx[1][c] * jobj->mtx[1][c] +
                     jobj->mtx[2][c] * jobj->mtx[2][c]);
-        if (len < 1e-4f) {
-            return;
-        }
         for (r = 0; r < 3; r++) {
-            rot[r][c] = jobj->mtx[r][c] / len;
+            /* A joint squeezed flat draws nothing, as its texture would. */
+            rot[r][c] = len < 1e-6f ? 0.0f : jobj->mtx[r][c];
         }
     }
     {
