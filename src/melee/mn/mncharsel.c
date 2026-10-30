@@ -5936,6 +5936,10 @@ typedef struct CssXnShift {
 } CssXnShift;
 static CssXnShift css_xn_group_shift[ARRAY_SIZE(css_xn_groups)];
 static CssXnShift css_xn_tag_shift[4], css_xn_star_shift[4];
+/* A shrunk name's lift (cssXnSetName): the scale keeps the line's foot, so a
+ * smaller name sat low in its box. */
+static CssXnShift css_xn_tag_lift[4];
+static float css_xn_name_dy[4];
 static char css_xn_name[4][16]; /* what each box was given; "" for none */
 
 static float cssXnShifted(CssXnShift* s, float now, float dx)
@@ -5976,6 +5980,8 @@ static void cssXnCardsEnter(void)
     css_xn_dx = (4 - css_xn_seats) * CSS_DOOR_PITCH / 2;
     memset(css_xn_group_shift, 0, sizeof css_xn_group_shift);
     memset(css_xn_tag_shift, 0, sizeof css_xn_tag_shift);
+    memset(css_xn_tag_lift, 0, sizeof css_xn_tag_lift);
+    memset(css_xn_name_dy, 0, sizeof css_xn_name_dy);
     memset(css_xn_star_shift, 0, sizeof css_xn_star_shift);
     memset(css_xn_name, 0, sizeof css_xn_name);
 }
@@ -6319,8 +6325,12 @@ static float cssXnNameWidth(HSD_Text* text)
 #define CSS_XN_NAME_BOX 160.0F
 #define CSS_XN_NAME_FLOOR 0.62F
 #define CSS_XN_NAME_NARROW 0.5F
+/* How far a name's middle drops per unit of height it loses, in the text's
+ * units: measured on the css-* previews. */
+#define CSS_XN_NAME_LIFT 1.0F
 
-static void cssXnSetName(HSD_Text* text, const char* name)
+/* Returns how far to raise the line to keep it centred in the box. */
+static float cssXnSetName(HSD_Text* text, const char* name)
 {
     char sis[64];
     int n = (int) strlen(name);
@@ -6342,6 +6352,7 @@ static void cssXnSetName(HSD_Text* text, const char* name)
     sy = fit > 1.0F ? 1.0F : fit < CSS_XN_NAME_FLOOR ? CSS_XN_NAME_FLOOR : fit;
     sx = fit < sy ? fit : sy;
     HSD_SisLib_803A7548(text, 0, sx, sy);
+    return -(1.0F - sy) * CSS_XN_NAME_LIFT;
 }
 
 /* Once a frame, after every other proc (cssXnCameraProc): the seats' doors
@@ -6396,8 +6407,9 @@ static void cssXnCardsFrame(void)
         }
         if (strcmp(css_xn_name[i], names[i]) != 0) {
             snprintf(css_xn_name[i], sizeof css_xn_name[i], "%s", names[i]);
-            cssXnSetName(td->text, css_xn_name[i]);
+            css_xn_name_dy[i] = cssXnSetName(td->text, css_xn_name[i]);
         }
+        td->text->pos_y = cssXnShifted(&css_xn_tag_lift[i], td->text->pos_y, css_xn_name_dy[i]);
         {
             GXColor c = i == local ? port_color[i] : (GXColor) { 0xFF, 0xFF, 0xFF, 0xFF };
             HSD_SisLib_803A74F0(td->text, 0, &c);
