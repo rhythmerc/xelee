@@ -5718,7 +5718,7 @@ static bool cssXnHandOnScreen(int i, float* x, float* y)
     lb_8000B1CC(GET_JOBJ(mnCharSel_804A0BC0[i]->gobj), NULL, &pos);
     pos.x += 2.5F;
     pos.y -= 4.5F;
-    if (lbVector_WorldToScreen(css_xn_cobj, &pos, &out, 1) == NULL) {
+    if (!mn_PcMenuCamRestToScreen(css_xn_cobj, &pos, &out)) {
         return false;
     }
     *x = out.x / 640.0F;
@@ -5729,11 +5729,12 @@ static bool cssXnHandOnScreen(int i, float* x, float* y)
 /* The overlay (the banner, the notice, the doors' tags, the legend: RmlUi,
  * xeleenet_menu.cpp) is drawn into the CSS's own frame here, after the menu
  * model (link 1: the portraits and doors) and before the tokens (link 2) and
- * the hands (link 3), so those stay on top of it. */
+ * the hands (link 3), so those stay on top of it. It turns with the camera
+ * (the C-stick) as the doors do. */
 static void cssXnOverlayRender(HSD_GObj* gobj, int pass)
 {
     if (HSD_GetCurrentRenderPass() == HSD_RP_SCREEN) {
-        aurora_rmlui_draw_here();
+        mn_PcMenuCamOverlayDraw(css_xn_cobj);
     }
 }
 

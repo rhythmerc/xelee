@@ -7,6 +7,8 @@
 #include "pc/pc.h"
 #include "mnpage.h"
 #include "pc/xr_place.h"
+#include <aurora/aurora.h>
+#include <melee/lb/lbvector.h>
 #endif
 
 #include "forward.h"
@@ -2054,6 +2056,14 @@ HSD_GObj* mn_8022B3A0(u8 state)
 
 static const Vec3 mn_803B8500 = { 0, 1, 0 };
 
+#ifdef TARGET_PC
+/* The camera mn_8022BA1C last turned, and its eye and up before the turn
+ * (the up it reads after is square to the turned view). */
+static HSD_CObj* mn_pc_rest_cobj;
+static Vec3 mn_pc_rest_eye;
+static Vec3 mn_pc_rest_up;
+#endif
+
 /// @brief updates menu camera rotation from the cstick
 void mn_8022BA1C(HSD_GObj* gp)
 {
@@ -2108,6 +2118,11 @@ void mn_8022BA1C(HSD_GObj* gp)
         }
     }
     HSD_CObjInit(cobj, MenMain_cam);
+#ifdef TARGET_PC
+    mn_pc_rest_cobj = cobj;
+    HSD_CObjGetEyePosition(cobj, &mn_pc_rest_eye);
+    HSD_CObjGetUpVector(cobj, &mn_pc_rest_up);
+#endif
     sp30 = mn_803B8500;
     HSD_CObjGetEyeVector(cobj, &sp48);
     HSD_CObjGetInterest(cobj, &sp18);
@@ -2121,6 +2136,75 @@ void mn_8022BA1C(HSD_GObj* gp)
     PSVECSubtract(&sp18, &sp48, &sp24);
     HSD_CObjSetEyePosition(cobj, &sp24);
 }
+
+#ifdef TARGET_PC
+/* A camera's frame: forward, right and up, from its eye to its interest. */
+static void mnPcCamBasis(const Vec3* eye, const Vec3* at, const Vec3* up, Vec3* f, Vec3* r, Vec3* u)
+{
+    PSVECSubtract(at, eye, f);
+    PSVECNormalize(f, f);
+    PSVECCrossProduct(f, up, r);
+    PSVECNormalize(r, r);
+    PSVECCrossProduct(r, f, u);
+}
+
+/* The turn moves the eye about the interest; the overlay is a picture of the
+ * menu's plane (through the interest, facing the resting eye). Each of its
+ * corners is the point of that plane under the frame's corner at rest, put
+ * where the turned camera sees it, in clip space so the GPU maps the picture
+ * perspective-correctly. */
+void mn_PcMenuCamOverlayDraw(HSD_CObj* cobj)
+{
+    static const float corner[4][2] = { { -1, 1 }, { 1, 1 }, { -1, -1 }, { 1, -1 } };
+    float out[4][4];
+    Vec3 eye, at, up, f0, r0, u0, f1, r1, u1, d;
+    float t, a, dist;
+    int i;
+    if (cobj == NULL || cobj != mn_pc_rest_cobj ||
+        HSD_CObjGetProjectionType(cobj) != PROJ_PERSPECTIVE)
+    {
+        aurora_rmlui_draw_here();
+        return;
+    }
+    HSD_CObjGetEyePosition(cobj, &eye);
+    HSD_CObjGetInterest(cobj, &at);
+    HSD_CObjGetUpVector(cobj, &up);
+    t = tanf(cobj->projection_param.perspective.fov * (float) M_PI / 360.0F);
+    a = cobj->projection_param.perspective.aspect;
+    mnPcCamBasis(&mn_pc_rest_eye, &at, &mn_pc_rest_up, &f0, &r0, &u0);
+    mnPcCamBasis(&eye, &at, &up, &f1, &r1, &u1);
+    PSVECSubtract(&at, &mn_pc_rest_eye, &d);
+    dist = PSVECDotProduct(&d, &f0);
+    for (i = 0; i < 4; i++) {
+        /* At rest, the ray through the corner, to the plane at `dist`. */
+        float x = corner[i][0] * t * a * dist, y = corner[i][1] * t * dist;
+        Vec3 p = { mn_pc_rest_eye.x + (f0.x * dist + r0.x * x + u0.x * y),
+                   mn_pc_rest_eye.y + (f0.y * dist + r0.y * x + u0.y * y),
+                   mn_pc_rest_eye.z + (f0.z * dist + r0.z * x + u0.z * y) };
+        PSVECSubtract(&p, &eye, &d);
+        out[i][0] = PSVECDotProduct(&d, &r1) / (t * a);
+        out[i][1] = PSVECDotProduct(&d, &u1) / t;
+        out[i][2] = 0.0F;
+        out[i][3] = PSVECDotProduct(&d, &f1);
+    }
+    aurora_rmlui_draw_here_warped(out);
+}
+
+bool mn_PcMenuCamRestToScreen(HSD_CObj* cobj, const Vec3* pos, Vec3* out)
+{
+    Vec3 eye, p = *pos;
+    bool ok;
+    if (cobj != mn_pc_rest_cobj) {
+        return lbVector_WorldToScreen(cobj, &p, out, 1) != NULL;
+    }
+    /* The turn moved only the eye (the camera keeps its roll). */
+    HSD_CObjGetEyePosition(cobj, &eye);
+    HSD_CObjSetEyePosition(cobj, &mn_pc_rest_eye);
+    ok = lbVector_WorldToScreen(cobj, &p, out, 1) != NULL;
+    HSD_CObjSetEyePosition(cobj, &eye);
+    return ok;
+}
+#endif
 
 void fn_8022BCD4(HSD_GObj* gobj, intptr_t unused)
 {
