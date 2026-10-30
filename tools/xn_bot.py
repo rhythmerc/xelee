@@ -2,7 +2,7 @@
 """A desktop player to test the Quest (or anyone) against in XeleeNet: it
 hosts a lobby and plays on by itself, game after game.
 
-    tools/xn_bot.py [--url http://127.0.0.1:8790] [--name DESKBOT] [--idle]
+    tools/xn_bot.py [--url http://127.0.0.1:8790] [--name DESKBOT] [--idle] [--lan]
 
 1. Hosts a public 1v1 lobby: 1-minute time matches, no items, the
    Competitive stage list (written to its profile's xeleenet-lobby.txt, which
@@ -19,6 +19,9 @@ tools/xn_trial.py's menu/quest-menu set), so the two see each other's
 lobbies on the same service: `tools/xn_trial.py serve` (or one already on
 8790, behind the Funnel). The game's log goes to build/xn-bot/bot.log; the
 bot prints what it does. Ctrl-C stops it.
+
+--lan hosts on LAN instead (Online Mode > LAN, no service): the Quest finds
+the lobby on the local network, or joins by the address the bot prints.
 """
 import argparse
 import os
@@ -155,7 +158,8 @@ def run(args):
         if not nt.to_main_menu((bot,)):
             say("never reached the main menu")
             return 1
-        xm.walk(bot, xm.TO_ONLINE + [("X", 7), ("X", 7)])  # Online Mode > XeleeNet > Host
+        rows = xm.TO_LAN_ROW if args.lan else []
+        xm.walk(bot, xm.TO_ONLINE + rows + [("X", 7), ("X", 7)])  # Online Mode > XeleeNet (or LAN) > Host
         time.sleep(1.5)
         nt.press((bot,), "Return", 9, 1.0)  # START: open the lobby
         if not bot.wait_log(r"xeleenet: lobby code [A-Z0-9]{6}", 60):
@@ -163,6 +167,9 @@ def run(args):
             return 1
         code = re.search(r"xeleenet: lobby code ([A-Z0-9]{6})", bot.text()).group(1)
         say(f"hosting {args.name}'s 1v1, code {code[:3]} {code[3:]}: 1-minute time, no items")
+        if args.lan:
+            m = re.search(r"xeleenet: hosting lobby \S+, code \S+, \d+ seats on LAN (\S+)", bot.text())
+            say(f"on LAN at {m.group(1) if m else '?'}")
         scene, games, stage_i, column = None, 0, 0, random.randrange(nt.CSS_COLS)
         workout, last_try, last_start, lost_since = None, 0.0, 0.0, 0.0
         need_pick, no_picks = True, 0  # a START with no pick says the pick went
@@ -241,6 +248,7 @@ def main():
     ap.add_argument("--url", default="http://127.0.0.1:8790", help="the lobby service (tools/xn_trial.py serve)")
     ap.add_argument("--name", default="DESKBOT", help="the bot's XeleeNet name (up to 12)")
     ap.add_argument("--idle", action="store_true", help="stand still in matches")
+    ap.add_argument("--lan", action="store_true", help="host on LAN (Online Mode > LAN), not the service")
     ap.add_argument("--exe", default=os.path.join(ROOT, "build", "linux", "melee"))
     ap.add_argument("--disc", default=DEFAULT_DISC)
     ap.add_argument("--work", default=os.path.join(ROOT, "build", "xn-bot"))
