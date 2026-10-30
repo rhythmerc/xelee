@@ -82,22 +82,36 @@ if (_slippi_login_n EQUAL 2)
 else ()
     message(STATUS "melee: Slippi in-app login not compiled in (set MELEE_SLIPPI_FIREBASE_KEY and MELEE_SLIPPI_GRAPHQL_ENDPOINT, or put them in slippi-login.env)")
 endif ()
-# Send logs' log drop (src/pc/log_report.cpp, tools/log-drop), compiled in the
-# same way from XELEE_LOGS_URL. Unset, Send logs saves the bundle as a file.
-if (NOT "$ENV{XELEE_LOGS_URL}" STREQUAL "")
+# A URL compiled in from the environment, kept in the cache: the build
+# re-runs CMake by itself when its files change, without the variable set,
+# and would otherwise drop the value it was configured with.
+macro(melee_env_url name default help)
+    if (NOT "$ENV{${name}}" STREQUAL "")
+        set(${name} "$ENV{${name}}" CACHE STRING "${help}" FORCE)
+    else ()
+        set(${name} "${default}" CACHE STRING "${help}")
+    endif ()
+endmacro()
+
+# Send logs' log drop (src/pc/log_report.cpp, tools/log-drop), from
+# XELEE_LOGS_URL. Unset, Send logs saves the bundle as a file.
+melee_env_url(XELEE_LOGS_URL "" "Send logs' log drop (tools/log-drop)")
+if (NOT "${XELEE_LOGS_URL}" STREQUAL "")
     set_source_files_properties(src/pc/log_report.cpp PROPERTIES
-        COMPILE_DEFINITIONS "PC_LOGS_URL_BUILTIN=\"$ENV{XELEE_LOGS_URL}\"")
+        COMPILE_DEFINITIONS "PC_LOGS_URL_BUILTIN=\"${XELEE_LOGS_URL}\"")
     message(STATUS "melee: Send logs uploads to the log drop")
 else ()
     message(STATUS "melee: Send logs saves files only (set XELEE_LOGS_URL)")
 endif ()
 
-# The XeleeNet lobby service the game uses (src/pc/net_punch.c), from the
-# environment at configure time; MELEE_XN_URL overrides it at run time.
-if (NOT "$ENV{XELEENET_URL}" STREQUAL "")
+# The XeleeNet lobby service the game uses (src/pc/net_punch.c): ours
+# (tools/xeleenet), or XELEENET_URL at configure time (CI's repository
+# variable, a test service); MELEE_XN_URL overrides it at run time.
+melee_env_url(XELEENET_URL "https://xn.xelee.net" "XeleeNet lobby service (tools/xeleenet)")
+if (NOT "${XELEENET_URL}" STREQUAL "")
     set_property(SOURCE src/pc/net_punch.c APPEND PROPERTY
-        COMPILE_DEFINITIONS "XELEENET_URL=\"$ENV{XELEENET_URL}\"")
-    message(STATUS "melee: XeleeNet service $ENV{XELEENET_URL}")
+        COMPILE_DEFINITIONS "XELEENET_URL=\"${XELEENET_URL}\"")
+    message(STATUS "melee: XeleeNet service ${XELEENET_URL}")
 endif ()
 
 # The version the app reports and the updater compares: the release tag CI
