@@ -745,9 +745,7 @@ static bool xnSss_IconOnScreen(int cell, float out[4])
     a.y += XN_FRAME_HH * mnStageSel_803F06D0[cell].x18;
     b.x += XN_FRAME_HW * mnStageSel_803F06D0[cell].x14;
     b.y -= XN_FRAME_HH * mnStageSel_803F06D0[cell].x18;
-    if (lbVector_WorldToScreen(cobj, &a, &sa, 1) == NULL ||
-        lbVector_WorldToScreen(cobj, &b, &sb, 1) == NULL)
-    {
+    if (!mn_PcMenuCamRestToScreen(cobj, &a, &sa) || !mn_PcMenuCamRestToScreen(cobj, &b, &sb)) {
         return false;
     }
     out[0] = sa.x / 640.0F;
@@ -789,11 +787,12 @@ static void xnSss_Thumbs(void)
 /* The overlay (the rings, the picks card, the draw: RmlUi,
  * xeleenet_menu.cpp) is drawn into the stage select's own frame here, after
  * the icons and Melee's hover frame (link 4, 0x85, made after them) and
- * before the cursor (0x86), so the cursor stays on top of it. */
+ * before the cursor (0x86), so the cursor stays on top of it. It turns with
+ * the camera (the C-stick) as the icons do. */
 static void xnSss_OverlayRender(HSD_GObj* gobj, int pass)
 {
     if (HSD_GetCurrentRenderPass() == HSD_RP_SCREEN) {
-        aurora_rmlui_draw_here();
+        mn_PcMenuCamOverlayDraw(mnStageSel_804D6C9C != NULL ? GET_COBJ(mnStageSel_804D6C9C) : NULL);
     }
 }
 

@@ -92,6 +92,15 @@ bool mn_PcListPointer(struct HSD_JObj* left0, struct HSD_JObj* left1,
                       bool* leads);
 /* The entry at (u, v): the left column's rows, then the right's, or -1. */
 int mn_PcListEntry(float u, float v, int left_n, int right_n);
+/* An overlay drawn under a menu camera that the C-stick turns (mn_8022BA1C:
+ * CSS, stage select): the RmlUi documents into the frame here
+ * (aurora_rmlui_draw_here), moved as the turn moves the menu's plane, so
+ * they stay on what they mark. */
+void mn_PcMenuCamOverlayDraw(struct HSD_CObj* cobj);
+/* Where `pos` is on screen (640x480) seen from that camera at rest, the
+ * C-stick centred: for placing overlay parts, which mn_PcMenuCamOverlayDraw
+ * then turns with the rest. */
+bool mn_PcMenuCamRestToScreen(struct HSD_CObj* cobj, const Vec3* pos, Vec3* out);
 #endif
 /* 22BEDC */ void mn_8022BEDC(HSD_GObj*);
 /* 22BFBC */ GXColor* mn_8022BFBC(int);
