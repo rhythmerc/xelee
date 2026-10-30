@@ -100,6 +100,9 @@ copy the same way.
 | `XELEENET_TOKEN_KEY` | Required. Signs session tokens: any long random string (`openssl rand -hex 32`). Changing it signs everyone out. |
 | `XELEENET_NAME_BLOCKLIST` | Optional. Comma-separated words refused in names. |
 
+The DB-IP Lite database is CC BY 4.0: anywhere the country shows, the credits
+must say "IP Geolocation by DB-IP" with a link to https://db-ip.com.
+
 Without `-geoip` or `-geo-headers`, the browser shows no country and lists
 lobbies newest first.
 
@@ -116,8 +119,9 @@ ssh server 'printf "XELEENET_TOKEN_KEY=%s\nXELEENET_DOMAIN=xn.example.com\n" "$(
   chmod 600 /etc/xeleenet.env && systemctl enable --now xeleenet'
 ```
 
-Open TCP 80 and 443 and UDP 3478. Put the city database at
-`/var/lib/xeleenet/city.mmdb`, or drop `-geoip` from the unit. To upgrade,
+`deploy/provision.sh root@SERVER DOMAIN` does all of that on a fresh Ubuntu
+server, plus the firewall (TCP 22, 80, 443; UDP 3478) and the city database
+(`/usr/local/share/xeleenet/city.mmdb`, fetched from DB-IP). To upgrade,
 copy the new binary and run `systemctl restart xeleenet`. The lobbies come
 back from `-state`.
 

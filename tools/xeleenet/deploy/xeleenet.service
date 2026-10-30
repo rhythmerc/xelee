@@ -8,7 +8,7 @@ Wants=network-online.target
 [Service]
 EnvironmentFile=/etc/xeleenet.env
 ExecStart=/usr/local/bin/xeleenet -tls-domain ${XELEENET_DOMAIN} -tls-cache /var/lib/xeleenet/certs \
-    -state /var/lib/xeleenet/state.json -stun :3478 -geoip /var/lib/xeleenet/city.mmdb
+    -state /var/lib/xeleenet/state.json -stun :3478 -geoip /usr/local/share/xeleenet/city.mmdb
 Restart=always
 DynamicUser=yes
 StateDirectory=xeleenet
