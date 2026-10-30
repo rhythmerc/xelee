@@ -31,10 +31,9 @@ $ssh "$host" DOMAIN="$domain" sh -s <<'EOF'
 set -eu
 install -m 755 /tmp/xeleenet /usr/local/bin/xeleenet && rm /tmp/xeleenet
 if [ ! -f /etc/xeleenet.env ]; then
-    umask 077
-    printf 'XELEENET_TOKEN_KEY=%s\nXELEENET_DOMAIN=%s\n' "$(openssl rand -hex 32)" "$DOMAIN" > /etc/xeleenet.env
+    (umask 077 && printf 'XELEENET_TOKEN_KEY=%s\nXELEENET_DOMAIN=%s\n' "$(openssl rand -hex 32)" "$DOMAIN" > /etc/xeleenet.env)
 fi
-mkdir -p /usr/local/share/xeleenet
+install -d -m 755 /usr/local/share/xeleenet
 if [ -f /tmp/city.mmdb ]; then
     install -m 644 /tmp/city.mmdb /usr/local/share/xeleenet/city.mmdb && rm /tmp/city.mmdb
 else
