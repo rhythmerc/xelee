@@ -24,7 +24,7 @@ silence. The others must agree where its input ends, void the match on one
 frame and play on (net.c, drops); the killed instance is not judged.
 
 --xn connects through XeleeNet instead of listing addresses: a local
-`wrangler dev` of the lobby service (tools/xeleenet; or --xn-url), player 1
+lobby service, built and started locally (tools/xeleenet; or --xn-url), player 1
 hosts (MELEE_XN=host), and once its log names the lobby code the others join
 with it (MELEE_XN=join:CODE). Each has its own key (MELEE_XN_IDENTITY), STUN
 and its LAN address for candidates, and the punch (net_punch.c) decides every
@@ -271,14 +271,14 @@ def main():
     if args.xn and not args.xn_url:
         sys.path.insert(0, os.path.join(HERE, "xeleenet"))
         import test_service  # noqa: E402
-        proc, args.xn_url, state = test_service.start_wrangler(short=False)
+        proc, args.xn_url, state = test_service.start_service(short=False)
         service = (test_service, proc, state)
         print(f"net_test_n: XeleeNet at {args.xn_url}", flush=True)
     try:
         ok = run(args)
     finally:
         if service:
-            service[0].stop_wrangler(service[1], service[2])
+            service[0].stop_service(service[1], service[2])
     print("net_test_n: " + ("PASS" if ok else "FAIL"))
     sys.exit(0 if ok else 1)
 

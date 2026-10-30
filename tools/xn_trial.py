@@ -3,7 +3,7 @@
 code (docs/xeleenet-plan.md, XN2), with the lobby service on the host's
 desktop instead of Cloudflare.
 
-    tools/xn_trial.py serve                       wrangler dev for every network
+    tools/xn_trial.py serve                       the lobby service (and STUN) for every network
     tools/xn_trial.py menu --url URL              a desktop game, driven by hand in the menus
     tools/xn_trial.py quest-menu --url URL        the Quest, the same (adb), then Play
     tools/xn_trial.py host [--seats 3]            the host's game; prints the code
@@ -75,9 +75,10 @@ def funnel_url():
 
 def serve(args):
     state = tempfile.mkdtemp(prefix="xn-trial-")
-    cmd = ["npx", "wrangler", "dev", "--ip", "0.0.0.0", "--port", str(PORT), "--persist-to", state,
-           "--var", "TOKEN_KEY:xn-trial"]
-    env = dict(os.environ, WRANGLER_SEND_METRICS="false")
+    sys.path.insert(0, os.path.join(HERE, "xeleenet"))
+    import test_service  # noqa: E402
+    cmd = [test_service.build(state), "-listen", f"0.0.0.0:{PORT}", "-stun", f":{PORT}"]
+    env = dict(os.environ, XELEENET_TOKEN_KEY="xn-trial")
     print(f"XeleeNet service on port {PORT}:")
     print(f"  this machine   http://127.0.0.1:{PORT}")
     print(f"  at home        http://{lan_ip()}:{PORT}")
@@ -87,7 +88,7 @@ def serve(args):
     print(f"  public         {fu}" if fu else f"  public         (no Funnel: tailscale funnel --bg {PORT})")
     print("Ctrl-C stops it.\n", flush=True)
     try:
-        subprocess.run(cmd, cwd=os.path.join(HERE, "xeleenet"), env=env)
+        subprocess.run(cmd, env=env)
     except KeyboardInterrupt:
         pass
     finally:

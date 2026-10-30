@@ -849,7 +849,7 @@ def main():
                          "teams: Teams with a seat per player (doors moved unless 4), the host turns "
                          "its team on its door's button")
     ap.add_argument("--join-shots", action="store_true", help="shots every 0.35 s through the first join")
-    ap.add_argument("--url", default="", help="a running service instead of a local wrangler dev")
+    ap.add_argument("--url", default="", help="a running service instead of a local lobby service")
     ap.add_argument("--net", choices=("service", "lan"), default="service",
                     help="lan: Online Mode > LAN, no service")
     ap.add_argument("--no-discovery", action="store_true",
@@ -865,13 +865,13 @@ def main():
         ap.error("--no-discovery is a LAN run (--net lan)")
     service = None
     if not args.url and args.net == "service":
-        proc, args.url, state = test_service.start_wrangler(short=False)
+        proc, args.url, state = test_service.start_service(short=False)
         service = (proc, state)
     try:
         ok = run(args)
     finally:
         if service:
-            test_service.stop_wrangler(*service)
+            test_service.stop_service(*service)
     print("net_test_xn_menu: " + ("PASS" if ok else "FAIL"))
     sys.exit(0 if ok else 1)
 

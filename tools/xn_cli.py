@@ -3,7 +3,7 @@
 
 A headless stand-in for the game's side of the API: host a lobby and watch
 who joins, list lobbies, join by code. tools/xeleenet/test_service.py uses
-the XnClient class below for its end-to-end run against `wrangler dev`.
+the XnClient class below for its end-to-end run.
 
     xn_cli.py keygen                         make this CLI's key; print its tag
     xn_cli.py host [--private] [--ask] ...   host, then heartbeat until Ctrl-C
@@ -11,7 +11,7 @@ the XnClient class below for its end-to-end run against `wrangler dev`.
     xn_cli.py join K7M-Q2D
 
 The service URL comes from --url, $XELEENET_URL, ~/.config/xelee/xeleenet-url,
-or http://127.0.0.1:8787 (wrangler dev). The key is a 32-byte Ed25519 seed,
+or http://127.0.0.1:8787 (a local service). The key is a 32-byte Ed25519 seed,
 the same form as the game's identity file; --key picks the file.
 
 Needs the `cryptography` package for Ed25519.
