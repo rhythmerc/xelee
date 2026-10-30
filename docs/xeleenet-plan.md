@@ -636,8 +636,9 @@ built 2026-10-28, see the commits on `feat/xelee-net`):
 
 1. **STUN** (`net_stun.c`): a binding request and response codec (RFC 5389;
    tested against RFC 5769's sample) and our LAN address (the source address
-   on the route out). Two servers by default (Google, Cloudflare;
-   `MELEE_XN_STUN` overrides, `off` skips). If the two see different ports,
+   on the route out). Two servers by default (ours at xn.xelee.net,
+   then Google; Cloudflare if one doesn't resolve; `MELEE_XN_STUN`
+   overrides, `off` skips). If the two see different ports,
    the NAT maps per destination, and the log says direct guest links will
    likely fail.
 2. **Service client** (`xeleenet.c`): sign in, host (and heartbeat every 2 s

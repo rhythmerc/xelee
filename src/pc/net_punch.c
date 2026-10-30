@@ -25,7 +25,10 @@ extern const char* pc_get_net_name(void);
 #define HOST_WAIT_MS 20000 /* a guest that cannot reach the host cannot play */
 #define SWITCH_LEAD 90     /* frames between naming the switch and making it */
 
-#define DEFAULT_STUN "stun.l.google.com:19302,stun.cloudflare.com:3478"
+/* The first two that resolve are asked (two, to see whether the NAT maps
+ * each destination to its own port). Ours first (tools/xeleenet -stun);
+ * the public ones cover a gap. MELEE_XN_STUN overrides; "off" skips. */
+#define DEFAULT_STUN "xn.xelee.net:3478,stun.l.google.com:19302,stun.cloudflare.com:3478"
 
 /* ---- wire ------------------------------------------------------------------
  * Every punch datagram is a head, a fixed body per type, and the sender's
