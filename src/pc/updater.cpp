@@ -376,7 +376,7 @@ std::string select_best_asset(const std::vector<Asset>& assets, std::string& out
     const std::string arch(architecture);
     if (platform == "Linux") {
         const std::string linux_arch = architecture == "arm64" ? "aarch64" : arch;
-        names = {"Melee-" + linux_arch + ".AppImage", "melee-linux-" + linux_arch + ".tar.gz"};
+        names = {"Xelee-" + linux_arch + ".AppImage", "xelee-linux-" + linux_arch + ".tar.gz"};
     } else if (platform == "Windows" || platform == "macOS") {
         names = {"Melee-" + std::string(platform) + "-" + arch + ".zip"};
     } else if (platform == "Quest") {

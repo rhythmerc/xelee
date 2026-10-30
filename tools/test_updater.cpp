@@ -26,20 +26,20 @@ int main(int argc, char**) {
     assert(select_best_asset({}, url, size).empty());
     assert(url.empty() && size == 0);
 #if defined(__linux__) && defined(__x86_64__)
-    std::vector<Asset> incompatible{{"Melee-aarch64.AppImage", "arm", 1}};
+    std::vector<Asset> incompatible{{"Xelee-aarch64.AppImage", "arm", 1}};
     assert(select_best_asset(incompatible, url, size).empty());
 #endif
     const std::vector<Asset> releases{
-        {"Melee-aarch64.AppImage", "linux-arm", 10},
+        {"Xelee-aarch64.AppImage", "linux-arm", 10},
         {"Melee-Windows-arm64.zip", "windows-arm", 20},
         {"Melee-macOS-arm64.zip", "mac-arm", 30},
-        {"Melee-x86_64.AppImage", "linux-x86", 40},
+        {"Xelee-x86_64.AppImage", "linux-x86", 40},
         {"Melee-Windows-x86_64.zip", "windows-x86", 50},
         {"Melee-macOS-x86_64.zip", "mac-x86", 60},
         {"Melee-Android-arm64.apk", "android", 70},
         {"Melee-iOS-arm64.ipa", "ios", 80},
         {"Xelee-Quest-arm64.apk", "quest", 100},
-        {"melee-linux-x86_64.tar.gz", "tar", 90},
+        {"xelee-linux-x86_64.tar.gz", "tar", 90},
     };
     struct Case {
         const char* platform;
@@ -58,9 +58,9 @@ int main(int argc, char**) {
     }
     assert(select_best_asset(releases, url, size, "Linux", "riscv64").empty());
     assert(url.empty() && size == 0);
-    const std::vector<Asset> checksums{{"Melee-x86_64.AppImage.sha256", "checksum", 1}};
-    const std::vector<Asset> tarball{{"melee-linux-x86_64.tar.gz", "tar", 90}};
-    const std::vector<Asset> missing_url{{"Melee-x86_64.AppImage", "", 40}};
+    const std::vector<Asset> checksums{{"Xelee-x86_64.AppImage.sha256", "checksum", 1}};
+    const std::vector<Asset> tarball{{"xelee-linux-x86_64.tar.gz", "tar", 90}};
+    const std::vector<Asset> missing_url{{"Xelee-x86_64.AppImage", "", 40}};
     assert(select_best_asset(checksums, url, size, "Linux", "x86_64").empty());
     assert(select_best_asset(tarball, url, size, "Linux", "x86_64") == tarball[0].name);
     assert(select_best_asset(missing_url, url, size, "Linux", "x86_64").empty());

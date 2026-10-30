@@ -1,9 +1,10 @@
 name: Quest
 
-# Xelee's builds: the Meta Quest mixed-reality APK. A push to main builds and
-# keeps it as an artifact; a v* tag on main also publishes it as a GitHub
-# release, which the Quest launcher's updater installs from
-# (src/pc/updater.cpp looks for Xelee-Quest-arm64.apk).
+# Xelee's builds: the Meta Quest mixed-reality APK and the Linux x86-64
+# AppImage (Steam Deck and desktop). A push to main builds and keeps them as
+# artifacts; a v* tag on main also publishes them as a GitHub release, which
+# the launchers' updater installs from (src/pc/updater.cpp looks for
+# Xelee-Quest-arm64.apk, Xelee-x86_64.AppImage and xelee-linux-x86_64.tar.gz).
 on:
   push:
     branches: [main]
@@ -112,9 +113,68 @@ jobs:
           path: dist/Xelee-Quest-arm64.apk
           if-no-files-found: error
 
+  linux:
+    name: Linux AppImage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # build.yml's linux job, plus ccache. SDL3 is not in Ubuntu 24.04,
+          # so aurora builds it from source (AURORA_SDL3_PROVIDER=vendor);
+          # these are its X11/Wayland/audio deps.
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build cmake pkg-config ccache \
+            libssl-dev libcurl4-openssl-dev zip file desktop-file-utils \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxfixes-dev libxss-dev libxkbcommon-dev libxtst-dev \
+            libwayland-dev wayland-protocols libdecor-0-dev \
+            libasound2-dev libpulse-dev libdbus-1-dev libudev-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libgbm-dev \
+            libusb-1.0-0-dev
+
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: linux-ccache-${{ github.sha }}
+          restore-keys: linux-ccache-
+
+      - name: Build AppImage
+        env:
+          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
+          MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
+          XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
+        run: |
+          # The quest job checks the secrets a release needs.
+          ccache --zero-stats
+          tools/package_linux.sh
+          ccache --show-stats
+
+      - name: Smoke test (disc-free subset)
+        run: python3 tools/smoke_test.py --no-disc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xelee-linux
+          path: |
+            dist/Xelee-x86_64.AppImage
+            dist/xelee-linux-x86_64.tar.gz
+          if-no-files-found: error
+
   release:
     name: Publish release
-    needs: quest
+    needs: [quest, linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
@@ -125,6 +185,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: xelee-quest
+          path: artifacts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: xelee-linux
           path: artifacts
 
       - name: Publish
@@ -139,4 +204,6 @@ jobs:
             --notes-file .github/QUEST_RELEASE_NOTES.md \
             --generate-notes \
             ${prerelease} \
-            artifacts/Xelee-Quest-arm64.apk
+            artifacts/Xelee-Quest-arm64.apk \
+            artifacts/Xelee-x86_64.AppImage \
+            artifacts/xelee-linux-x86_64.tar.gz

@@ -135,8 +135,8 @@ jobs:
         with:
           name: linux-${{ matrix.arch }}
           path: |
-            dist/Melee-${{ matrix.arch }}.AppImage
-            dist/melee-linux-${{ matrix.arch }}.tar.gz
+            dist/Xelee-${{ matrix.arch }}.AppImage
+            dist/xelee-linux-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
   windows:

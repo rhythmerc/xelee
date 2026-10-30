@@ -121,7 +121,7 @@ The release artifacts are produced by the same scripts CI runs
 (`.github/workflows/build.yml`), so they work locally too.
 
 ```sh
-tools/package_linux.sh      # dist/Melee-<arch>.AppImage + melee-linux-<arch>.tar.gz
+tools/package_linux.sh      # dist/Xelee-<arch>.AppImage + xelee-linux-<arch>.tar.gz
 tools/package_windows.sh    # dist/Melee-Windows-<arch>.zip
 tools/package_macos.sh      # dist/Melee-macOS-<arch>.zip (Melee.app)
 tools/build_android.sh      # dist/Melee-Android-arm64.apk (signed release)

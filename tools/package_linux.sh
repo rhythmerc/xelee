@@ -18,7 +18,7 @@ esac
 # default; set AURORA_SDL3_PROVIDER=system where a system SDL3 exists.
 SDL3_PROVIDER="${AURORA_SDL3_PROVIDER:-vendor}"
 
-echo "=== Building Melee PC (Linux ${ARCH}) ==="
+echo "=== Building Xelee (Linux ${ARCH}) ==="
 cmake -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DAURORA_SDL3_PROVIDER="${SDL3_PROVIDER}" \
@@ -58,13 +58,21 @@ if [[ -n "${LIBUSB_PATH}" && -f "${LIBUSB_PATH}" ]]; then
 else
     echo "Warning: libusb-1.0.so.0 not found on host; AppImage will rely on host library"
 fi
+# Steam Audio, when the build has positional audio (cmake/SteamAudio.cmake):
+# named here so the AppImage cannot ship without it, as the binary needs it.
+if [[ -f "${BUILD_DIR}/libphonon.so" ]]; then
+    EXTRA_LINUXDEPLOY_ARGS+=("-l" "${BUILD_DIR}/libphonon.so")
+fi
 
 "${TOOLS_DIR}/linuxdeploy" \
     --appdir "${APPDIR}" \
     -e "${BUILD_DIR}/melee" \
-    -i "${ROOT_DIR}/platforms/linux/melee.png" \
-    -d "${ROOT_DIR}/platforms/linux/melee.desktop" \
+    -i "${ROOT_DIR}/platforms/linux/xelee.png" \
+    -d "${ROOT_DIR}/platforms/linux/xelee.desktop" \
     "${EXTRA_LINUXDEPLOY_ARGS[@]}"
+# linuxdeploy leaves a binary whose rpath starts with $ORIGIN (libphonon's)
+# unstripped, ~180MB of DWARF; ship it stripped, as in the tarball below.
+strip --strip-debug "${APPDIR}/usr/bin/melee"
 
 # Copy resources beside the binary
 cp -r "${ROOT_DIR}/resources" "${APPDIR}/usr/bin/resources"
@@ -72,10 +80,10 @@ gzip -dc "${ROOT_DIR}/tools/initial_pipeline_cache.db.gz" \
     > "${APPDIR}/usr/bin/initial_pipeline_cache.db"
 
 echo "=== Generating AppImage ==="
-ARCH="${ARCH}" "${TOOLS_DIR}/appimagetool" "${APPDIR}" "${DIST_DIR}/Melee-${ARCH}.AppImage"
+ARCH="${ARCH}" "${TOOLS_DIR}/appimagetool" "${APPDIR}" "${DIST_DIR}/Xelee-${ARCH}.AppImage"
 
 echo "=== Generating Portable Tarball ==="
-TAR_STAGE="${BUILD_DIR}/melee-linux-${ARCH}"
+TAR_STAGE="${BUILD_DIR}/xelee-linux-${ARCH}"
 rm -rf "${TAR_STAGE}"
 mkdir -p "${TAR_STAGE}"
 cp "${BUILD_DIR}/melee" "${TAR_STAGE}/"
@@ -84,8 +92,8 @@ strip --strip-debug "${TAR_STAGE}/melee"
 cp -r "${ROOT_DIR}/resources" "${TAR_STAGE}/"
 gzip -dc "${ROOT_DIR}/tools/initial_pipeline_cache.db.gz" \
     > "${TAR_STAGE}/initial_pipeline_cache.db"
-cp "${ROOT_DIR}/platforms/linux/melee.png" "${TAR_STAGE}/"
-cp "${ROOT_DIR}/platforms/linux/melee.desktop" "${TAR_STAGE}/"
+cp "${ROOT_DIR}/platforms/linux/xelee.png" "${TAR_STAGE}/"
+cp "${ROOT_DIR}/platforms/linux/xelee.desktop" "${TAR_STAGE}/"
 if [[ -n "${LIBUSB_PATH}" && -f "${LIBUSB_PATH}" ]]; then
     mkdir -p "${TAR_STAGE}/lib"
     cp -L "${LIBUSB_PATH}" "${TAR_STAGE}/lib/libusb-1.0.so.0"
@@ -105,7 +113,7 @@ exec "${HERE}/melee" "$@"
 APP_RUN
 chmod +x "${TAR_STAGE}/run.sh"
 
-tar -czf "${DIST_DIR}/melee-linux-${ARCH}.tar.gz" -C "${BUILD_DIR}" "melee-linux-${ARCH}"
+tar -czf "${DIST_DIR}/xelee-linux-${ARCH}.tar.gz" -C "${BUILD_DIR}" "xelee-linux-${ARCH}"
 
 echo "=== Packaging Complete ==="
 ls -lh "${DIST_DIR}"
