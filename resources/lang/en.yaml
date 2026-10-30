@@ -38,7 +38,7 @@ slippi:
   menu:
     online:
       label: Slippi
-      desc: Play over the internet with Slippi.
+      desc: 1v1 crossplay with Slippi players on PC. Fewer features, but active and competitive.
     tab: Slippi                      # over this menu and the sign-in pages
     login:
       label: Login
@@ -68,13 +68,13 @@ xeleenet:
   menu:
     online:
       label: XeleeNet
-      desc: Host or join a lobby of up to four players.
+      desc: "Xelee's own online play: 2-4 player lobbies, public or private, with stage picks and more."
       host:
         label: Host
-        desc: Open a lobby. Friends join with its code.
+        desc: Open a lobby, public or private.
       join:
         label: Join
-        desc: Type the code a friend's lobby shows.
+        desc: Browse public lobbies or join private lobbies by their join code.
       name:
         label: Name
         desc: You are {name}.            # {name} is NAME#TAG
@@ -88,7 +88,7 @@ xeleenet:
   # with no name yet. Its tab reads title.
   name:
     title: Name
-    ask_first: Pick a name for XeleeNet. Others see it, and it can repeat.
+    ask_first: Pick your public name for XeleeNet and LAN.
     ask: Your XeleeNet name.
 
   # Host (H1): the lobby's settings under the preset bar.
