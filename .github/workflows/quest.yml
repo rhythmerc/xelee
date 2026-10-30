@@ -85,6 +85,8 @@ jobs:
           MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
           # Where Send logs uploads (CMakeLists.txt, tools/log-drop).
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
+          # The XeleeNet lobby service (CMakeLists.txt, tools/xeleenet).
+          XELEENET_URL: ${{ vars.XELEENET_URL }}
         run: |
           # A release without them would say "Online login is not configured".
           if [[ "${GITHUB_REF_TYPE}" == tag && ( -z "${MELEE_SLIPPI_FIREBASE_KEY}" || -z "${MELEE_SLIPPI_GRAPHQL_ENDPOINT}" ) ]]; then
@@ -94,6 +96,9 @@ jobs:
           # Without it Send logs still saves the bundle as a file.
           if [[ "${GITHUB_REF_TYPE}" == tag && -z "${XELEE_LOGS_URL}" ]]; then
             echo "::warning::no XELEE_LOGS_URL secret: this release's Send logs saves files only"
+          fi
+          if [[ "${GITHUB_REF_TYPE}" == tag && -z "${XELEENET_URL}" ]]; then
+            echo "::warning::no XELEENET_URL variable: this release has no XeleeNet service"
           fi
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/26.3.11579264"
           export MELEE_XR_NDK_HOME="${ANDROID_HOME}/ndk/29.0.14206865"
