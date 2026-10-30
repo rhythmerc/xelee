@@ -1,0 +1,4 @@
+<rml><head><title>Credits</title><link type="text/rcss" href="credits.rcss" /></head>
+<body>
+<div id="screen"><div id="view"><div id="board"></div></div><div id="track"><div id="thumb"></div></div></div>
+</body></rml>

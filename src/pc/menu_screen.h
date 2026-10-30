@@ -55,6 +55,7 @@ extern const PcMenuScreen pc_controls_screen;
 extern const PcMenuScreen pc_graphics_screen;
 extern const PcMenuScreen pc_audio_screen;
 extern const PcMenuScreen pc_gameplay_screen;
+extern const PcMenuScreen pc_credits_screen;
 
 #ifdef __cplusplus
 }

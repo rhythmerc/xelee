@@ -59,6 +59,8 @@ static const PcOptionsPage mnPage_pages[] = {
     /* Rumble's (a controller): Rumble's switch is in Controls. */
     { SEL_SETTINGS_FIGHT, "Controls", "Choose what each button does in a fight.", { 1300, 1349, 1320 },
       &pc_controls_screen },
+    /* Language's (unused otherwise). Last: the list's end. */
+    { SEL_SETTINGS_CREDITS, "Credits", "Xelee credits.", { 1500, 1549, 1520 }, &pc_credits_screen },
 };
 
 static const PcOptionsPage* mnPage_ForRow(int row)

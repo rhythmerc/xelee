@@ -380,13 +380,14 @@ static AnimLoopSettings mn_803EB4C8[] = {
 };
 
 #ifdef TARGET_PC
-/* The stock rows' and two PC rows' (Place Stage, hidden, and Controls'):
+/* The stock rows' and three PC rows' (Place Stage, hidden, Controls' and
+ * Credits'):
  * each page's row gets the page's preview (mnPage_Previews, as the menu is
  * built). */
 static AnimLoopSettings mn_803EB4F8[] = {
     { 1300, 1349, 1320 }, { 1350, 1399, 1370 }, { 1400, 1449, 1420 },
     { 1450, 1499, 1470 }, { 1500, 1549, 1520 }, { 1550, 1599, 1570 },
-    { 1400, 1449, 1420 }, { 1300, 1349, 1320 },
+    { 1400, 1449, 1420 }, { 1300, 1349, 1320 }, { 1500, 1549, 1520 },
 };
 #else
 static AnimLoopSettings mn_803EB4F8[] = {
@@ -434,9 +435,9 @@ static u16 mn_803EB660[] = { 0x81, 0x82, 0x83, 0x84, 0x85, 0x00 };
 static u16 mn_803EB66C[] = { 0x86, 0x87, 0x88, 0x89, 0x8A, 0x00 };
 static u16 mn_803EB678[] = { 0x8E, 0x8F, 0x90, 0x91, 0x92, 0x00 };
 #ifdef TARGET_PC
-/* + Place Stage and Fight Controls, whose descriptions are literal
+/* + Place Stage, Controls and Credits, whose descriptions are literal
  * (mnOnline_Description) */
-static u16 mn_803EB684[] = { 0x9A, 0x9B, 0x9C, 0x9D, 0x9D, 0x9E, 0x9E, 0x9E };
+static u16 mn_803EB684[] = { 0x9A, 0x9B, 0x9C, 0x9D, 0x9D, 0x9E, 0x9E, 0x9E, 0x9E };
 #else
 static u16 mn_803EB684[] = { 0x9A, 0x9B, 0x9C, 0x9D, 0x9D, 0x9E };
 #endif
@@ -931,7 +932,7 @@ bool mn_80229938(MenuKind menu_kind, s32 selection)
     }
 #ifdef TARGET_PC
     /* Options shows its pages' rows (mnpage.c: Graphics, Audio, Gameplay,
-     * Controls) and no others: Rumble's switch is in Controls, Erase Data
+     * Controls, Credits) and no others: Rumble's switch is in Controls, Erase Data
      * and Place Stage are in Gameplay, and the Japanese language switch
      * means nothing here. */
     if (menu_kind == MENU_KIND_SETTINGS) {

@@ -315,6 +315,7 @@ set(PC_SOURCES
         src/pc/fight_menu.cpp
         src/pc/audio_menu.cpp
         src/pc/gameplay_menu.cpp
+        src/pc/credits_menu.cpp
         src/pc/graphics_menu.cpp
         src/pc/settings_page.cpp
         src/pc/slippi_menu.cpp

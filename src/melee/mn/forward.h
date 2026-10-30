@@ -237,6 +237,7 @@ typedef enum SettingsMenuSelection {
 #ifdef TARGET_PC
     SEL_SETTINGS_PLACE = 6, ///< PC, hidden: Place Stage is in Gameplay now
     SEL_SETTINGS_FIGHT = 7, ///< PC: Controls
+    SEL_SETTINGS_CREDITS = 8, ///< PC: Credits
 #endif
 } SettingsMenuSelection;
 

@@ -1,0 +1,24 @@
+/* Options > Credits (src/pc/credits_menu.cpp): a list in the Options pages'
+   gold line work (options-page.rcss), drawn into the native page's frame.
+   Laid out in px on a 1120x660 screen that the code scales into the frame;
+   the code places the rows and scrolls #board inside #view. */
+* { box-sizing: border-box; }
+body { width: 100%; height: 100%; margin: 0; font-family: "Noto Sans"; color: #f0f2f5; background-color: #00000000; }
+div, span { display: block; }
+#screen { position: absolute; left: 0; top: 0; width: 1120px; height: 660px; transform-origin: 0 0; }
+#view { position: absolute; left: 0; top: 0; width: 1120px; height: 660px; }
+#board { position: absolute; left: 0; top: 0; width: 1120px; }
+
+.group { position: absolute; height: 22px; }
+.group .rule { position: absolute; left: 0; right: 0; top: 11px; height: 2px; background-color: #f0c22660; }
+.group .label { position: absolute; left: 18px; top: 0; padding: 0 10px; font-size: 17px; letter-spacing: 3px; color: #c9b77c; background-color: #0a0906; }
+
+.row { position: absolute; border: 3px #f0c22690; border-radius: 7px; background-color: #0c0b08e0; }
+.row .name { position: absolute; left: 22px; top: 6px; font-size: 23px; font-weight: bold; color: #fff8e0; }
+.row .by { position: absolute; right: 22px; top: 9px; text-align: right; font-size: 19px; color: #c9b77c; }
+.row.cursor { border-color: #fff4c4; background-color: #1d180af0; box-shadow: #ffb020e0 0px 0px 14px 3px; }
+.row.cursor .by { color: #f0e4b8; }
+
+/* Where the list is, beside it. */
+#track { position: absolute; top: 0; width: 6px; border-radius: 3px; background-color: #2a251a; }
+#thumb { position: absolute; left: 0; width: 6px; border-radius: 3px; background-color: #f0c226; }
