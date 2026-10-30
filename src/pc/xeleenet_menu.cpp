@@ -308,9 +308,20 @@ PcXnListing sample(const char* code, const char* name, const char* host, const c
     return x;
 }
 
+// tools/xn_preview.py's css-2, css-3 and css-4: a full lobby of that many
+// seats, else 0. Read from the environment, as the CSS asks before this
+// file's first update.
+int preview_full_seats() {
+    const char* p = std::getenv("MELEE_XN_PREVIEW");
+    if (p == nullptr || std::strncmp(p, "css-", 4) != 0 || p[4] < '2' || p[4] > '4' || p[5] != '\0')
+        return 0;
+    return p[4] - '0';
+}
+
 // The punch's view, or the preview's: three players, one still connecting.
+// css-N: N players, all in, one with a name at the service's cap (12).
 void view(PcXnPunchView* v) {
-    if (s_preview.empty()) {
+    if (s_preview.empty() && std::getenv("MELEE_XN_PREVIEW") == nullptr) {
         pc_xn_punch_view(v);
         return;
     }
@@ -319,13 +330,15 @@ void view(PcXnPunchView* v) {
     v->host = s_preview == "banner" || s_preview == "lan-banner" || s_preview.rfind("css-", 0) == 0;
     std::snprintf(v->code, sizeof v->code, "K7MQ2D");
     const char* names[3] = {"PIXEL#3MPA", "KOOPA#Z2RW", "RHYTHM#K7Q2"};
-    for (int i = 0; i < 3; i++) {
+    const char* full_names[4] = {"RHYTHM#K7Q2", "WAVEDASH KID#3MPA", "PIXEL#Z2RW", "KOOPA#8HJD"};
+    const int full = preview_full_seats();
+    v->nplayers = full ? full : 3;
+    for (int i = 0; i < v->nplayers; i++) {
         v->players[i].port = i;
-        std::snprintf(v->players[i].name, sizeof v->players[i].name, "%s", names[i]);
-        v->players[i].local = i == 2;
-        v->players[i].linked = i != 1;
+        std::snprintf(v->players[i].name, sizeof v->players[i].name, "%s", full ? full_names[i] : names[i]);
+        v->players[i].local = i == (full ? 0 : 2);
+        v->players[i].linked = full || i != 1;
     }
-    v->nplayers = 3;
 }
 
 // ---- the screens --------------------------------------------------------------
@@ -353,6 +366,19 @@ int s_what = PC_XN_MENU_HOST;
 // service (docs/lan-lobbies-plan.md). Their text is LAN's where it differs
 // (xeleenet.lan.*, the language overlay pc_xn_set_network sets).
 bool lan() { return pc_xn_network() == PC_XN_NET_LAN; }
+
+// The lobby's seats: the host's own settings, a guest's listing of them (the
+// last one known, should it lapse: the CSS lays its doors out by this on
+// every player), or 4 when never known.
+int lobby_seats(bool host) {
+    static int known;
+    PcXnListing info{};
+    if (host)
+        return s_host.seats;
+    if (pc_xn_lobby_info(&info) && info.seats)
+        known = info.seats;
+    return known ? known : 4;
+}
 // An address typed on LAN's keypad (after the code's '@'): four numbers.
 bool address_ok(const std::string& a) {
     return std::count(a.begin(), a.end(), '.') == 3 && a.front() != '.' && a.back() != '.' &&
@@ -1596,7 +1622,7 @@ struct Banner {
             code = s_preview == "lan-banner" ? "192.168.0.57" : pc_xn_lan_address(addr, sizeof addr) ? addr : "";
         else if (host && s_host.hide_code)
             code = "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2 \xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2";
-        const int seats = host ? s_host.seats : known && info.seats ? info.seats : 4;
+        const int seats = lobby_seats(host);
         // The CSS's Ready, while it keeps telling it.
         const bool css = s_css_at != 0 && SDL_GetTicks() - s_css_at < 500;
         const auto bits = [](unsigned m) { return __builtin_popcount(m & 15u); };
@@ -1654,11 +1680,14 @@ struct Banner {
         std::string r;
         if (css) {
             const float k = d.y / 720.f;
+            // The lobby's seats' doors stand centred (mncharsel.c moves them).
+            const int seats = s_css.seats >= 2 && s_css.seats <= 4 ? s_css.seats : 4;
+            const float shift = (4 - seats) * kDoorPitch / 2;
             for (int i = 0; i < 4; i++) {
                 const unsigned bit = 1u << i;
                 if (!(s_css.humans & bit))
                     continue;
-                const float x = css_zoom(kDoorX0 + i * kDoorPitch) * d.x, w = kDoorW * PC_XN_CSS_ZOOM * d.x;
+                const float x = css_zoom(kDoorX0 + i * kDoorPitch + shift) * d.x, w = kDoorW * PC_XN_CSS_ZOOM * d.x;
                 const float y = css_zoom(kDoorY0) * d.y, h = kDoorH * PC_XN_CSS_ZOOM * d.y;
                 std::string tag;
                 if (s_css.ready & bit) {
@@ -2273,7 +2302,11 @@ extern "C" void pc_xn_menu_update(void) {
         if (css_preview && !s_banner.shown) {
             const char* boot = std::getenv("MELEE_BOOT_SCENE");
             if (boot != nullptr && std::strcmp(boot, "css") == 0 && SDL_GetTicks() > 6000) {
-                preset(kDoubles); // three players of four
+                // Three players of four; css-N: 1v1, three free for all, Doubles.
+                const int full = preview_full_seats();
+                preset(full == 2 ? kOneVsOne : full == 3 ? kFreeForAll : kDoubles);
+                if (full == 3)
+                    s_host.preset = kCustom, s_host.seats = 3;
                 s_banner.show(true);
                 frame_size_for_overlays();
             }
@@ -2313,7 +2346,39 @@ extern "C" void pc_xn_css_frame(const PcXnCssState* state) {
     else if (s_preview == "css-left") {
         sample(0x3, 0, 0x3, 0, -1, 0);
         pc_xn_css_left("KOOPA");
+    } else if (const int full = preview_full_seats()) {
+        const uint8_t all = uint8_t((1u << full) - 1);
+        sample(all, 0x2, all, 0, -1, 0);
     }
+}
+
+extern "C" int pc_xn_css_seats(void) {
+    // tools/xn_preview.py: css-N has N seats, the other CSS states Doubles'.
+    if (std::getenv("MELEE_XN_PREVIEW") != nullptr)
+        return preview_full_seats() ? preview_full_seats() : 4;
+    PcXnPunchView v;
+    view(&v);
+    return lobby_seats(v.host);
+}
+
+extern "C" unsigned pc_xn_css_names(char names[4][16], int* local) {
+    PcXnPunchView v;
+    view(&v);
+    unsigned named = 0;
+    *local = -1;
+    for (int i = 0; i < v.nplayers && i < 4; i++) {
+        const int port = v.players[i].port;
+        if (port < 0 || port > 3)
+            continue;
+        const char* hash = std::strchr(v.players[i].name, '#');
+        const int len = hash != nullptr ? int(hash - v.players[i].name) : int(std::strlen(v.players[i].name));
+        std::snprintf(names[port], 16, "%.*s", len, v.players[i].name);
+        if (names[port][0] != '\0')
+            named |= 1u << port;
+        if (v.players[i].local)
+            *local = port;
+    }
+    return named;
 }
 
 extern "C" void pc_xn_css_left(const char* name) {

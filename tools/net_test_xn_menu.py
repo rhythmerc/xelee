@@ -501,6 +501,56 @@ def css_b_hold(insts, shots):
     return True
 
 
+# Melee's door layout (mncharsel.c): door 0's team button and the doors'
+# spacing, in the hand's world units. A lobby of fewer than four seats moves
+# its doors right by half a spacing a missing seat ("css: N seats").
+TEAM_BTN_X = (-26.8, -21.0)
+TEAM_BTN_Y = (-5.8, -1.0)
+DOOR_PITCH = 15.4
+HAND_SPEED = 1.24  # units a frame of a held direction (CSS_FIRST, CSS_STEP)
+
+
+def teams_scenario(insts, shots):
+    """--scenario teams: Teams in a lobby of fewer seats than four, so the
+    doors stand moved. The host's hand goes to its own door's team button,
+    where the door is drawn, and A turns the team over on every player. The
+    hand is steered by where the game says each A landed ("css: P1 A at")."""
+    host = insts[0]
+    m = nt.re.search(r"css: (\d) seats", host.text())
+    seats = int(m.group(1)) if m else 4
+    dx = (4 - seats) * DOOR_PITCH / 2
+    tx, ty = (TEAM_BTN_X[0] + TEAM_BTN_X[1]) / 2 + dx, (TEAM_BTN_Y[0] + TEAM_BTN_Y[1]) / 2
+    print(f"net_test_xn_menu: {seats} seats; P1's team button at {tx:.1f} {ty:.1f}", flush=True)
+    nt.settle(insts, nt.MENU_SETTLE)
+    turned = lambda i: nt.count(i, r"css: P1's team \d")
+    for attempt in range(12):
+        nt.press((host,), "X", 4, 0.6)
+        if turned(host):
+            break
+        at = nt.re.findall(r"css: P1 A at (-?[\d.]+) (-?[\d.]+)", host.text())
+        if not at:
+            print("FAIL: the host's A was never seen on the CSS")
+            return False
+        x, y = float(at[-1][0]), float(at[-1][1])
+        print(f"net_test_xn_menu: A at {x:.1f} {y:.1f}", flush=True)
+        for d, plus, minus in ((tx - x, "Right", "Left"), (ty - y, "Up", "Down")):
+            frames = round(abs(d) / HAND_SPEED)
+            if frames > 0:
+                nt.press((host,), plus if d > 0 else minus, frames, 0.4)
+    else:
+        shot(host, shots, "9t-team-missed")
+        print("FAIL: A on the moved door's team button never turned its team")
+        return False
+    time.sleep(1.5)
+    shot(host, shots, "9t-team-turned")
+    lines = [nt.re.findall(r"css: P1's team \d", i.text()) for i in insts]
+    print(f"net_test_xn_menu: {lines[0][-1]} after {attempt + 1} A press(es)", flush=True)
+    if any(t != lines[0] for t in lines):
+        print(f"FAIL: the players disagree on the team: {lines}")
+        return False
+    return True
+
+
 def leave_host_alone(host, shots):
     """The host alone in its lobby holds B (a Quest find, 2026-10-29): with no
     session yet, the lobby still closes, and the host lands on the XeleeNet
@@ -530,9 +580,9 @@ def leave_host_alone(host, shots):
 COMPETITIVE = sum(1 << b for b in (24, 25, 26, 4, 5, 7))  # xeleenet_menu.cpp kCompetitive
 
 
-def set_rules(ident, seats):
+def set_rules(ident, seats, teams=False):
     with open(os.path.join(ident, "xeleenet-lobby.txt"), "w") as f:
-        f.write(f"preset=3\nname=Set test\nopen=1\nseats={seats}\nteams=0\nstock=0\nstocks=4\n"
+        f.write(f"preset=3\nname=Set test\nopen=1\nseats={seats}\nteams={int(teams)}\nstock=0\nstocks=4\n"
                 f"minutes=1\nitems=-1\nff=0\nhandicap=0\ndamage=10\npause=0\nstages={COMPETITIVE}\n"
                 f"frozen=1\nhide=0\n")
 
@@ -608,8 +658,8 @@ def run(args):
     for k, name in enumerate(names):
         ident = os.path.join(args.work, f"{name}.id")
         os.makedirs(ident)
-        if args.scenario == "set" and k == 0:
-            set_rules(ident, args.players)
+        if args.scenario in ("set", "teams") and k == 0:
+            set_rules(ident, args.players, teams=args.scenario == "teams")
         env = {
             "MELEE_XN_URL": args.url,
             "MELEE_XN_NAME": NAMES[k],
@@ -638,7 +688,7 @@ def run(args):
         shot(host, shots, "2-xeleenet-menu")
         walk(host, [("X", 7)])
         time.sleep(1.5)
-        if args.players > 2 and args.scenario != "set":  # set: its rules file has the seats
+        if args.players > 2 and args.scenario not in ("set", "teams"):  # their rules file has the seats
             nt.press((host,), "Right", 7, 0.6)  # Preset: 1v1 (2 seats) -> Doubles (4)
         shot(host, shots, "3-host-page")
         nt.press((host,), "Return", 9, 1.0)  # START: open the lobby
@@ -704,6 +754,12 @@ def run(args):
             return False
         time.sleep(4)
         shot(host, shots, "9-css")
+        # The doors' layout feeds the hand's tests: every player must have it.
+        seats = [nt.re.findall(r"css: (\d) seats", i.text())[-1:] for i in insts]
+        print(f"net_test_xn_menu: CSS seats {seats}", flush=True)
+        if len({tuple(v) for v in seats}) != 1 or not seats[0]:
+            print("FAIL: the players laid the doors out for different seats")
+            return False
         if args.scenario == "ready":
             if not ready_scenario(insts, shots):
                 return False
@@ -714,6 +770,8 @@ def run(args):
             ok = leave_host(insts, shots)
             return ok
         if args.scenario == "css-b-hold" and not css_b_hold(insts, shots):
+            return False
+        if args.scenario == "teams" and not teams_scenario(insts, shots):
             return False
         if args.scenario != "ready" and not drive_css(insts):
             print("FAIL: no CSS pick reached the SSS")
@@ -777,7 +835,7 @@ def main():
     ap.add_argument("--block", default="")
     ap.add_argument("--scenario", default="",
                     choices=("", "sss-host-b", "ready", "leave-guest", "leave-host", "sss-repick", "sss-timeout",
-                             "sss-same", "css-b-hold", "leave-host-alone", "set"),
+                             "sss-same", "css-b-hold", "leave-host-alone", "set", "teams"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
@@ -787,7 +845,9 @@ def main():
                          "sss-same: everyone picks Battlefield, no draw; "
                          "css-b-hold: B held over the grid leaves the token and the pick alone; "
                          "leave-host-alone: the host alone holds B and leaves its lobby; "
-                         "set: 1-minute matches, the results, back to the CSS and a rematch")
+                         "set: 1-minute matches, the results, back to the CSS and a rematch; "
+                         "teams: Teams with a seat per player (doors moved unless 4), the host turns "
+                         "its team on its door's button")
     ap.add_argument("--join-shots", action="store_true", help="shots every 0.35 s through the first join")
     ap.add_argument("--url", default="", help="a running service instead of a local wrangler dev")
     ap.add_argument("--net", choices=("service", "lan"), default="service",

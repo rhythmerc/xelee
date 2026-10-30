@@ -124,26 +124,46 @@ is in `resources/lang/en.yaml` (943161cc).
 The web build waits on WebRTC (browsers can't punch UDP); per-client cameras
 are planned and deferred (`docs/client-camera-plan.md`).
 
-## Queued: the CSS cards (after LAN L2, 2026-10-29)
+## The CSS cards (built 2026-10-29)
 
-The user wants, in a lobby's CSS: the P1-P4 cards nudged down a little (room
-from the fighters' portraits), the cards of seats the lobby doesn't have
-hidden, and the rest centred. Found while scoping (MELEE_CSS_DUMP):
-- The CSS is one model of 173 joints. A card isn't a subtree: its emblem,
-  costume art, team colour, body, background, P indicator and sliders are
-  scattered joints (door 0: 46, 51, 56, 133, 41, 166, 61, 65, 64; door 1: 47,
-  52, 57, 141, 42, 168, 67, 71, 70), each to be offset every frame after its
-  animation.
-- Melee checks the hand against fixed coordinates: the card band is
-  `cursor->x10 < 0.2`; the team button is `CSSDoor.teambtn_left/right` with
-  y in (-5.8, -1); the CPU slider `mnCharSel_803F0EBC.cpubtn_*`. Moving cards
-  means mapping the hand back to Melee's layout for those tests (in
-  `mnCharSel_CursorThink`, after the move and clamp) and back again, without
-  moving the hand's drawing.
-- The name tags are SIS text placed per card; our tags, READY ribbons and
-  the leave ring use the fixed slots (`kDoorX0`, `kDoorPitch`).
-- Test: a Doubles run toggling teams on a moved card, name tags, and the
-  css-* previews at 2, 3 and 4 seats.
+In a lobby's CSS the doors of the seats the lobby has stand centred and the
+rest are hidden (2 seats: 2 doors, 3: 3, 4 unchanged), and each player's name
+is in their door's black box. The "nudge the cards down" idea was dropped.
+- **Moving the doors** (`cssXnCardsFrame`, mncharsel.c): a door isn't a
+  subtree of the CSS model, but its parts sit in groups of all four doors
+  under the root (MELEE_CSS_DUMP: 40 backgrounds, 45 emblems, 50 costumes,
+  55 team buttons, 60 sliders with joint 85, the black boxes, inside it; 86
+  KO stars, 111 tag lists, 132/140/148/156 door frames, 164 HMN plates).
+  Those groups, the name texts and the KO star texts move right by half a
+  door spacing (15.4) a missing seat, every frame in the camera's proc, the
+  last to run, after Melee's animations and writes: a value written since
+  last frame is the new original. Doors past the seats are hidden
+  (`cssHideDoor`, and their box's mesh object in joint 85).
+- **The hand**: Melee tests it against fixed places for the team and HMN/CPU
+  buttons; those tests take the hand back by the shift (`CSS_DOOR_X`). The
+  sliders and the name box test against joints, which moved with the doors.
+  Hands start under their own moved doors.
+- **The seats** come from the host's settings or a guest's listing
+  (`pc_xn_css_seats`), fixed for a CSS visit, never fewer than a seated port
+  needs. They feed the hand's tests, so every player must have the same:
+  each logs `css: N seats` and net_test_xn_menu checks they agree.
+- **Names** (`pc_xn_css_names`): "NAME" of "NAME#TAG" in the box's SIS text,
+  kerned, shrunk to fit its 160 units down to 62% of the size, then
+  narrowed down to 50% of the width (WAVEDASH KID fits there), then cut with
+  "...". Your own in your port's colour, the rest white. Characters Melee's
+  font lacks show as '?'; '$' is its full-width pair. VS Mode's box (the tag,
+  or the character's name) is untouched outside a lobby.
+- **The team button works in a lobby now**: the door loop's XeleeNet skip
+  (3ce227c4, for the HMN/CPU toggle) skipped it too; a Teams lobby couldn't
+  change teams at all. Only the team button runs there (any door's, as in
+  Melee).
+- The overlay's tags, READY ribbons and the leave ring follow the doors
+  (`PcXnCssState.seats`).
+- Tests: `tools/xn_preview.py css-2 css-3 css-4` (full lobbies, a 12-letter
+  name among them); `net_test_xn_menu.py --scenario teams` (Teams with a
+  seat a player: the host's hand is steered onto its moved door's team
+  button by the game's `css: P1 A at` lines, and every player must log the
+  same `css: P1's team`).
 
 ## Open follow-ups from XN1 and XN2
 

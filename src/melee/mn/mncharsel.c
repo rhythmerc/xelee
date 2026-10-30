@@ -22,14 +22,28 @@ bool mnCharSel_SlippiStartReady(void);
  * turn their cards to CPU. In a lobby the network fills every seated pad. */
 static bool cssXnPreviewSeat(int port)
 {
-    static int on = -1;
-    if (on < 0) {
+    static int seated = -1;
+    if (seated < 0) {
         const char* p = getenv("MELEE_XN_PREVIEW");
-        on = p != NULL && strncmp(p, "css-", 4) == 0;
+        seated = 0;
+        if (p != NULL && strncmp(p, "css-", 4) == 0) {
+            /* css-left: P3 has just left, so two seats. css-2, css-3 and
+             * css-4: a lobby of that many seats, all of them taken. */
+            seated = strcmp(p, "css-left") == 0 ? 2 : (p[4] >= '2' && p[4] <= '4' && p[5] == '\0') ? p[4] - '0' : 3;
+        }
     }
-    /* css-left: P3 has just left, so two seats. */
-    return on && port >= 0 && port < (strcmp(getenv("MELEE_XN_PREVIEW"), "css-left") == 0 ? 2 : 3);
+    return port >= 0 && port < seated;
 }
+
+/* XeleeNet's CSS cards (cssXnCardsFrame): the lobby's seats, fixed for a CSS
+ * visit, and how far right the doors of those seats move (world units) to
+ * stand centred, the rest hidden. Melee tests the hand against the doors'
+ * buttons at fixed places, so those tests take the hand back by as much
+ * (CSS_DOOR_X). */
+static int css_xn_seats = 4;
+static float css_xn_dx;
+#define CSS_DOOR_PITCH 15.4F /* the doors' spacing (MELEE_CSS_DUMP: joints 41-44) */
+#define CSS_DOOR_X(cursor) ((cursor)->xC - css_xn_dx)
 
 static bool cssOnline(int* local)
 {
@@ -43,6 +57,8 @@ static bool cssOnline(int* local)
     }
     return false;
 }
+#else
+#define CSS_DOOR_X(cursor) ((cursor)->xC)
 #endif
 
 #include <melee/ft/forward.h>
@@ -1364,7 +1380,12 @@ void mnCharSel_8025DB34(u8 arg0)
     mnCharSel_8025D5AC((int) arg0, 0, 1);
 
     /* Name display */
-    if (mnCharSel_803F0E8C[arg0].data->use_tag == 0 && (int) sel_icon < 0x19) {
+    if (mnCharSel_803F0E8C[arg0].data->use_tag == 0 && (int) sel_icon < 0x19
+#ifdef TARGET_PC
+        /* XeleeNet's box holds the player's name (cssXnCardsFrame). */
+        && !gmOnline_XnFlow()
+#endif
+    ) {
         mnCharSel_803F0E8C[arg0].data->text->default_kerning = 1;
         if (lbLang_IsSavedLanguageUS() != 0 && (int) sel_icon == 0x16) {
             HSD_SisLib_803A70A0(mnCharSel_803F0E8C[arg0].data->text, 0,
@@ -2530,7 +2551,7 @@ static inline void updateGrabbedSlider(struct CSSCursorData* cursor,
 /// Advances the door's team colour when the cursor clicks its team box.
 static inline void cycleTeam(struct CSSCursorData* cursor, CSSDoor* dp, s32 di)
 {
-    f32 cx5 = cursor->xC;
+    f32 cx5 = CSS_DOOR_X(cursor);
     if (cx5 > dp->teambtn_left && cx5 < dp->teambtn_right) {
         f32 cy5 = cursor->x10;
         if (cy5 < -0.9999999046325683 && cy5 > -5.800000095367432) {
@@ -2539,6 +2560,9 @@ static inline void cycleTeam(struct CSSCursorData* cursor, CSSDoor* dp, s32 di)
             mnCharSel_804D6CB0->vs.start.players[di].team = dp->team;
             mnCharSel_8025DB34((u8) di);
             sfxMove();
+#ifdef TARGET_PC
+            pc_log_line("css: P%d's team %d", (int) di + 1, dp->team);
+#endif
         }
     }
 }
@@ -2614,6 +2638,9 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
             {
                 if (cursor->x5 != 3) {
                     cursor->xC = (f32) ((15.0f * cursor->x4) - 31.0f);
+#ifdef TARGET_PC
+                    cursor->xC += css_xn_dx; /* under its door, moved */
+#endif
                     cursor->x10 = -21.5f;
                     cursor->xA = 0;
                     if (cursor->x5 == 1) {
@@ -3203,10 +3230,20 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                 /* A Slippi match is 1v1 between two humans:
                                  * no CPU fighters, no closing a slot. In
                                  * XeleeNet the roster sets the doors: an
-                                 * empty seat waits for a joiner. */
+                                 * empty seat waits for a joiner, and the
+                                 * name box holds the player's name. Only
+                                 * the team button works there. */
                                 {
                                     int unused;
-                                    if (cssOnline(&unused) || gmOnline_XnFlow()) {
+                                    if (cssOnline(&unused)) {
+                                        continue;
+                                    }
+                                    if (gmOnline_XnFlow()) {
+                                        if (mnCharSel_804D6CB0->vs.start.rules.is_teams == 1 &&
+                                            mnCharSel_803F0DFC.doors[door].p_kind != 3)
+                                        {
+                                            cycleTeam(cursor, &mnCharSel_803F0DFC.doors[door], door);
+                                        }
                                         continue;
                                     }
                                 }
@@ -3222,7 +3259,7 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                     if (tag_data->state != 0) {
                                         continue;
                                     }
-                                    cx4 = cursor->xC;
+                                    cx4 = CSS_DOOR_X(cursor);
                                     if (cx4 > mnCharSel_803F0DFC.doors[door]
                                                   .togglebtn_left &&
                                         cx4 < mnCharSel_803F0DFC.doors[door]
@@ -4779,6 +4816,9 @@ s32 mnCharSel_802640A0(void)
         cursor->x6 = 0;
         cursor->x5 = 2;
         cursor->xC = (f32) (gk_fmsubs(15.0f, (f32) i, 31.0f));
+#ifdef TARGET_PC
+        cursor->xC += css_xn_dx; /* under its door, moved */
+#endif
         cursor->x10 = -21.5f;
     }
 
@@ -5651,11 +5691,16 @@ static void cssXnCameraZoom(HSD_CObj* cobj)
     }
 }
 
+static void cssXnCardsFrame(void);
+
+/* The camera's proc is the last to run (priority 5): the cards are laid out
+ * here, after every animation and Melee's own writes, for the frame drawn. */
 static void cssXnCameraProc(HSD_GObj* gobj)
 {
     mn_8022BA1C(gobj);
     cssXnCameraZoom(GET_COBJ(gobj));
     css_xn_cobj = GET_COBJ(gobj);
+    cssXnCardsFrame();
 }
 
 /* Where port i's hand is on screen, as fractions of it (the overlay's ring
@@ -5785,6 +5830,10 @@ static bool cssXnReadyFrame(void)
         {
             pad->trigger &= ~HSD_PAD_B;
         }
+        /* Where A lands, for tools/net_test_xn_menu.py to steer a hand by. */
+        if ((pad->trigger & HSD_PAD_A) && mnCharSel_804A0BC0[i] != NULL) {
+            pc_log_line("css: P%d A at %.1f %.1f", i + 1, mnCharSel_804A0BC0[i]->xC, mnCharSel_804A0BC0[i]->x10);
+        }
         if (pad->trigger & HSD_PAD_START) {
             pad->trigger &= ~HSD_PAD_START;
             if (css_xn_ready & bit) {
@@ -5840,6 +5889,7 @@ static bool cssXnReadyFrame(void)
             st.waiting = css_xn_others >= CSS_XN_WAITING ? left : 0;
             st.countdown = css_xn_count;
             st.countdown_total = CSS_XN_COUNTDOWN;
+            st.seats = css_xn_seats;
             {
                 /* Only the one holding sees their hold: the ring and the notice. */
                 const int me = pc_net_active() ? pc_net_local_player() : 0;
@@ -5865,6 +5915,69 @@ static bool cssXnReadyFrame(void)
         }
     }
     return false;
+}
+
+/* XeleeNet's CSS cards: the doors of the lobby's seats, centred, and each
+ * player's name in their door's black box (where VS Mode shows a nametag or
+ * the character's name). A door isn't one subtree of the CSS model: its
+ * parts sit in these groups of all four doors, children of the root
+ * (MELEE_CSS_DUMP: the backgrounds, emblems, costumes, team buttons, the
+ * sliders with the black boxes (joint 85, inside 60), the KO stars, the tag
+ * lists, the four door frames and the HMN plates), so those move, and the
+ * doors past the seats are hidden. */
+static const u8 css_xn_groups[] = { 40, 45, 50, 55, 60, 86, 111, 132, 140, 148, 156, 164 };
+
+/* A value moved right every frame: animations and Melee's own code write the
+ * originals, so what was written since the last frame is the new original,
+ * and what's still ours keeps the one it came from. */
+typedef struct CssXnShift {
+    float base, seen;
+    bool set;
+} CssXnShift;
+static CssXnShift css_xn_group_shift[ARRAY_SIZE(css_xn_groups)];
+static CssXnShift css_xn_tag_shift[4], css_xn_star_shift[4];
+static char css_xn_name[4][16]; /* what each box was given; "" for none */
+
+static float cssXnShifted(CssXnShift* s, float now, float dx)
+{
+    if (!s->set || now != s->seen) {
+        s->base = now;
+    }
+    s->set = true;
+    s->seen = s->base + dx;
+    return s->seen;
+}
+
+/* Every visit: the lobby's seats, for as long as it lasts. A seat with a
+ * player in it is never one of those hidden. Every player works the same
+ * out (the host's settings, the guests' listing of them), as the hand's
+ * tests against the moved doors (CSS_DOOR_X) need. */
+static void cssXnCardsEnter(void)
+{
+    int k;
+    css_xn_seats = 4;
+    if (gmOnline_XnFlow()) {
+        css_xn_seats = pc_xn_css_seats();
+        for (k = 0; k < 4; k++) {
+            if (mnCharSel_804D6CB0->vs.start.players[k].slot_type == Gm_PKind_Human && k >= css_xn_seats) {
+                css_xn_seats = k + 1;
+            }
+        }
+        if (css_xn_seats < 2 || css_xn_seats > 4) {
+            css_xn_seats = 4;
+        }
+        pc_log_line("css: %d seats", css_xn_seats);
+        /* The KO stars' texts are made again for this visit (or not at all):
+         * none of the last visit's is left to move. */
+        for (k = 0; k < 4; k++) {
+            data2.ko_stars[k].text = NULL;
+        }
+    }
+    css_xn_dx = (4 - css_xn_seats) * CSS_DOOR_PITCH / 2;
+    memset(css_xn_group_shift, 0, sizeof css_xn_group_shift);
+    memset(css_xn_tag_shift, 0, sizeof css_xn_tag_shift);
+    memset(css_xn_star_shift, 0, sizeof css_xn_star_shift);
+    memset(css_xn_name, 0, sizeof css_xn_name);
 }
 #endif
 
@@ -5923,10 +6036,10 @@ void mnCharSel_Scene_OnEnter(void* arg0)
     mnCharSel_804D6CF4 = 0;
 #ifdef TARGET_PC
     {
-        /* tools/xn_preview.py's CSS states draw three players' tags: seat
-         * three humans, as a lobby would (VS. Mode's CSS has none seated). */
+        /* tools/xn_preview.py's CSS states draw their players' tags: seat
+         * them as humans, as a lobby would (VS. Mode's CSS has none seated). */
         int k;
-        for (k = 0; k < 3; k++) {
+        for (k = 0; k < 4; k++) {
             if (cssXnPreviewSeat(k)) {
                 mnCharSel_804D6CB0->vs.start.players[k].slot_type = Gm_PKind_Human;
             }
@@ -5943,6 +6056,7 @@ void mnCharSel_Scene_OnEnter(void* arg0)
             mnCharSel_803F0DFC.doors[k].team = mnCharSel_804D6CB0->vs.start.players[k].team;
         }
     }
+    cssXnCardsEnter();
 #endif
     mnCharSel_802640A0();
 #ifdef TARGET_PC
@@ -6147,6 +6261,164 @@ static void mnCharSel_HideOnlineRemote(void)
     cssHideDoor(remote);
     cssHideDoor(2);
     cssHideDoor(3);
+}
+
+/* A name in Melee's font: the SIS encoder (HSD_SisLib_803A67EC) takes
+ * letters, digits, space and most ASCII punctuation; '$' is spelled as its
+ * full-width pair, and what the font lacks (';' among them) shows as '?'.
+ * The first `n` characters, and "..." after them when `cut`. */
+static void cssXnSisName(const char* name, int n, bool cut, char* out, size_t cap)
+{
+    static const char ok[] = " \"',-.:#/+?!()*@%<>=[]&_";
+    size_t o = 0;
+    int i;
+    for (i = 0; i < n && o + 3 < cap; i++) {
+        char c = name[i];
+        if (c == '$') {
+            out[o++] = '\x81';
+            out[o++] = '\x90';
+        } else if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                   (c != '\0' && strchr(ok, c) != NULL))
+        {
+            out[o++] = c;
+        } else {
+            out[o++] = '?';
+        }
+    }
+    if (cut && o + 4 < cap) {
+        memcpy(out + o, "...", 3);
+        o += 3;
+    }
+    out[o] = '\0';
+}
+
+/* The width of a text's first line as its renderer lays it out (its scale
+ * included), in the units of its box: the measure the renderer takes for
+ * fitting (HSD_SisLib_803A84BC), from the line's own state. */
+static float cssXnNameWidth(HSD_Text* text)
+{
+    u8* line = fn_803A6FEC((u8*) text->sis_buffer, 0, NULL);
+    u8 kerning = text->kerning;
+    Vec2 spacing = text->x78;
+    f32 w = 0.0F, h;
+    if (line == NULL) {
+        return 0.0F;
+    }
+    text->kerning = text->default_kerning;
+    text->x78 = text->x3C;
+    HSD_SisLib_803A8134(line + 5, text, &w, &h);
+    text->kerning = kerning;
+    text->x78 = spacing;
+    return w;
+}
+
+/* The tag text's box is 160 wide (mnCharSel_802640A0), sized for Melee's
+ * four-letter tags: a longer name draws smaller to fit, down to FLOOR of the
+ * size, then narrower again down to NARROW of the width (Melee's own fitting
+ * narrows text), and past that it's cut short with "...". */
+#define CSS_XN_NAME_BOX 160.0F
+#define CSS_XN_NAME_FLOOR 0.62F
+#define CSS_XN_NAME_NARROW 0.5F
+
+static void cssXnSetName(HSD_Text* text, const char* name)
+{
+    char sis[64];
+    int n = (int) strlen(name);
+    float fit, sx, sy;
+    text->default_kerning = 1; /* proportional, as Melee's character names */
+    cssXnSisName(name, n, false, sis, sizeof sis);
+    HSD_SisLib_803A70A0(text, 0, "%s", sis);
+    HSD_SisLib_803A7548(text, 0, 1.0F, 1.0F);
+    fit = CSS_XN_NAME_BOX / cssXnNameWidth(text);
+    while (fit < CSS_XN_NAME_NARROW && n > 1) {
+        n--;
+        while (n > 1 && name[n - 1] == ' ') {
+            n--;
+        }
+        cssXnSisName(name, n, true, sis, sizeof sis);
+        HSD_SisLib_803A70A0(text, 0, "%s", sis);
+        fit = CSS_XN_NAME_BOX / cssXnNameWidth(text);
+    }
+    sy = fit > 1.0F ? 1.0F : fit < CSS_XN_NAME_FLOOR ? CSS_XN_NAME_FLOOR : fit;
+    sx = fit < sy ? fit : sy;
+    HSD_SisLib_803A7548(text, 0, sx, sy);
+}
+
+/* Once a frame, after every other proc (cssXnCameraProc): the seats' doors
+ * moved, the rest hidden, and the names in the boxes. Only drawing: nothing
+ * here feeds the simulation (the hand's tests take CSS_DOOR_X). */
+static void cssXnCardsFrame(void)
+{
+    /* Our own name in our port's colour; the others' white. */
+    static const GXColor port_color[4] = {
+        { 0xFF, 0x60, 0x60, 0xFF },
+        { 0x78, 0x9E, 0xFF, 0xFF },
+        { 0xFF, 0xD8, 0x40, 0xFF },
+        { 0x60, 0xE8, 0x78, 0xFF },
+    };
+    char names[4][16];
+    int local = -1;
+    unsigned named = pc_xn_css_names(names, &local);
+    int i;
+    if (css_xn_dx != 0.0F) {
+        for (i = 0; i < (int) ARRAY_SIZE(css_xn_groups); i++) {
+            HSD_JObj* jobj = NULL;
+            lb_80011E24(mnCharSel_804D6CC0, &jobj, css_xn_groups[i], -1);
+            if (jobj != NULL) {
+                float now = HSD_JObjGetTranslationX(jobj);
+                float x = cssXnShifted(&css_xn_group_shift[i], now, css_xn_dx);
+                if (x != now) {
+                    HSD_JObjSetTranslateX(jobj, x);
+                }
+            }
+        }
+    }
+    for (i = 0; i < 4 && i < (s32) mnCharSel_804D6CF5; i++) {
+        CSSTagData* td = mnCharSel_803F0E8C[i].data;
+        HSD_Text* stars = data2.ko_stars[i].text;
+        bool seat = i < css_xn_seats;
+        if (stars != NULL) {
+            stars->pos_x = cssXnShifted(&css_xn_star_shift[i], stars->pos_x, css_xn_dx);
+            if (!seat) {
+                stars->hidden = 1;
+            }
+        }
+        if (td == NULL || td->text == NULL) {
+            continue;
+        }
+        td->text->pos_x = cssXnShifted(&css_xn_tag_shift[i], td->text->pos_x, css_xn_dx);
+        if (!seat) {
+            cssHideDoor(i);
+        }
+        if (!seat || !(named & (1u << i)) || mnCharSel_803F0DFC.doors[i].p_kind == 3) {
+            td->text->hidden = 1;
+            continue;
+        }
+        if (strcmp(css_xn_name[i], names[i]) != 0) {
+            snprintf(css_xn_name[i], sizeof css_xn_name[i], "%s", names[i]);
+            cssXnSetName(td->text, css_xn_name[i]);
+        }
+        {
+            GXColor c = i == local ? port_color[i] : (GXColor) { 0xFF, 0xFF, 0xFF, 0xFF };
+            HSD_SisLib_803A74F0(td->text, 0, &c);
+        }
+        td->text->hidden = 0;
+    }
+    {
+        /* Joint 85 holds the four black boxes, one mesh object each: those
+         * past the seats go. */
+        HSD_JObj* boxes = NULL;
+        HSD_DObj* d;
+        int n = 0;
+        lb_80011E24(mnCharSel_804D6CC0, &boxes, 85, -1);
+        if (boxes != NULL && css_xn_seats < 4) {
+            for (d = HSD_JObjGetDObj(boxes); d != NULL; d = d->next, n++) {
+                if (n >= css_xn_seats) {
+                    HSD_DObjSetFlags(d, DOBJ_HIDDEN);
+                }
+            }
+        }
+    }
 }
 #endif
 

@@ -95,8 +95,14 @@ typedef struct PcXnCssState {
     int hold, hold_total; /* this player's B hold toward leaving (P4), in frames */
     bool hand_ok;         /* their hand on screen, as fractions of it */
     float hand_x, hand_y;
+    int seats; /* the doors shown, the lobby's seats: those of ports 0 to seats-1, centred */
 } PcXnCssState;
 void pc_xn_css_frame(const PcXnCssState* state);
+/* For the CSS's doors (mncharsel.c): the lobby's seats (2-4, 4 when not
+ * known), and each seated player's name ("NAME" of "NAME#TAG") in
+ * names[port], with bit `port` of the result set; *local is our own port. */
+int pc_xn_css_seats(void);
+unsigned pc_xn_css_names(char names[4][16], int* local);
 /* A player left the lobby (gmonlinemode.c): the notice slot says so for a few
  * seconds, through the CSS's reload. */
 void pc_xn_css_left(const char* name);
