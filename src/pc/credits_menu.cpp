@@ -39,6 +39,7 @@ const Credit kCredits[] = {
     {"XELEE", "Super Smash Bros. Melee", "Nintendo / HAL Laboratory",
      "Melee itself. Its art, sound and text come from your own disc."},
     {nullptr, "doldecomp/melee", "the decompilation's contributors", "The Melee decompilation Xelee is built on."},
+    {nullptr, "melee-pc", "999sian and contributors, GPL-3.0", "The PC port of Melee that Xelee is forked from."},
     {nullptr, "Aurora", "Luke Street, MIT", "GameCube graphics, input and audio on modern machines."},
     {nullptr, "Project Slippi", "the Slippi team", "Online play with Slippi players, and the replay format."},
     {nullptr, "Roomtone", "MIT", "Room light for the stage in mixed reality."},
