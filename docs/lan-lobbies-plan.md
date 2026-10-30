@@ -245,7 +245,29 @@ The plan as written:
    favour of `net_test_xn_menu.py --net lan`.
 4. `docs/netcode-plan.md` §8 points here.
 
-### L5 · Every scenario on LAN, and a real network (small)
+### L5 · Every scenario on LAN, and a real network (small) — desktop part done 2026-10-29
+
+Desktop, 3 players on LAN through the menus (`net_test_xn_menu.py --net lan`).
+Each of these scenarios passes:
+- `ready`, `leave-guest`, `leave-host`, `sss-host-b`, `sss-repick`,
+  `sss-timeout`, `sss-same`, `css-b-hold`, `leave-host-alone`;
+- L4's `set`.
+
+On the way:
+- **`ready`** was written for 2 players: its P2 was the last to ready, so
+  with 3 no countdown ever started. Every guest readies now, and the first
+  guest's B stops it.
+- **Blocked discovery:** `MELEE_NET_SIM_NO_MCAST` makes mDNS hear nothing,
+  as on a network that drops multicast. `--no-discovery` gives it to every
+  instance. Each guest's list must say discovery is blocked (logged once:
+  "xeleenet pages: LAN discovery blocked here"), and every guest joins by
+  typing 127.0.0.1. It passes.
+- **The LAN tab** (and Slippi's) went missing on the pages after the
+  sub-menu started drawing its own title. Fixed in `993afbc3`.
+
+Still to do: the acceptance on a real network, with the Quest and a PC on
+the home network hosting both ways.
+
 
 1. `net_test_xn_menu.py --net lan --scenario …` for `ready`, `leave-guest`,
    `leave-host`, `sss-host-b`, `sss-repick`, `sss-timeout` and `sss-same`.

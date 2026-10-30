@@ -20,7 +20,9 @@ and each instance has its own key (MELEE_XN_IDENTITY).
 --net lan does the same on LAN (docs/lan-lobbies-plan.md), with no service:
 Online Mode > LAN, the host's game is the lobby service, and the first
 guest joins by typing the address (127.0.0.1) on LAN's keypad instead of
-the code.
+the code. --no-discovery (LAN) runs every instance on a network that drops
+multicast (MELEE_NET_SIM_NO_MCAST): the list must say discovery is blocked,
+and every guest joins by address.
 """
 import argparse
 import os
@@ -133,8 +135,9 @@ def sss_loads(inst):
 def ready_scenario(insts, shots):
     """Ready on the CSS (P2 of docs/xeleenet-ready-plan.md): one player's
     START doesn't start; everyone's starts a countdown; a B in it stops it;
-    the stage select follows everyone's START, on every player."""
-    host, guest = insts[0], insts[1]
+    the stage select follows everyone's START, on every player. Any player
+    count: every guest readies, and the first guest's B stops it."""
+    host, guest, guests = insts[0], insts[1], insts[1:]
     nt.settle(insts, nt.MENU_SETTLE)
     for down in nt.CSS_ROWS[:2]:  # the first row's sweep often misses (drive_css)
         nt.press(insts, "Left+Up", nt.CSS_PIN, 1.2)
@@ -156,8 +159,8 @@ def ready_scenario(insts, shots):
     nt.press((host,), "Down", 40, 0.3)
     nt.press((host,), "Left", 22, 0.6)
     shot(host, shots, "9b-css-host-ready")
-    nt.press((guest,), "Return", 9, 0.5)
-    nt.press((guest,), "Z", 9, 3.5)  # inside the 2 s countdown
+    nt.press(guests, "Return", 9, 0.5)  # the last of them starts the countdown
+    nt.press((guest,), "Z", 9, 3.5)     # inside the 2 s countdown
     if [sss_loads(i) for i in insts] != before:
         print("FAIL: B in the countdown didn't stop it")
         return False
@@ -615,6 +618,8 @@ def run(args):
         }
         if args.block:
             env["MELEE_NET_SIM_BLOCK"] = args.block
+        if args.no_discovery:
+            env["MELEE_NET_SIM_NO_MCAST"] = "1"
         if args.scenario == "sss-repick" and k == 1:
             env["MELEE_NET_SIM_DELAY_MS"] = "80"  # P2's last change races P3's pick
         insts.append(nt.Instance(name, args.exe, args.disc, args.work, ports[k], 0, env, True))
@@ -655,12 +660,17 @@ def run(args):
             walk(g, to_menu + [("X", 7), ("Down", 7), ("X", 7)])
             time.sleep(2.5)
             shot(g, shots, f"5-lobbies-{g.name}")
-            if k == 0 and lan:
+            if args.no_discovery and not g.wait_log(r"xeleenet pages: LAN discovery blocked", 20):
+                print(f"[{g.name}] FAIL: the list never said discovery is blocked")
+                return False
+            if args.no_discovery:
+                shot(g, shots, f"5-blocked-{g.name}")
+            if (k == 0 or args.no_discovery) and lan:
                 # The first guest joins by address: X opens LAN's keypad.
                 nt.press((g,), "C", 7, 1.0)
-                shot(g, shots, "6-join-address")
+                shot(g, shots, f"6-join-address-{g.name}")
                 type_code(g, "127.0.0.1", address_keypad())
-                shot(g, shots, "7-join-address-typed")
+                shot(g, shots, f"7-join-address-typed-{g.name}")
                 nt.press((g,), "Return", 9, 0.4)
             elif k == 0:
                 # The first guest types the code: Y opens the keypad (J1).
@@ -782,6 +792,8 @@ def main():
     ap.add_argument("--url", default="", help="a running service instead of a local wrangler dev")
     ap.add_argument("--net", choices=("service", "lan"), default="service",
                     help="lan: Online Mode > LAN, no service")
+    ap.add_argument("--no-discovery", action="store_true",
+                    help="LAN on a network that drops multicast: every guest joins by address")
     ap.add_argument("--exe", default=os.path.join(HERE, "..", "build", "linux", "melee"))
     ap.add_argument("--disc", default=os.path.expanduser(
         "~/Downloads/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).iso"))
@@ -789,6 +801,8 @@ def main():
     ap.add_argument("--work", default=os.path.join(HERE, "..", "build", "net_test_xn_menu"))
     ap.add_argument("--shots", default="")
     args = ap.parse_args()
+    if args.no_discovery and args.net != "lan":
+        ap.error("--no-discovery is a LAN run (--net lan)")
     service = None
     if not args.url and args.net == "service":
         proc, args.url, state = test_service.start_wrangler(short=False)

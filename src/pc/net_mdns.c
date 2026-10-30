@@ -63,6 +63,10 @@ static char s_self_ip[46] = "0.0.0.0";
 static Held s_held[PC_MDNS_RECORDS];
 static int s_n;
 static bool s_heard;
+/* MELEE_NET_SIM_NO_MCAST: a network that drops multicast (hotel and campus
+ * Wi-Fi). The sockets open and send, and nothing is ever heard, not even our
+ * own query; tests the blocked state and Join by address. */
+static bool s_sim_blocked;
 static uint64_t s_opened, s_announced, s_queried;
 static uint32_t s_rx[1024]; /* mdns.h wants 32-bit aligned buffers */
 static uint32_t s_tx[1024];
@@ -331,6 +335,9 @@ static int on_record(int sock, const struct sockaddr* from, size_t addrlen, mdns
     uint16_t rtype, uint16_t rclass, uint32_t ttl, const void* data, size_t size, size_t name_offset,
     size_t name_length, size_t record_offset, size_t record_length, void* ud) {
     (void)addrlen, (void)query_id, (void)rclass, (void)name_length, (void)ud;
+    if (s_sim_blocked) {
+        return 0;
+    }
     char namebuf[256];
     mdns_string_t name = mdns_string_extract(data, size, &name_offset, namebuf, sizeof namebuf);
     const size_t slen = strlen(s_service);
@@ -407,6 +414,10 @@ bool pc_mdns_open(const char* service) {
         return s_sock4 >= 0 || s_sock6 >= 0;
     }
     s_open = true;
+    s_sim_blocked = getenv("MELEE_NET_SIM_NO_MCAST") != NULL;
+    if (s_sim_blocked) {
+        pc_log_line("mdns: MELEE_NET_SIM_NO_MCAST: hearing nothing");
+    }
     pc_android_multicast_lock_acquire(); /* Android filters mDNS answers without it */
 #if defined(_WIN32)
     WSADATA wsa;

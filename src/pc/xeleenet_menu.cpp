@@ -427,6 +427,7 @@ struct Screen : Rml::EventListener {
     int fetch = 0; // 0 fetching, 1 have rows, -1 failed
     uint64_t fetchedAt = 0, fetchAsked = 0;
     uint64_t lookFrom = 0; // LAN: when the list started looking
+    bool blockedLogged = false;
 
     std::string hintText;
     std::string lastLegend;
@@ -746,6 +747,9 @@ struct Screen : Rml::EventListener {
             scrollTop = cur - kListRows + 1;
         scrollTop = std::clamp(scrollTop, 0, std::max(0, n - kListRows));
         if (blocked()) {
+            if (!blockedLogged)
+                pc_log_line("xeleenet pages: LAN discovery blocked here");
+            blockedLogged = true;
             r += "<div class=\"empty bad\">" + enc(tr("xeleenet.lobbies.blocked.title")) +
                  "</div><div class=\"empty sub\">" + enc(tr("xeleenet.lobbies.blocked.line")) + "</div>";
         } else if (fetch < 0 && !lan()) {
@@ -1057,6 +1061,7 @@ struct Screen : Rml::EventListener {
         joiningKnown = false;
         code.clear();
         lookFrom = SDL_GetTicks();
+        blockedLogged = false;
         go(Page::Lobbies);
         browse();
     }
