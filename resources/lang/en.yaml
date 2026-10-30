@@ -74,7 +74,7 @@ xeleenet:
         desc: Open a lobby, public or private.
       join:
         label: Join
-        desc: Browse public lobbies or join private lobbies by their join code.
+        desc: Browse public lobbies, or join a private one with its code.
       name:
         label: Name
         desc: You are {name}.            # {name} is NAME#TAG
