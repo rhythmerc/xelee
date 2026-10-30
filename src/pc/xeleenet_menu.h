@@ -75,6 +75,9 @@ const char* pc_xn_menu_title(void);
 const char* pc_xn_menu_hint(void);
 /* Once a frame (vi.c): the punch's progress, placement, the lasers. */
 void pc_xn_menu_update(void);
+/* The CSS's or the stage select's overlay is up: the game's frame should be
+ * the size it's shown at (vi.c), not the render scale's. */
+bool pc_xn_overlay_full_size(void);
 
 /* C1: the lobby's banner over the CSS's rules bar, while in a XeleeNet CSS. */
 void pc_xn_banner_show(bool show);

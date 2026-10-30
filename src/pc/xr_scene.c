@@ -875,6 +875,16 @@ void pc_xr_flat_view(bool on) { s_flat_view = on; }
 
 bool pc_xr_world_3d(void) { return !s_flat_view && pc_xr_presenting(); }
 
+/* pc_xr_screen_frame: the fight camera drew in 3D this frame; frames since. */
+static bool s_drew_3d;
+static int s_flat_frames;
+
+bool pc_xr_screen_frame(void) {
+    s_flat_frames = s_drew_3d ? 0 : s_flat_frames < 1000 ? s_flat_frames + 1 : s_flat_frames;
+    s_drew_3d = false;
+    return pc_xr_presenting() && s_flat_frames >= 10;
+}
+
 /* The stage being followed (s_follows), for the stage last drawn; NULL when
  * it isn't one. Its center, and whether that has been placed yet. */
 static FollowRule s_follow_rule;
@@ -1129,6 +1139,7 @@ void pc_xr_world_camera(const float view[3][4]) {
     const bool stopped = gm_GetDbPauseFlag(1) || gm_GetDbPauseFlag(2);
     aurora_xr_set_paused(stopped || gm_vs_soft_paused());
     s_category = AURORA_XR_WORLD;
+    s_drew_3d = true;
     aurora_xr_camera(AURORA_XR_WORLD, view);
     follow_update();
     base_clip();

@@ -554,7 +554,24 @@ void pc_present_held_frame(bool new_tick) {
     }
 }
 
+/* The game's frame is as tall as the picture it's shown as, not the render
+ * scale's, while the headset shows the virtual screen (on the Quest the
+ * scale's 480 lines were resampled up to a 1080-line screen) or XeleeNet's
+ * overlays are up. Menus draw little; 3D fights keep the player's scale. */
+static void frame_size(void) {
+    static int on = -1;
+    const bool screen = pc_xr_screen_frame();
+    const int want = screen || pc_xn_overlay_full_size();
+    if (want != on) {
+        on = want;
+        VISetFrameBufferPresentSize(want);
+        pc_log_line("vi: the frame at %s size%s", want ? "the screen's" : "the render scale's",
+                    want ? (screen ? " (the virtual screen)" : " (XeleeNet's overlay)") : "");
+    }
+}
+
 void VIWaitForRetrace(void) {
+    frame_size();
     pc_frame_boundary();
     /* The overlay pauses the game. Melee's whole simulation hangs off this
      * call returning, so keep presenting frames and pumping input here and

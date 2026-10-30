@@ -33,6 +33,10 @@ void pc_xr_flat_view(bool on);
 bool pc_xr_world_3d(void);
 /* After the camera's HSD_CObjEndCurrent. */
 void pc_xr_mono_camera(void);
+/* Once a frame the game advances (VIWaitForRetrace): true while the headset
+ * shows the virtual screen, i.e. an XR session presents and no fight has
+ * drawn in 3D for a few frames (a short gap, a fight's own, isn't one). */
+bool pc_xr_screen_frame(void);
 struct HSD_JObj;
 struct HSD_GObj;
 /* Around one stage part's draw (gr/grdisplay.c); `root` is the part's joint
@@ -120,6 +124,7 @@ static inline void pc_xr_camera_focus(const float interest[3]) { (void)interest;
 static inline void pc_xr_hud_camera(void) {}
 static inline void pc_xr_flat_view(bool on) { (void)on; }
 static inline void pc_xr_mono_camera(void) {}
+static inline bool pc_xr_screen_frame(void) { return false; }
 struct HSD_JObj;
 struct HSD_GObj;
 static inline bool pc_xr_stage_part_begin(int grkind, int map_id, int layer, struct HSD_JObj* root) {

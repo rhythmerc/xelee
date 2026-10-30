@@ -2127,20 +2127,6 @@ Screen s_screen;
 Banner s_banner;
 SssOverlay s_sss;
 
-// While the CSS's or the stage select's overlay is up, the game's frame is as
-// tall as the picture it's shown as, so the overlay drawn inside it
-// (aurora_rmlui_draw_here, under the hands and cursors) isn't resampled down
-// to the render scale's EFB: on the Quest that's 480 lines on a 1080-line
-// screen. Menus draw little; the fights keep the player's scale.
-void frame_size_for_overlays() {
-    static bool on = false;
-    const bool want = s_banner.shown || s_sss.shown;
-    if (want != on) {
-        on = want;
-        VISetFrameBufferPresentSize(want);
-        pc_log_line("xeleenet: the frame at %s size for the overlay", want ? "the screen's" : "the render scale's");
-    }
-}
 bool s_active = false;
 bool s_shown = false;
 bool s_f5_was = false;
@@ -2308,7 +2294,6 @@ extern "C" void pc_xn_menu_update(void) {
                 if (full == 3)
                     s_host.preset = kCustom, s_host.seats = 3;
                 s_banner.show(true);
-                frame_size_for_overlays();
             }
         }
         s_banner.update();
@@ -2316,13 +2301,18 @@ extern "C" void pc_xn_menu_update(void) {
     s_sss.update();
 }
 
+// While the CSS's or the stage select's overlay is up, the game's frame is as
+// tall as the picture it's shown as (vi.c), so the overlay drawn inside it
+// (aurora_rmlui_draw_here, under the hands and cursors) isn't resampled down
+// to the render scale's EFB.
+extern "C" bool pc_xn_overlay_full_size(void) { return s_banner.shown || s_sss.shown; }
+
 extern "C" void pc_xn_banner_show(bool show) {
     if (show && s_left_reload && SDL_GetTicks() - s_left_at < kLeftReloadMs)
         s_left_at = SDL_GetTicks(); /* the CSS is back, without them */
     if (show)
         s_left_reload = false;
     s_banner.show(show);
-    frame_size_for_overlays();
 }
 
 extern "C" void pc_xn_css_frame(const PcXnCssState* state) {
@@ -2393,12 +2383,10 @@ extern "C" void pc_xn_css_left(const char* name) {
 extern "C" void pc_xn_sss_frame(uint32_t mask) {
     s_sss.mask = mask;
     s_sss.show(true);
-    frame_size_for_overlays();
 }
 
 extern "C" void pc_xn_sss_show(bool show) {
     s_sss.show(show);
-    frame_size_for_overlays();
 }
 
 extern "C" void pc_xn_sss_picks(const PcXnSssState* state) {
