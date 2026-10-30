@@ -439,7 +439,7 @@ xeleenet:
       # Nothing at all heard, not even our own query (B2).
       blocked:
         title: This network won't let Xelee look for lobbies
-        line: It blocks local discovery (multicast), as many hotel and campus networks do. Ask the host for the address on their lobby banner.
+        line: It blocks local discovery (multicast), as many hotel and campus networks do. Ask the lobby's host for the address on their lobby banner.
       hints:
         row: Join a lobby on this network.
         empty: Go back to Host to open one, or press X to join by address.
