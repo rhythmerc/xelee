@@ -69,6 +69,10 @@ static void mnXeleeNet_BuildPage(void)
 {
     void* dp_[8];
 
+    /* A new scene: the menu's tab title (the sub-menu's own, since they
+     * have one) went with the last scene's texts. Drawing through the old
+     * pointer drew nothing. */
+    mnPage_PanelTitleForget();
     mn_804D6BB8 = lbArchive_LoadSymbols(
         "MnMaAll", &dp_[0], "MenMainBack_Top_joint", &dp_[1], "MenMainBack_Top_animjoint", &dp_[2],
         "MenMainBack_Top_matanim_joint", &dp_[3], "MenMainBack_Top_shapeanim_joint", &MenMain_cam,
