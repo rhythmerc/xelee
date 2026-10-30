@@ -339,10 +339,12 @@ void fn_80181E18(void)
             continue;
         }
 
-        switch (data->x8) {
+        /* The record's mode and clear time (upstream: data->record[0]), not
+         * the spawn timer and KO tally at data->x8/x4. */
+        switch (lbl_80473594.x8) {
         case 0x21:
         case 0x22:
-            data->x4 = gm_GetFrameCount();
+            lbl_80473594.x4 = gm_GetFrameCount();
             break;
         }
 
@@ -388,7 +390,9 @@ void fn_80181E18(void)
 
         if (next == 0x3E7) {
             if (fn_80181BFC(NULL) == 0) {
-                data->record[0].x0 = 1;
+                /* Not data->record[0]: on PC lbl_80473594 is its own
+                 * object, not lbl_80472ED8+0x6BC. */
+                lbl_80473594.x0 = 1;
                 gm_8016B33C(7);
                 gm_8016B328();
             }
