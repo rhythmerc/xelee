@@ -21,7 +21,8 @@
 
 extern void pc_log_line(const char* fmt, ...);
 
-#define HEARTBEAT_MS 2000
+#define HEARTBEAT_MS 2000          /* the host's, at the CSS */
+#define HEARTBEAT_PLAYING_MS 10000 /* in a game: nobody joins until the CSS, and each beat is billed */
 #define JOIN_RETRIES 10 /* "pending" answers on Ask before joining (XN3) */
 #define REPLY_CAP 16384
 
@@ -40,6 +41,7 @@ static struct {
 static SDL_Mutex* s_lock;
 static SDL_Thread* s_thread;
 static SDL_AtomicInt s_stop;
+static SDL_AtomicInt s_playing; /* pc_xn_set_playing */
 static PcXnStatus s_status;
 static char s_reason[24], s_error[160];
 static char s_lobby[33], s_lobby_code[8];
@@ -404,7 +406,8 @@ static bool heartbeat(void) {
     char body[256], path[96];
     int status = 0;
     PcSlippiJson* r;
-    size_t o = (size_t)snprintf(body, sizeof body, "{\"state\":\"open\",\"xr\":false,\"roster\":[");
+    size_t o = (size_t)snprintf(body, sizeof body, "{\"state\":\"%s\",\"xr\":false,\"roster\":[",
+                                SDL_GetAtomicInt(&s_playing) ? "playing" : "open");
     SDL_LockMutex(s_lock);
     for (int i = 0; i < s_nroster; i++) {
         char k[48];
@@ -482,6 +485,21 @@ static void wait_ms(int ms) {
     }
 }
 
+/* Until the host's next heartbeat. In a game, every HEARTBEAT_PLAYING_MS,
+ * unless a member the service lists isn't linked yet (one who joined during
+ * the game: the host learns of them from a beat, then has the service's
+ * roster grace to reach them). The game starting or ending beats at once. */
+static void wait_beat(void) {
+    const int playing = SDL_GetAtomicInt(&s_playing);
+    SDL_LockMutex(s_lock);
+    const bool linking = s_nmembers > s_nroster;
+    SDL_UnlockMutex(s_lock);
+    const int ms = playing && !linking ? HEARTBEAT_PLAYING_MS : HEARTBEAT_MS;
+    for (int t = 0; t < ms && !SDL_GetAtomicInt(&s_stop) && SDL_GetAtomicInt(&s_playing) == playing; t += 50) {
+        SDL_Delay(50);
+    }
+}
+
 static int thread_main(void* unused) {
     (void)unused;
     bool hosting = s_args.code[0] == '\0';
@@ -489,7 +507,7 @@ static int thread_main(void* unused) {
         return 0;
     }
     while (hosting && !SDL_GetAtomicInt(&s_stop)) {
-        wait_ms(HEARTBEAT_MS);
+        wait_beat();
         if (!SDL_GetAtomicInt(&s_stop) && !heartbeat() && svc_status() == PC_XN_FAILED) {
             return 0;
         }
@@ -543,6 +561,7 @@ static bool svc_start(const char* url, const PcNetIdentity* id, const char* name
     s_nmembers = s_nroster = 0;
     SDL_UnlockMutex(s_lock);
     SDL_SetAtomicInt(&s_stop, 0);
+    SDL_SetAtomicInt(&s_playing, 0);
     s_thread = SDL_CreateThread(thread_main, "xeleenet", NULL);
     if (s_thread == NULL) {
         fail("thread", "Couldn't start the XeleeNet thread");
@@ -777,6 +796,10 @@ void pc_xn_set_roster(const uint8_t (*keys)[32], int n) {
 
 void pc_xn_stop(void) {
     backend()->stop();
+}
+
+void pc_xn_set_playing(bool playing) {
+    SDL_SetAtomicInt(&s_playing, playing ? 1 : 0);
 }
 
 void pc_xn_exit(void) {

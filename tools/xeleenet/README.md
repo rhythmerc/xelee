@@ -22,7 +22,7 @@ the host's game owns those and tells the others over the players' own links.
 | `POST /v1/session`, `/v1/session/verify` | everyone | Sign a nonce with the install's Ed25519 key, get an hour's token |
 | `GET /v1/lobbies?proto&rev&disc[&full=1]` | browser | Public lobbies on the same build, nearest first |
 | `POST /v1/lobbies` | host | Open a lobby; closes the host's previous one |
-| `POST /v1/lobbies/<id>/heartbeat` | host | Every 2 s at the CSS, 10 s in a game. Returns members (with addresses) and pending joins |
+| `POST /v1/lobbies/<id>/heartbeat` | host | Every 2 s at the CSS, 10 s in a game (2 s while a member who joined isn't linked yet), with `state` open or playing. Returns members (with addresses) and pending joins |
 | `PUT /v1/lobbies/<id>/settings` | host | The settings summary the browser shows |
 | `POST /v1/lobbies/<id>/admit`, `/kick`; `DELETE /v1/lobbies/<id>` (or `POST …/close`, for the game) | host | |
 | `POST /v1/join` | joiner | By code; answers joined (with everyone's addresses), pending, or a refusal |

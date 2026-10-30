@@ -72,6 +72,8 @@ std::string s_note;
 std::string s_hidden_code;
 uint64_t s_hidden_at = 0;
 constexpr uint64_t kHiddenMs = 30000;
+// B1 stops refreshing itself this long after the last button or click.
+constexpr uint64_t kIdleMs = 5 * 60 * 1000;
 
 // ---- the stages (H2) ----------------------------------------------------------
 // GamePrefs.stage_mask's bit is a Random Stage Switch id (mnstagesw.c,
@@ -452,6 +454,7 @@ struct Screen : Rml::EventListener {
     bool showFull = false;
     int fetch = 0; // 0 fetching, 1 have rows, -1 failed
     uint64_t fetchedAt = 0, fetchAsked = 0;
+    uint64_t touchedAt = 0; // the last button or click; the list stops refreshing itself a while after
     uint64_t lookFrom = 0; // LAN: when the list started looking
     bool blockedLogged = false;
 
@@ -1083,7 +1086,16 @@ struct Screen : Rml::EventListener {
         go(Page::Joining);
     }
 
+    // A button or click: an idle list (kIdleMs) refreshes on the next update
+    // (not here: the button may start a fetch of its own).
+    void touched() {
+        if (SDL_GetTicks() - touchedAt >= kIdleMs)
+            fetchAsked = 0;
+        touchedAt = SDL_GetTicks();
+    }
+
     void to_lobbies() {
+        touchedAt = SDL_GetTicks();
         joiningKnown = false;
         code.clear();
         lookFrom = SDL_GetTicks();
@@ -1332,6 +1344,7 @@ struct Screen : Rml::EventListener {
     void input(int what) {
         if (!shown || presence < 1.f)
             return;
+        touched();
         switch (what) {
         case PC_SCREEN_UP:
         case PC_SCREEN_DOWN:
@@ -1514,8 +1527,12 @@ struct Screen : Rml::EventListener {
                 s_result = PC_XN_MENU_JOINED;
         }
         poll_browse();
-        if (page == Page::Lobbies && fetch != 0 && SDL_GetTicks() - fetchAsked > 10000)
-            browse(); // B1 refreshes every 10 s while it's open
+        // B1 refreshes every 10 s while it's open and someone's using it: a
+        // game left on the list stops asking the service after kIdleMs (LAN
+        // asks no service).
+        if (page == Page::Lobbies && fetch != 0 && SDL_GetTicks() - fetchAsked > 10000 &&
+            (lan() || SDL_GetTicks() - touchedAt < kIdleMs))
+            browse();
         if (!shown)
             return;
         build();
@@ -1526,8 +1543,10 @@ struct Screen : Rml::EventListener {
         auto* context = aurora::rmlui::get_context();
         if (context != nullptr && aurora_xr_screen_pointer(&px, &py, &down)) {
             context->ProcessMouseMove(static_cast<int>(px * dims.x), static_cast<int>(py * dims.y), 0);
-            if (down && !pointerPressed)
+            if (down && !pointerPressed) {
                 context->ProcessMouseButtonDown(0, 0);
+                touched();
+            }
             else if (!down && pointerPressed)
                 context->ProcessMouseButtonUp(0, 0);
             pointerPressed = down;

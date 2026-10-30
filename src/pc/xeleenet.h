@@ -94,6 +94,9 @@ int pc_xn_members(PcXnMember* out, int max);
 void pc_xn_set_roster(const uint8_t (*keys)[32], int n);
 /* Leave the lobby (a host closes it) and stop the thread. */
 void pc_xn_stop(void);
+/* A game is running (VS to the results) or not: the host's heartbeat says so
+ * (the browser's "in game") and slows down meanwhile. LAN has no heartbeat. */
+void pc_xn_set_playing(bool playing);
 /* The app is closing: a LAN lobby says goodbye (the host's announcement, a
  * guest's LEAVE) at once. The service's lobby is left to its own timeouts, as
  * a lost connection would be. */

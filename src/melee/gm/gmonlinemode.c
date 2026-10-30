@@ -39,6 +39,7 @@
 #include "pc/net_identity.h"
 #include "pc/net_match.h"
 #include "pc/net_punch.h"
+#include "pc/xeleenet.h"
 #include "pc/xeleenet_menu.h"
 #include "pc/slippi/slp_user.h"
 #include "pc/net_rank_session.h"
@@ -411,6 +412,7 @@ void onEnterCss(GameModeState* state)
 {
 #ifdef TARGET_PC
     pc_log_line("online: enter CSS at frame %d", pc_net_frame());
+    pc_xn_set_playing(false);
     slippi_picked = false;
     if (slippiFlow()) {
         /* Slippi assumes everything is unlocked; the player's own progress is
@@ -1061,6 +1063,7 @@ void onEnterVs(GameModeState* state)
 {
 #ifdef TARGET_PC
     pc_log_line("online: enter VS at frame %d", pc_net_frame());
+    pc_xn_set_playing(true);
 #endif
 #ifdef TARGET_PC
     PcNetSlippiMatch sm;

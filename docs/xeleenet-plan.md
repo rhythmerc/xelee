@@ -634,7 +634,7 @@ built 2026-10-28, see the commits on `feat/xelee-net`):
    the NAT maps per destination, and the log says direct guest links will
    likely fail.
 2. **Service client** (`xeleenet.c`): sign in, host (and heartbeat every 2 s
-   with the roster of guests the game reaches), join, leave and close, all on
+   at the CSS, 10 s in a game, with the roster of guests the game reaches), join, leave and close, all on
    one thread of its own. It uses GET and POST only, so the service gained
    `POST /v1/lobbies/<id>/close` next to `DELETE`.
 3. **The punch** (`net_punch.c`). One socket from STUN to the match.
