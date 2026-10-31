@@ -16,6 +16,7 @@
 #include "net_punch.h"
 #include "pc.h"
 #include "xeleenet.h"
+#include "xeleenet_fighters.h"
 
 #include <RmlUi/Core.h>
 #include <SDL3/SDL_keyboard.h>
@@ -104,6 +105,41 @@ constexpr unsigned kAllStages = (1u << 29) - 1;
 constexpr unsigned kCompetitive = 1u << 24 | 1u << 25 | 1u << 26 | 1u << 4 | 1u << 5 | 1u << 7;
 constexpr int kGridAcross = 6;
 
+// ---- the fighters (docs/xeleenet-fighter-list-plan.md) ----------------------------
+// The 25 entries in the CSS's order (xn_fighter_order), each a name key; the
+// mask has a bit per CharacterKind, Sheik's following Zelda's.
+const char* const kFighterNames[XN_FIGHTER_ENTRIES] = {
+    "dr_mario", "mario", "luigi",  "bowser",  "peach",  "yoshi",   "dk",     "falcon",    "ganondorf",
+    "falco",    "fox",   "ness",   "ics",     "kirby",  "samus",   "zelda",  "link",      "young_link",
+    "pichu",    "pikachu", "puff", "mewtwo",  "gnw",    "marth",   "roy",
+};
+constexpr int kFightersAcross = 9;
+
+std::string fighter_name(int entry) {
+    return tr(("xeleenet.fighters.names." + std::string(kFighterNames[entry])).c_str());
+}
+
+// "all", "high", "low" or "custom": the list's id (settings JSON) and key.
+const char* fighter_list_id(unsigned mask) {
+    return mask == XN_FIGHTERS_ALL ? "all" : mask == XN_FIGHTERS_HIGH ? "high" : mask == XN_FIGHTERS_LOW ? "low"
+                                                                                                         : "custom";
+}
+
+// "Low tiers (12)": the Host page's value.
+std::string fighter_list_label(unsigned mask) {
+    return tr(("xeleenet.host.fighter_lists." + std::string(fighter_list_id(mask))).c_str(),
+              {{"n", xn_fighters_count(mask)}});
+}
+
+// "Low tiers", for the rules line: a list's id as the listing has it (no count
+// for a guest's), "" for All.
+std::string fighter_list_short(const char* id) {
+    if (id == nullptr || id[0] == '\0' || std::strcmp(id, "all") == 0)
+        return "";
+    const bool known = std::strcmp(id, "high") == 0 || std::strcmp(id, "low") == 0;
+    return tr(("xeleenet.rules_line.fighters_" + std::string(known ? id : "custom")).c_str());
+}
+
 int stage_count(unsigned mask) {
     int n = 0;
     for (const Stage& s : kStages)
@@ -142,6 +178,7 @@ struct HostSettings {
     int damage = 10;
     bool pause = true;
     unsigned stages = kCompetitive;
+    unsigned fighters = XN_FIGHTERS_ALL;
     bool frozen = true;
     bool hide_code = false;
 };
@@ -156,9 +193,9 @@ void host_save() {
     const HostSettings& h = s_host;
     std::fprintf(f,
                  "preset=%d\nname=%s\nopen=%d\nseats=%d\nteams=%d\nstock=%d\nstocks=%d\nminutes=%d\nitems=%d\n"
-                 "ff=%d\nhandicap=%d\ndamage=%d\npause=%d\nstages=%u\nfrozen=%d\nhide=%d\n",
+                 "ff=%d\nhandicap=%d\ndamage=%d\npause=%d\nstages=%u\nfighters=%u\nfrozen=%d\nhide=%d\n",
                  h.preset, h.name.c_str(), h.open, h.seats, h.teams, h.stock, h.stocks, h.minutes, h.items,
-                 h.friendly_fire, h.handicap, h.damage, h.pause, h.stages, h.frozen, h.hide_code);
+                 h.friendly_fire, h.handicap, h.damage, h.pause, h.stages, h.fighters, h.frozen, h.hide_code);
     std::fclose(f);
 }
 
@@ -207,6 +244,8 @@ void host_load() {
             h.pause = n != 0;
         else if (k == "stages")
             h.stages = static_cast<unsigned>(std::strtoul(v.c_str(), nullptr, 10)) & kAllStages;
+        else if (k == "fighters")
+            h.fighters = xn_fighters_normal(static_cast<unsigned>(std::strtoul(v.c_str(), nullptr, 10)));
         else if (k == "frozen")
             h.frozen = n != 0;
         else if (k == "hide")
@@ -215,6 +254,8 @@ void host_load() {
     std::fclose(f);
     if (h.stages == 0)
         h.stages = kCompetitive;
+    if (h.fighters == 0)
+        h.fighters = XN_FIGHTERS_ALL;
 }
 
 void preset(int p) {
@@ -223,15 +264,15 @@ void preset(int p) {
     switch (p) {
     case kOneVsOne:
         h.seats = 2, h.teams = false, h.stock = true, h.stocks = 4, h.minutes = 8, h.items = -1;
-        h.friendly_fire = false, h.stages = kCompetitive, h.frozen = true;
+        h.friendly_fire = false, h.stages = kCompetitive, h.fighters = XN_FIGHTERS_ALL, h.frozen = true;
         break;
     case kDoubles:
         h.seats = 4, h.teams = true, h.stock = true, h.stocks = 4, h.minutes = 8, h.items = -1;
-        h.friendly_fire = true, h.stages = kCompetitive, h.frozen = true;
+        h.friendly_fire = true, h.stages = kCompetitive, h.fighters = XN_FIGHTERS_ALL, h.frozen = true;
         break;
     case kFreeForAll:
         h.seats = 4, h.teams = false, h.stock = false, h.stocks = 4, h.minutes = 2, h.items = 2;
-        h.friendly_fire = false, h.stages = kAllStages, h.frozen = false;
+        h.friendly_fire = false, h.stages = kAllStages, h.fighters = XN_FIGHTERS_ALL, h.frozen = false;
         break;
     default:
         break;
@@ -285,11 +326,12 @@ std::string settings_json() {
     char b[512];
     std::snprintf(b, sizeof b,
                   "{\"preset\":\"%s\",\"seats\":%d,\"mode\":\"%s\",\"win\":\"%s\",\"stocks\":%d,\"time_min\":%d,"
-                  "\"items\":\"%s\",\"stage_list\":\"%s\",\"pick\":\"everyone\",\"format\":\"endless\","
-                  "\"first_to\":2,\"place_secs\":15}",
+                  "\"items\":\"%s\",\"stage_list\":\"%s\",\"fighter_list\":\"%s\",\"pick\":\"everyone\","
+                  "\"format\":\"endless\",\"first_to\":2,\"place_secs\":15}",
                   kPresetIds[h.preset], h.seats, h.teams ? "teams" : "ffa", h.stock ? "stock" : "time", h.stocks,
                   h.minutes, kItemIds[h.items + 1],
-                  h.stages == kCompetitive ? "competitive" : h.stages == kAllStages ? "all" : "custom");
+                  h.stages == kCompetitive ? "competitive" : h.stages == kAllStages ? "all" : "custom",
+                  fighter_list_id(h.fighters));
     return b;
 }
 
@@ -346,7 +388,7 @@ void view(PcXnPunchView* v) {
 
 // ---- the screens --------------------------------------------------------------
 
-enum class Page { Host, Stages, More, Lobbies, Code, Joining, Failed };
+enum class Page { Host, Stages, Fighters, More, Lobbies, Code, Joining, Failed };
 const char* page_name(Page p) {
     static const char* const names[] = {"Host", "Stages", "More", "Lobbies", "Code", "Joining", "Failed"};
     return names[static_cast<int>(p)];
@@ -579,22 +621,24 @@ struct Screen : Rml::EventListener {
              "xeleenet.host.hints.more");
         r += "</div><div class=\"col right\">";
         group(r, "xeleenet.host.groups.stages");
-        link(r, "slist", 1, 1, "xeleenet.host.rows.stage_list", stage_list_label(h.stages),
+        link(r, "flist", 1, 1, "xeleenet.host.rows.fighter_list", fighter_list_label(h.fighters),
+             [this] { go(Page::Fighters); }, "xeleenet.host.hints.fighter_list");
+        link(r, "slist", 1, 2, "xeleenet.host.rows.stage_list", stage_list_label(h.stages),
              [this] { go(Page::Stages); }, "xeleenet.host.hints.stage_list");
-        choice(r, "pick", 1, 2, "xeleenet.host.rows.stage_pick", tr("xeleenet.host.values.stage_pick"), [](int) {},
+        choice(r, "pick", 1, 3, "xeleenet.host.rows.stage_pick", tr("xeleenet.host.values.stage_pick"), [](int) {},
                "xeleenet.host.hints.stage_pick", false, "xeleenet.host.soon");
-        choice(r, "frozen", 1, 3, "xeleenet.host.rows.frozen", on_off(h.frozen),
+        choice(r, "frozen", 1, 4, "xeleenet.host.rows.frozen", on_off(h.frozen),
                [custom](int) { s_host.frozen = !s_host.frozen, custom(); }, "xeleenet.host.hints.frozen");
-        choice(r, "place", 1, 4, "xeleenet.host.rows.placement", tr("xeleenet.host.values.placement"), [](int) {},
+        choice(r, "place", 1, 5, "xeleenet.host.rows.placement", tr("xeleenet.host.values.placement"), [](int) {},
                "xeleenet.host.hints.placement", false, "xeleenet.host.soon");
         group(r, "xeleenet.host.groups.set");
-        choice(r, "format", 1, 5, "xeleenet.host.rows.format", tr("xeleenet.host.values.format"), [](int) {},
+        choice(r, "format", 1, 6, "xeleenet.host.rows.format", tr("xeleenet.host.values.format"), [](int) {},
                "xeleenet.host.hints.format", false, "xeleenet.host.soon");
         group(r, "xeleenet.host.groups.joining");
-        choice(r, "ask", 1, 6, "xeleenet.host.rows.ask", on_off(false), [](int) {}, "xeleenet.host.hints.ask", false,
+        choice(r, "ask", 1, 7, "xeleenet.host.rows.ask", on_off(false), [](int) {}, "xeleenet.host.hints.ask", false,
                "xeleenet.host.soon");
         if (!lan()) // no codes on LAN
-            choice(r, "hide", 1, 7, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
+            choice(r, "hide", 1, 8, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
                    [](int) { s_host.hide_code = !s_host.hide_code; }, "xeleenet.host.hints.hide_code");
         r += "<button id=\"open\" class=\"gold\">" + enc(tr("xeleenet.host.open")) + "</button></div>";
         {
@@ -670,6 +714,67 @@ struct Screen : Rml::EventListener {
         }
         r += "</div>";
         set_board(r);
+    }
+
+    // The fighter list (docs/xeleenet-fighter-list-plan.md): the 25 entries in
+    // the CSS's own rows of 9, 9 and 7. A turns one on or off (one at least
+    // stays on), Y keeps only it, X steps through the presets.
+    void build_fighters() {
+        const unsigned m = s_host.fighters;
+        std::string r = "<div class=\"chips\">";
+        const char* chips[4] = {"xeleenet.fighters.chips.all", "xeleenet.fighters.chips.high",
+                                "xeleenet.fighters.chips.low", "xeleenet.fighters.chips.custom"};
+        const unsigned sets[3] = {XN_FIGHTERS_ALL, XN_FIGHTERS_HIGH, XN_FIGHTERS_LOW};
+        const bool on[4] = {m == sets[0], m == sets[1], m == sets[2], m != sets[0] && m != sets[1] && m != sets[2]};
+        for (int i = 0; i < 4; i++) {
+            const std::string id = "chip" + std::to_string(i);
+            r += "<div id=\"" + id + "\" class=\"chipx" + (on[i] ? " on" : "") + (i == 3 ? " dash" : "") + "\">" +
+                 enc(tr(chips[i])) + "</div>";
+            Item it{id, i, 0, i < 3};
+            if (i < 3)
+                it.act = [set = sets[i]] {
+                    s_host.fighters = set;
+                    s_host.preset = kCustom;
+                };
+            it.hint = tr("xeleenet.fighters.hint");
+            items.push_back(std::move(it));
+        }
+        r += "<div class=\"count\">" +
+             enc(tr("xeleenet.fighters.count", {{"n", xn_fighters_count(m)}, {"total", XN_FIGHTER_ENTRIES}})) +
+             "</div></div><div id=\"fgrid\">";
+        for (int i = 0; i < XN_FIGHTER_ENTRIES; i++) {
+            const int row = i / kFightersAcross, col = i % kFightersAcross + (row == 2 ? 1 : 0);
+            if (i % kFightersAcross == 0)
+                r += std::string(i ? "</div>" : "") + "<div class=\"frow" + (row == 2 ? " short" : "") + "\">";
+            const unsigned bit = 1u << xn_fighter_order[i];
+            const std::string id = "fi" + std::to_string(i);
+            r += "<div id=\"" + id + "\" class=\"ftile" + (m & bit ? " on" : "") + "\">" + enc(fighter_name(i)) +
+                 "</div>";
+            Item it{id, col, 1 + row, true};
+            it.act = [bit] {
+                const unsigned want = xn_fighters_normal(s_host.fighters ^ bit);
+                if (want != 0) // one fighter at least stays on
+                    s_host.fighters = want;
+                s_host.preset = kCustom;
+            };
+            it.hint = tr(xn_fighter_order[i] == XN_FIGHTER_ZELDA ? "xeleenet.fighters.hint_zelda"
+                         : xn_fighter_order[i] == 0x0E           ? "xeleenet.fighters.hint_ics"
+                                                                 : "xeleenet.fighters.hint_one",
+                         {{"name", fighter_name(i)}});
+            items.push_back(std::move(it));
+        }
+        r += "</div></div>";
+        set_board(r);
+    }
+
+    // Y on the fighter page: only the highlighted fighter.
+    bool fighters_only_this() {
+        if (page != Page::Fighters || items.empty() || items[cursor].id.rfind("fi", 0) != 0)
+            return false;
+        const int entry = std::atoi(items[cursor].id.c_str() + 2);
+        s_host.fighters = xn_fighters_normal(1u << xn_fighter_order[entry]);
+        s_host.preset = kCustom;
+        return true;
     }
 
     void open_lobby() {
@@ -1133,6 +1238,12 @@ struct Screen : Rml::EventListener {
             r += key("a", "xeleenet.legend.toggle") + key("x", "xeleenet.legend.stage_sets") +
                  key("b", "xeleenet.legend.done");
             break;
+        case Page::Fighters:
+            r += key("a", "xeleenet.legend.toggle");
+            if (id.rfind("fi", 0) == 0)
+                r += key("y", "xeleenet.legend.only_this");
+            r += key("x", "xeleenet.legend.fighter_sets") + key("b", "xeleenet.legend.done");
+            break;
         case Page::Lobbies:
             if (!rows.empty())
                 r += key("a", "xeleenet.legend.join");
@@ -1185,8 +1296,9 @@ struct Screen : Rml::EventListener {
         last = r;
         auto* board = document->GetElementById("board");
         board->SetInnerRML(r);
-        const char* kinds[] = {"host", "stages", "more", "lobbies", "code", "joining", "failed"};
-        for (int i = 0; i < 7; i++)
+        // In Page's order.
+        const char* kinds[] = {"host", "stages", "fighters", "more", "lobbies", "code", "joining", "failed"};
+        for (int i = 0; i < static_cast<int>(sizeof kinds / sizeof kinds[0]); i++)
             board->SetClass(kinds[i], static_cast<int>(page) == i);
         mark();
         update_legend();
@@ -1200,6 +1312,7 @@ struct Screen : Rml::EventListener {
         case Page::Host: build_host(); break;
         case Page::More: build_more(); break;
         case Page::Stages: build_stages(); break;
+        case Page::Fighters: build_fighters(); break;
         case Page::Lobbies: build_lobbies(); break;
         case Page::Code: build_code(); break;
         case Page::Joining: build_joining(); break;
@@ -1326,6 +1439,9 @@ struct Screen : Rml::EventListener {
         case Page::Stages:
             go(Page::Host, "slist");
             break;
+        case Page::Fighters:
+            go(Page::Host, "flist");
+            break;
         case Page::Code:
             if (!code.empty() && !lan()) {
                 code.pop_back();
@@ -1361,7 +1477,7 @@ struct Screen : Rml::EventListener {
             back();
             break;
         case PC_XN_IN_START:
-            if (page == Page::Host || page == Page::More || page == Page::Stages) {
+            if (page == Page::Host || page == Page::More || page == Page::Stages || page == Page::Fighters) {
                 open_lobby();
                 refresh();
             } else if (page == Page::Code) {
@@ -1393,9 +1509,23 @@ struct Screen : Rml::EventListener {
                 s_host.preset = kCustom;
                 sfx(SFX_MOVE);
                 refresh();
+            } else if (page == Page::Fighters) {
+                // All, High tiers, Low tiers, round again (a custom list goes to All).
+                const unsigned f = s_host.fighters;
+                s_host.fighters = f == XN_FIGHTERS_ALL  ? XN_FIGHTERS_HIGH
+                                  : f == XN_FIGHTERS_HIGH ? XN_FIGHTERS_LOW
+                                                          : XN_FIGHTERS_ALL;
+                s_host.preset = kCustom;
+                sfx(SFX_MOVE);
+                refresh();
             }
             break;
         case PC_XN_IN_Y:
+            if (fighters_only_this()) {
+                sfx(SFX_MOVE);
+                refresh();
+                break;
+            }
             if (page == Page::Lobbies && !lan()) {
                 sfx(SFX_CONFIRM);
                 code.clear();
@@ -1433,6 +1563,7 @@ struct Screen : Rml::EventListener {
         case Page::Host: return pc_tr("xeleenet.host.title");
         case Page::More: return pc_tr("xeleenet.rules.title");
         case Page::Stages: return pc_tr("xeleenet.stages.title");
+        case Page::Fighters: return pc_tr("xeleenet.fighters.title");
         case Page::Lobbies: return pc_tr("xeleenet.lobbies.title");
         case Page::Code: return pc_tr("xeleenet.code.title");
         case Page::Joining:
@@ -1586,6 +1717,7 @@ int s_seat_new_port = -1;
 uint64_t s_seat_new_at = 0;
 unsigned s_prev_local = 0, s_prev_others = 0, s_prev_claimed = 0;
 constexpr uint64_t kSeatNoteMs = 4000;
+constexpr uint64_t kOffListNoteMs = 2000; // A on an off-list portrait
 
 void seat_note(const std::string& kind, const std::string& text) {
     s_seat_note_kind = kind;
@@ -1694,6 +1826,9 @@ struct Banner {
             host ? rules_line(s_host.teams, s_host.seats, s_host.stock, s_host.stocks, s_host.minutes,
                               kItemIds[s_host.items + 1])
                  : known ? rules_line(info.teams, info.seats, info.stock, info.stocks, info.time_min, info.items) : "";
+        // The fighter list, when it isn't All.
+        const std::string fighters = fighter_list_short(host ? fighter_list_id(s_host.fighters) : known ? info.fighter_list : "");
+        const std::string rules_all = fighters.empty() || rules.empty() ? rules : rules + kDot + fighters;
         std::string code = v.code[0] ? std::string(v.code, 3) + " " + std::string(v.code + 3, 3) : "";
         char addr[64];
         if (lan()) // the host's address, for Join by address, where the code sits
@@ -1756,7 +1891,7 @@ struct Banner {
         const std::string r =
             "<div class=\"brand\"><span>" + enc(tr("xeleenet.banner.brand")) +
             "</span></div><div class=\"pill\"><div class=\"names\"><div class=\"bn\">" + enc(name) +
-            "</div><div class=\"br\">" + enc(rules) + "</div></div>" + count +
+            "</div><div class=\"br\">" + enc(rules_all) + "</div></div>" + count +
             (code.empty() ? "" : "<div class=\"code\">" + enc(tr("xeleenet.banner.code", {{"code", code}})) + "</div>") +
             "</div><div class=\"nslot\">" + notice + "</div>";
         if (r != last) {
@@ -2315,6 +2450,9 @@ extern "C" void pc_xn_menu_begin(int what) {
                      12);
     if (s_preview == "stages") {
         s_screen.go(Page::Stages);
+    } else if (s_preview == "fighters") {
+        s_host.fighters = XN_FIGHTERS_LOW;
+        s_screen.go(Page::Fighters);
     } else if (s_preview == "more") {
         s_screen.go(Page::More);
     } else if (s_preview == "code" || s_preview == "lan-address") {
@@ -2399,6 +2537,7 @@ extern "C" void pc_xn_menu_rules(PcXnRules* out) {
     out->damage_ratio = h.damage;
     out->pause = h.pause;
     out->stage_mask = h.stages;
+    out->fighter_mask = h.fighters;
     out->frozen_stadium = h.frozen;
 }
 
@@ -2510,6 +2649,15 @@ extern "C" unsigned pc_xn_css_names(char names[4][16], int* local) {
             *local = port;
     }
     return named;
+}
+
+extern "C" void pc_xn_css_off_list(int port, int ckind) {
+    if (pc_net_active() && !(pc_net_local_mask() & (1 << port)))
+        return; // another machine's player: their notice, not ours
+    for (int i = 0; i < XN_FIGHTER_ENTRIES; i++)
+        if (xn_fighter_order[i] == ckind)
+            seat_note("warn", tr("xeleenet.css.off_list", {{"name", fighter_name(i)}}));
+    s_seat_note_at = SDL_GetTicks() - (kSeatNoteMs - kOffListNoteMs); // a shorter note
 }
 
 extern "C" void pc_xn_css_seat_full(int phys) {

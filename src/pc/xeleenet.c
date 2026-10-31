@@ -278,6 +278,7 @@ static void parse_settings(const PcSlippiJson* st, PcXnListing* x) {
     x->time_min = pc_slippi_json_int(pc_slippi_json_get(st, "time_min"), 8);
     str_of(st, "items", x->items, sizeof x->items);
     str_of(st, "stage_list", x->stage_list, sizeof x->stage_list);
+    str_of(st, "fighter_list", x->fighter_list, sizeof x->fighter_list);
     str_of(st, "format", v, sizeof v);
     x->first_to = strcmp(v, "first_to") == 0;
     x->first_to_n = pc_slippi_json_int(pc_slippi_json_get(st, "first_to"), 2);

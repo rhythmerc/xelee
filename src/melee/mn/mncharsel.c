@@ -2237,6 +2237,17 @@ static inline s32 getPlayerForDoor(u8 door)
     return door;
 }
 
+#ifdef TARGET_PC
+/* XeleeNet's fighter list (docs/xeleenet-fighter-list-plan.md): a portrait
+ * whose fighter the lobby's RULES leave out. Every player has the same RULES
+ * and the same pads, so every CSS agrees. */
+static bool cssXnOffList(int icon)
+{
+    return gmOnline_XnFlow() && icon >= 0 && icon < 0x19 &&
+           !((pc_net_fighters() >> icons[icon].char_kind) & 1);
+}
+#endif
+
 void mnCharSel_8025FB50(u8 door, s32 arg1)
 {
     s32 icon_idx;
@@ -2247,7 +2258,11 @@ void mnCharSel_8025FB50(u8 door, s32 arg1)
         s32 temp = HSD_Randi(0x19);
         icon_idx = temp;
         icon_offset = getIconOffset(icon_idx);
-    } while (icons[icon_idx].state == 0);
+    } while (icons[icon_idx].state == 0
+#ifdef TARGET_PC
+             || cssXnOffList(icon_idx) /* Random draws from the list */
+#endif
+    );
 
     mnCharSel_804D6CB0->vs.start.players[getPlayerForDoor(door)].ckind =
         (&icons[0].char_kind)[icon_offset];
@@ -2862,12 +2877,34 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                 struct CSSCharModel* m2 =
                                     mnCharSel_804A0BD0[door];
                                 s32 i;
+#ifdef TARGET_PC
+                                /* Over an off-list portrait: nothing
+                                 * lights up, and A is refused. */
+                                for (i = 0; i < 0x19; i++) {
+                                    if (cssXnOffList(i) && (trigger & HSD_PAD_A) &&
+                                        m2->x8 > icons[i].bound_l &&
+                                        m2->x8 < icons[i].bound_r &&
+                                        m2->xC < icons[i].bound_u &&
+                                        m2->xC > icons[i].bound_d &&
+                                        icons[i].state >= 1)
+                                    {
+                                        lbAudioAx_80024030(3);
+                                        pc_log_line("css: P%d A on off-list %d", door + 1,
+                                                    icons[i].char_kind);
+                                        pc_xn_css_off_list(door, icons[i].char_kind);
+                                    }
+                                }
+#endif
                                 for (i = 0; i < 0x19; i++) {
                                     if (m2->x8 > icons[i].bound_l &&
                                         m2->x8 < icons[i].bound_r &&
                                         m2->xC < icons[i].bound_u &&
                                         m2->xC > icons[i].bound_d &&
-                                        icons[i].state >= 1)
+                                        icons[i].state >= 1
+#ifdef TARGET_PC
+                                        && !cssXnOffList(i)
+#endif
+                                    )
                                     {
                                         mnCharSel_803F0DFC.doors[door]
                                             .sel_icon = (u8) i;
@@ -5694,6 +5731,7 @@ static void cssXnCameraZoom(HSD_CObj* cobj)
 }
 
 static void cssXnCardsFrame(void);
+static void cssXnDimOffList(void);
 
 /* The camera's proc is the last to run (priority 5): the cards are laid out
  * here, after every animation and Melee's own writes, for the frame drawn. */
@@ -5703,6 +5741,7 @@ static void cssXnCameraProc(HSD_GObj* gobj)
     cssXnCameraZoom(GET_COBJ(gobj));
     css_xn_cobj = GET_COBJ(gobj);
     cssXnCardsFrame();
+    cssXnDimOffList();
 }
 
 /* Where port i's hand is on screen, as fractions of it (the overlay's ring
@@ -5756,7 +5795,9 @@ static void cssXnKeepPicks(void)
         const PlayerInitData* p = &mnCharSel_804D6CB0->vs.start.players[i];
         ckind[i] = p->ckind;
         color[i] = p->color;
-        if (i < (s32) mnCharSel_804D6CF5 && cssXnPicked(i) && p->ckind < ChKind_Max) {
+        if (i < (s32) mnCharSel_804D6CF5 && cssXnPicked(i) && p->ckind < ChKind_Max &&
+            ((pc_net_fighters() >> p->ckind) & 1)) /* the list's: an off-list pick isn't kept */
+        {
             mask |= 1 << i;
         }
     }
@@ -5897,7 +5938,8 @@ static bool cssXnReadyFrame(void)
                 css_xn_icon[i] = mnCharSel_803F0DFC.doors[i].sel_icon;
                 css_xn_costume[i] = mnCharSel_803F0DFC.doors[i].costume;
                 sfxForward();
-                pc_log_line("css: P%d ready", i + 1);
+                pc_log_line("css: P%d ready (fighter %d)", i + 1,
+                            mnCharSel_804D6CB0->vs.start.players[i].ckind);
             } else {
                 lbAudioAx_80024030(3);
                 pc_log_line("css: P%d START with no pick (icon %d, hand %d, kind %d)", i + 1,
@@ -6426,6 +6468,42 @@ static float cssXnSetName(HSD_Text* text, const char* name)
 /* Once a frame, after every other proc (cssXnCameraProc): the seats' doors
  * moved, the rest hidden, and the names in the boxes. Only drawing: nothing
  * here feeds the simulation (the hand's tests take CSS_DOOR_X). */
+/* An off-list portrait drawn dim, as the stage select dims its off-list
+ * stages (HSD_MObjPcDim): its joint's materials and its children's, not its
+ * siblings' (the next portrait). */
+static void cssXnDimIcon(HSD_JObj* j, bool siblings)
+{
+    for (; j != NULL; j = siblings ? j->next : NULL) {
+        if (!(j->flags & (JOBJ_INSTANCE | JOBJ_PTCL | JOBJ_SPLINE))) {
+            HSD_DObj* d;
+            for (d = j->u.dobj; d != NULL; d = d->next) {
+                HSD_MObjPcDim(d->mobj);
+            }
+        }
+        cssXnDimIcon(j->child, true);
+    }
+}
+
+/* Each frame: the fighter list's off portraits dim (docs/xeleenet-fighter-
+ * list-plan.md). Redone every frame, so a list changed mid-lobby shows at
+ * once. */
+static void cssXnDimOffList(void)
+{
+    int i;
+    HSD_MObjPcDimClear();
+    for (i = 0; i < 0x19; i++) {
+        HSD_JObj* j = NULL;
+        if (!cssXnOffList(i)) {
+            continue;
+        }
+        lb_80011E24(mnCharSel_804D6CC0, &j,
+                    mnCharSel_804D6CF5 == 1 ? icons[i].joint_id_1p : icons[i].joint_id_vs, -1);
+        if (j != NULL) {
+            cssXnDimIcon(j, false);
+        }
+    }
+}
+
 static void cssXnCardsFrame(void)
 {
     /* Our own name in our port's colour; the others' white. */
@@ -6765,6 +6843,7 @@ void mnCharSel_Scene_OnExit(void* unused)
     u8 type;
 
 #ifdef TARGET_PC
+    HSD_MObjPcDimClear(); /* the portraits' materials go with the scene */
     mnOnlineCss_Destroy();
 #endif
     HSD_SisLib_803A5FBC();

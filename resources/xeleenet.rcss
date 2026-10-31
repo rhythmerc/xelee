@@ -58,6 +58,16 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
 .tile.on { color: #fff8e0; border-color: #f0c226; background-color: #2a2008e0; }
 .tile.cursor { border: 3px #fff4c4; color: #ffffff; box-shadow: #ffb020e0 0px 0px 14px 3px; line-height: 84px; }
 
+/* The fighter list's page: the CSS's rows of 9, 9 and 7. */
+#fgrid { position: absolute; left: 40px; top: 74px; width: 1060px; }
+.frow { height: 96px; }
+.frow.short { padding-left: 116px; }
+.ftile { display: inline-block; width: 104px; height: 84px; margin: 0 12px 12px 0; text-align: center; font-size: 15px;
+         font-weight: bold; line-height: 80px; color: #6f6852; border: 2px #f0c22640; border-radius: 7px;
+         background-color: #0c0b08c0; }
+.ftile.on { color: #fff8e0; border-color: #f0c226; background-color: #2a2008e0; }
+.ftile.cursor { border: 3px #fff4c4; color: #ffffff; box-shadow: #ffb020e0 0px 0px 14px 3px; line-height: 78px; }
+
 /* ---- B1: lobbies ---------------------------------------------------------------- */
 
 .bhead { position: absolute; left: 30px; top: 4px; width: 1060px; height: 44px; }

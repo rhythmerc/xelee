@@ -66,6 +66,7 @@ typedef struct PcXnRules {
     int damage_ratio;   /* tenths: 5-20 */
     bool pause;
     unsigned stage_mask; /* GamePrefs.stage_mask: bit = Random Stage Switch id */
+    unsigned fighter_mask; /* the fighter list: bit = CharacterKind (xeleenet_fighters.h) */
     bool frozen_stadium;
 } PcXnRules;
 void pc_xn_menu_rules(PcXnRules* out);
@@ -116,6 +117,9 @@ unsigned pc_xn_css_names(char names[4][16], int* local);
 /* A player left the lobby (gmonlinemode.c): the notice slot says so for a few
  * seconds, through the CSS's reload. */
 void pc_xn_css_left(const char* name);
+/* A on an off-list portrait (docs/xeleenet-fighter-list-plan.md): door
+ * `port`'s player gets a notice naming the fighter, on its own machine only. */
+void pc_xn_css_off_list(int port, int ckind);
 /* START on a spare pad (physical pad `phys`) with no seat open: the notice
  * slot says the lobby is full, on this machine only. */
 void pc_xn_css_seat_full(int phys);

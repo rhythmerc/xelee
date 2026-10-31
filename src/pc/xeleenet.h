@@ -45,6 +45,7 @@ typedef struct PcXnListing {
     int stocks, time_min;
     char items[12];
     char stage_list[12];
+    char fighter_list[8]; /* all, high, low or custom (docs/xeleenet-fighter-list-plan.md) */
     bool first_to; /* else endless */
     int first_to_n;
     bool playing, xr;

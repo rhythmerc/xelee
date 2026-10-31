@@ -1618,6 +1618,7 @@ static void xnApplyRules(void)
     rules->pause = r.pause;
     gmMainLib_GetGamePrefs()->item_freq = (u8) (r.items < 0 ? 0xFF : r.items);
     gmMainLib_GetGamePrefs()->stage_mask = r.stage_mask;
+    pc_net_set_fighters(r.fighter_mask);
 }
 
 /* The handshake of the session now running, once per session (each roster
@@ -1761,6 +1762,14 @@ static void xnPicksTake(void)
         }
     }
     for (i = 0; i < 4; i++) {
+        /* A pick off the lobby's fighter list comes back empty, never as a
+         * random one (docs/xeleenet-fighter-list-plan.md). */
+        if ((xn_pick_mask & (1 << i)) && xn_pick_ckind[i] < ChKind_Max &&
+            !((pc_net_fighters() >> xn_pick_ckind[i]) & 1))
+        {
+            pc_log_line("online: XeleeNet P%d's pick %d is off the list", i + 1, xn_pick_ckind[i]);
+            xn_pick_mask &= ~(1 << i);
+        }
         if ((xn_pick_mask & ports & (1 << i)) && xn_pick_ckind[i] < ChKind_Max) {
             online_vs.start.players[i].ckind = xn_pick_ckind[i];
             online_vs.start.players[i].color = xn_pick_color[i];

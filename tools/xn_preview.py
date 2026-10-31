@@ -4,7 +4,7 @@ look (src/pc/xeleenet_menu.cpp, resources/xeleenet*.rcss).
 
     tools/xn_preview.py [PAGE ...] [--share] [--out build/xn-preview]
 
-PAGE is host, more, stages, lobbies, code, joining, progress, failed, banner,
+PAGE is host, more, stages, fighters, lobbies, code, joining, progress, failed, banner,
 css-ready, css-countdown, css-waiting, css-leaving, css-left, css-N (a full
 lobby of N seats, for the doors and the names in them), the stage
 select's sss-N, sss-draw-N or sss-landed-N for N players, or LAN's lan-host,
@@ -27,7 +27,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-PAGES = ["host", "more", "stages", "lobbies", "code", "joining", "progress", "failed", "banner",
+PAGES = ["host", "more", "stages", "fighters", "lobbies", "code", "joining", "progress", "failed", "banner",
          "css-ready", "css-countdown", "css-waiting", "css-leaving", "css-left", "css-2", "css-3", "css-4",
          "sss-2", "sss-3", "sss-4", "sss-draw-2", "sss-draw-4", "sss-landed-2", "sss-landed-4",
          "lan-host", "lan-lobbies", "lan-empty", "lan-blocked", "lan-address", "lan-banner"]

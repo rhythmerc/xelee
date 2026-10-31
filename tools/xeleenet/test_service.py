@@ -175,6 +175,16 @@ def run(url):
     check(any(x["code"] == code for x in e.list(full=True)["lobbies"]), "Show full brings it back")
     refused(lambda: a.join(code, ["198.51.100.1:41000"]), "own_lobby", "the host joining their own lobby")
 
+    print("-- the fighter list")
+    refused(lambda: a.settings(lobby, "Friday netplay", dict(four, fighter_list="top")),
+            "bad_settings", "a fighter list that doesn't exist")
+    a.settings(lobby, "Friday netplay", dict(four, fighter_list="low"))
+    row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
+    check(row and row[0]["settings"]["fighter_list"] == "low", "the listing carries the fighter list")
+    a.settings(lobby, "Friday netplay", four)
+    row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
+    check(row and row[0]["settings"]["fighter_list"] == "all", "a game that sends none lists All")
+
     print("-- leaving, removing")
     b.leave(lobby)
     check(e.join(code, ["203.0.113.5:41000"])["port"] == 1, "a leaver's seat (P2) goes to the next joiner")

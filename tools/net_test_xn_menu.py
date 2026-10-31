@@ -684,11 +684,41 @@ def leave_host_alone(host, shots):
 COMPETITIVE = sum(1 << b for b in (24, 25, 26, 4, 5, 7))  # xeleenet_menu.cpp kCompetitive
 
 
-def set_rules(ident, seats, teams=False):
+# The fighter list's Low tiers (src/pc/xeleenet_fighters.h): every playable
+# CharacterKind but the High tiers' (Zelda and Sheik together).
+FIGHTERS_ALL = (1 << 26) - 1
+FIGHTERS_HIGH = sum(1 << b for b in (0x02, 0x09, 0x0F, 0x14, 0x12, 0x13, 0x00, 0x0C, 0x0E, 0x0D, 0x11, 0x10,
+                                     0x07, 0x16))
+FIGHTERS_LOW = FIGHTERS_ALL & ~FIGHTERS_HIGH
+
+
+def set_rules(ident, seats, teams=False, fighters=FIGHTERS_ALL):
     with open(os.path.join(ident, "xeleenet-lobby.txt"), "w") as f:
         f.write(f"preset=3\nname=Set test\nopen=1\nseats={seats}\nteams={int(teams)}\nstock=0\nstocks=4\n"
                 f"minutes=1\nitems=-1\nff=0\nhandicap=0\ndamage=10\npause=0\nstages={COMPETITIVE}\n"
-                f"frozen=1\nhide=0\n")
+                f"fighters={fighters}\nfrozen=1\nhide=0\n")
+
+
+def fighters_check(insts, shots):
+    """The fighter list (docs/xeleenet-fighter-list-plan.md): RULES carried the
+    host's Low tiers to everyone, the sweeps' A on off-list portraits were
+    refused on every player, and every Ready was on a fighter on the list."""
+    ok = True
+    for i in insts:
+        t = i.text()
+        if f"fighters={FIGHTERS_LOW:07x}" not in t:
+            print(f"[{i.name}] FAIL: RULES never put Low tiers in force")
+            ok = False
+        if not nt.re.search(r"css: P\d A on off-list \d+", t):
+            print(f"[{i.name}] FAIL: no A on an off-list portrait was refused")
+            ok = False
+        for port, ck in nt.re.findall(r"css: P(\d) ready \(fighter (\d+)\)", t):
+            if not (FIGHTERS_LOW >> int(ck)) & 1:
+                print(f"[{i.name}] FAIL: P{port} readied on fighter {ck}, off the list")
+                ok = False
+    if ok:
+        print("net_test_xn_menu: the fighter list held: off-list A refused, every pick on the list", flush=True)
+    return ok
 
 
 def wait_more(insts, pattern, since, timeout):
@@ -762,8 +792,9 @@ def run(args):
     for k, name in enumerate(names):
         ident = os.path.join(args.work, f"{name}.id")
         os.makedirs(ident)
-        if args.scenario in ("set", "teams") and k == 0:
-            set_rules(ident, args.players, teams=args.scenario == "teams")
+        if args.scenario in ("set", "teams", "fighters") and k == 0:
+            set_rules(ident, args.players, teams=args.scenario == "teams",
+                      fighters=FIGHTERS_LOW if args.scenario == "fighters" else FIGHTERS_ALL)
         env = {
             "MELEE_XN_URL": args.url,
             "MELEE_XN_NAME": NAMES[k],
@@ -796,7 +827,7 @@ def run(args):
         shot(host, shots, "2-xeleenet-menu")
         walk(host, [("X", 7)])
         time.sleep(1.5)
-        if (args.players > 2 or args.scenario == "multipad") and args.scenario not in ("set", "teams"):
+        if (args.players > 2 or args.scenario == "multipad") and args.scenario not in ("set", "teams", "fighters"):
             # (their rules file has the seats)
             nt.press((host,), "Right", 7, 0.6)  # Preset: 1v1 (2 seats) -> Doubles (4)
         shot(host, shots, "3-host-page")
@@ -893,6 +924,8 @@ def run(args):
         if args.scenario != "ready" and not drive_css(insts):
             print("FAIL: no CSS pick reached the SSS")
             return False
+        if args.scenario == "fighters" and not fighters_check(insts, shots):
+            return False
         time.sleep(2)
         shot(host, shots, "10-sss")
         if args.scenario == "sss-host-b" and not sss_host_b(insts, shots):
@@ -953,7 +986,7 @@ def main():
     ap.add_argument("--scenario", default="",
                     choices=("", "sss-host-b", "ready", "leave-guest", "leave-host", "sss-repick", "sss-timeout",
                              "sss-same", "css-b-hold", "leave-host-alone", "set", "teams", "multipad",
-                             "multipad-full"),
+                             "multipad-full", "fighters"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
@@ -967,7 +1000,8 @@ def main():
                          "teams: Teams with a seat per player (doors moved unless 4), the host turns "
                          "its team on its door's button; "
                          "multipad: the host's second pad takes a seat, gives it up, takes it again, and "
-                         "plays (use --players 2); multipad-full: a 2-seat lobby refuses it")
+                         "plays (use --players 2); multipad-full: a 2-seat lobby refuses it; "
+                         "fighters: the host's lobby allows Low tiers only; off-list A is refused everywhere")
     ap.add_argument("--join-shots", action="store_true", help="shots every 0.35 s through the first join")
     ap.add_argument("--url", default="", help="a running service instead of a local lobby service")
     ap.add_argument("--net", choices=("service", "lan"), default="service",

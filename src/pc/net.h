@@ -208,6 +208,11 @@ void pc_net_set_teams(bool teams);
 /* The host's lobby Frozen Stadium for RULES: 0 or 1, -1 for the player's own. */
 void pc_net_set_frozen_stadium(int frozen);
 bool pc_net_rules_teams(void);
+/* XeleeNet's fighter list (docs/xeleenet-fighter-list-plan.md): the host sets
+ * what its RULES carry; pc_net_fighters is what the session agreed (the
+ * host's own setting before one), a bit per CharacterKind. All by default. */
+void pc_net_set_fighters(uint32_t mask);
+uint32_t pc_net_fighters(void);
 
 /* Called once per simulation tick before the pad queue head is consumed.
  * Replaces the head sample's four ports with the synced inputs for this

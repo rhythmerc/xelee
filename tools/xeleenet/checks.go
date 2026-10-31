@@ -218,10 +218,13 @@ type Settings struct {
 	TimeMin   int    `json:"time_min"`
 	Items     string `json:"items"`
 	StageList string `json:"stage_list"`
-	Pick      string `json:"pick"`
-	Format    string `json:"format"`
-	FirstTo   int    `json:"first_to"`
-	PlaceSecs int    `json:"place_secs"`
+	// The fighter list (docs/xeleenet-fighter-list-plan.md): all, high, low
+	// or custom. Missing reads as all, from games before it.
+	FighterList string `json:"fighter_list"`
+	Pick        string `json:"pick"`
+	Format      string `json:"format"`
+	FirstTo     int    `json:"first_to"`
+	PlaceSecs   int    `json:"place_secs"`
 }
 
 func pick(v any, allowed []string, what string) string {
@@ -249,18 +252,23 @@ func settings(v any) Settings {
 	if firstTo == nil {
 		firstTo = float64(2)
 	}
+	fighters := m["fighter_list"]
+	if fighters == nil {
+		fighters = "all"
+	}
 	out := Settings{
-		Preset:    pick(m["preset"], []string{"1v1", "doubles", "ffa", "custom"}, "preset"),
-		Seats:     intIn(m["seats"], 2, 4, "seat count"),
-		Mode:      pick(m["mode"], []string{"ffa", "teams"}, "mode"),
-		Win:       pick(m["win"], []string{"stock", "time"}, "win condition"),
-		Stocks:    intIn(m["stocks"], 1, 99, "stock count"),
-		TimeMin:   intIn(m["time_min"], 0, 99, "time limit"),
-		Items:     pick(m["items"], []string{"off", "very_low", "low", "medium", "high", "very_high"}, "item frequency"),
-		StageList: pick(m["stage_list"], []string{"competitive", "all", "custom"}, "stage list"),
-		Pick:      pick(m["pick"], []string{"loser", "everyone", "random", "host"}, "stage pick"),
-		Format:    pick(m["format"], []string{"endless", "first_to"}, "set format"),
-		FirstTo:   intIn(firstTo, 2, 5, "set length"),
+		Preset:      pick(m["preset"], []string{"1v1", "doubles", "ffa", "custom"}, "preset"),
+		Seats:       intIn(m["seats"], 2, 4, "seat count"),
+		Mode:        pick(m["mode"], []string{"ffa", "teams"}, "mode"),
+		Win:         pick(m["win"], []string{"stock", "time"}, "win condition"),
+		Stocks:      intIn(m["stocks"], 1, 99, "stock count"),
+		TimeMin:     intIn(m["time_min"], 0, 99, "time limit"),
+		Items:       pick(m["items"], []string{"off", "very_low", "low", "medium", "high", "very_high"}, "item frequency"),
+		StageList:   pick(m["stage_list"], []string{"competitive", "all", "custom"}, "stage list"),
+		FighterList: pick(fighters, []string{"all", "high", "low", "custom"}, "fighter list"),
+		Pick:        pick(m["pick"], []string{"loser", "everyone", "random", "host"}, "stage pick"),
+		Format:      pick(m["format"], []string{"endless", "first_to"}, "set format"),
+		FirstTo:     intIn(firstTo, 2, 5, "set length"),
 	}
 	out.PlaceSecs = intIn(m["place_secs"], 10, 60, "placement time")
 	switch out.PlaceSecs {

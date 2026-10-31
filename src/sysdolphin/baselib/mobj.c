@@ -434,7 +434,7 @@ void MObjSetupTev(HSD_MObj* mobj, HSD_TObj* tobj, u32 arg2)
 }
 
 #ifdef TARGET_PC
-#define PC_DIM_MAX 96
+#define PC_DIM_MAX 256 /* the CSS's 25 portraits, the stage select's 29 icons */
 static HSD_MObj* s_pc_dim[PC_DIM_MAX];
 static int s_pc_dim_n;
 

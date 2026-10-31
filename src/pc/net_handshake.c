@@ -38,6 +38,7 @@
  * yet, so none of it is implemented here. */
 #include "compat.h"
 #include "pc/net_internal.h"
+#include "pc/xeleenet_fighters.h"
 #include "pc/slp.h"
 
 #pragma GCC diagnostic push
@@ -131,6 +132,10 @@ static bool s_rules_on; /* a RULES set is in force (host or guest) */
 static bool s_rules_frozen;
 static bool s_rules_teams;
 static bool s_teams_wanted; /* what this host's RULES will carry */
+/* XeleeNet's fighter list: what this host's RULES will carry, and what the
+ * session's RULES put in force (xeleenet_fighters.h). */
+static uint32_t s_fighters_wanted = XN_FIGHTERS_ALL;
+static uint32_t s_rules_fighters = XN_FIGHTERS_ALL;
 static int s_frozen_wanted = -1; /* XeleeNet's lobby setting; -1: the player's own */
 static bool s_rules_saved; /* guest: s_rules_orig holds its own values */
 static Rules s_rules_orig;
@@ -260,6 +265,7 @@ static void rules_capture(Rules* ru) {
     ru->stage_mask = p->stage_mask;
     ru->frozen_stadium = s_frozen_wanted >= 0 ? (uint8_t)s_frozen_wanted : pc_is_frozen_stadium_enabled();
     ru->teams = s_teams_wanted;
+    ru->fighter_mask = s_fighters_wanted;
 }
 
 static void rules_apply(const Rules* ru, bool from_peer) {
@@ -274,13 +280,15 @@ static void rules_apply(const Rules* ru, bool from_peer) {
     p->stage_mask = ru->stage_mask;
     s_rules_frozen = ru->frozen_stadium != 0;
     s_rules_teams = ru->teams != 0;
+    s_rules_fighters = ru->fighter_mask;
     s_rules_on = true;
     pc_log_line("net: RULES %s mode=%u time=%u stock=%u handicap=%u dmg=%u stage_sel=%u ff=%u "
-                "pause=%u sd=%u items=%u/%016llx stages=%08x frozen=%u unlock_all=1",
+                "pause=%u sd=%u items=%u/%016llx stages=%08x frozen=%u fighters=%07x unlock_all=1",
         from_peer ? "applied" : "in force", ru->game.mode, ru->game.time_limit,
         ru->game.stock_count, ru->game.handicap, ru->game.damage_ratio, ru->game.stage_sel,
         ru->game.friendly_fire, ru->game.pause, ru->game.unk_xc, ru->item_freq,
-        (unsigned long long)ru->item_mask, ru->stage_mask, ru->frozen_stadium);
+        (unsigned long long)ru->item_mask, ru->stage_mask, ru->frozen_stadium,
+        (unsigned)ru->fighter_mask);
 }
 
 /* ---- unlock state -----------------------------------------------------
@@ -377,6 +385,15 @@ void pc_net_set_teams(bool teams) {
     s_teams_wanted = teams;
 }
 
+void pc_net_set_fighters(uint32_t mask) {
+    mask = xn_fighters_normal(mask);
+    s_fighters_wanted = mask != 0 ? mask : XN_FIGHTERS_ALL;
+}
+
+uint32_t pc_net_fighters(void) {
+    return s_rules_on ? s_rules_fighters : s_fighters_wanted;
+}
+
 void pc_net_set_frozen_stadium(int frozen) {
     s_frozen_wanted = frozen;
 }
@@ -405,7 +422,8 @@ static const char* rules_values_invalid(const Rules* ru) {
      * cover Very Low..Very High. */
     if (ru->game.mode > 3 || ru->game.time_limit > 99 || ru->game.stock_count > 99 ||
         ru->game.damage_ratio < 5 || ru->game.damage_ratio > 20 ||
-        (ru->item_freq > 4 && ru->item_freq != 0xFF) || ru->stage_mask == 0)
+        (ru->item_freq > 4 && ru->item_freq != 0xFF) || ru->stage_mask == 0 ||
+        ru->fighter_mask == 0 || ru->fighter_mask != xn_fighters_normal(ru->fighter_mask))
     {
         return "value out of range";
     }
@@ -890,6 +908,7 @@ void pc_net_slippi_rules_force(bool frozen_stadium) {
     ru.item_freq = 0xFF; /* items off */
     ru.item_mask = p->item_mask;
     ru.stage_mask = 0xE70000B0; /* Slippi's "Singles Stages" */
+    ru.fighter_mask = XN_FIGHTERS_ALL;
     /* alt_stage_mode: Direct's Frozen Stadium toggle, else 0 (Stadium transforms). */
     ru.frozen_stadium = frozen_stadium ? 1 : 0;
     unlock_force();
