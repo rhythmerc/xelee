@@ -1716,16 +1716,18 @@ bool gmOnline_XnFlow(void)
            (gm_GetCurrentGameMode() == GM_ONLINE && online_kind == ONLINE_KIND_XN);
 }
 
-void gmOnline_XnKeepPicks(const u8 ckind[4], const u8 color[4], u8 mask)
+void gmOnline_XnKeepPicks(const u8 ckind[4], const u8 color[4], const u8 team[4], u8 mask)
 {
-    u8 b[9];
+    u8 b[XN_PICKS_LEN];
     int i;
     if (pc_net_active() && pc_net_local_player() != 0) {
         return; /* a guest's CSS agrees with the host's; the host's go out */
     }
     memcpy(xn_pick_ckind, ckind, 4);
     memcpy(xn_pick_color, color, 4);
+    memcpy(xn_pick_team, team, 4);
     xn_pick_mask = mask;
+    xn_pick_teams = true;
     if (!pc_net_active()) {
         return; /* the host alone again: its own pick stays */
     }
@@ -1733,8 +1735,27 @@ void gmOnline_XnKeepPicks(const u8 ckind[4], const u8 color[4], u8 mask)
     for (i = 0; i < 4; i++) {
         b[1 + 2 * i] = ckind[i];
         b[2 + 2 * i] = color[i];
+        b[9 + i] = team[i];
     }
     pc_net_send_reliable(NET_MSG_XN_PICKS, b, sizeof b);
+}
+
+void gmOnline_XnApplySettings(void)
+{
+    PcXnRules r;
+    pc_xn_menu_rules(&r);
+    pc_xn_punch_set_seats(r.seats);
+    if (pc_net_active()) {
+        /* What the next session's RULES carry; every player commits them
+         * on its agreed frame. */
+        xnApplyRules(false);
+        pc_xn_punch_restart(PC_XN_SWITCH_SETTINGS);
+        pc_log_line("online: XeleeNet new settings; the next session carries them");
+    } else {
+        xnApplyRules(true);
+        xn_apply_reload = true;
+        pc_log_line("online: XeleeNet new settings; the host alone reloads its CSS");
+    }
 }
 
 /* Into the reloaded CSS: the host's picks (a guest waits for them; its own
@@ -1749,7 +1770,7 @@ static void xnPicksTake(void)
         bool got = false;
         xn_pick_mask = 0;
         while (!got && SDL_GetTicks() - t0 < 5000 && pc_net_active()) {
-            u8 type, b[9];
+            u8 type, b[XN_PICKS_LEN];
             int n;
             pc_net_poll();
             while ((n = pc_net_recv_reliable(&type, b, sizeof b)) >= 0) {
@@ -1758,7 +1779,9 @@ static void xnPicksTake(void)
                     for (i = 0; i < 4; i++) {
                         xn_pick_ckind[i] = b[1 + 2 * i];
                         xn_pick_color[i] = b[2 + 2 * i];
+                        xn_pick_team[i] = b[9 + i];
                     }
+                    xn_pick_teams = true;
                     got = true;
                 }
             }
@@ -1779,6 +1802,9 @@ static void xnPicksTake(void)
         {
             pc_log_line("online: XeleeNet P%d's pick %d is off the list", i + 1, xn_pick_ckind[i]);
             xn_pick_mask &= ~(1 << i);
+            if (ports & (1 << i)) {
+                pc_xn_css_dropped(i, xn_pick_ckind[i]); /* F3: that player picks again */
+            }
         }
         if ((xn_pick_mask & ports & (1 << i)) && xn_pick_ckind[i] < ChKind_Max) {
             online_vs.start.players[i].ckind = xn_pick_ckind[i];
@@ -1870,6 +1896,15 @@ bool gmOnline_XnCssFrame(void)
         if (pc_net_active()) {
             *HSD_RandSeedPtr = xn_seed;
             pc_net_check_from(pc_net_frame() + 1);
+        }
+    }
+    if (xn_apply_reload) {
+        /* The host alone took new settings (gmOnline_XnApplySettings). */
+        xn_apply_reload = false;
+        if (!pc_net_active()) {
+            xn_reload = true;
+            pc_log_line("online: XeleeNet new settings, the CSS reloads at frame %d", pc_net_frame());
+            return true;
         }
     }
     if (pc_xn_punch_poll() < 0) {

@@ -78,7 +78,8 @@ typedef struct XnStart { /* host -> guest */
      * port, port 0 lowest). A machine plays its primary port and any whose
      * owner it is: a PC's other pads (docs/lan-multipad-plan.md). */
     uint8_t owners;
-    uint8_t reserved[2];
+    uint8_t reason; /* why it starts: PC_XN_SWITCH_* (the guests' notice) */
+    uint8_t reserved;
     uint8_t direct[4]; /* per port: the ports it has its own link to */
     uint8_t seed[4];
     uint8_t nonces[4][8];
@@ -142,6 +143,8 @@ static Who s_who[4];
 static uint16_t s_block;
 static char s_lobby_code[8];
 static bool s_start_req; /* host: start without waiting for every seat */
+static bool s_restart_req; /* host: the next session, the players the same (pc_xn_punch_restart) */
+static uint8_t s_restart_reason;
 static XnStart s_start; /* the host's, sent or accepted */
 static int s_session_seq; /* sessions started this run: a new one is a roster change */
 static uint32_t s_running_seed; /* the session running's start, 0 none */
@@ -547,8 +550,8 @@ static void on_start(const XnStart* m) {
         const uint32_t at = get32b(m->at);
         if (at != 0xFFFFFFFFu) {
             s_switch_at = (int32_t)at;
-            pc_log_line("xeleenet: the next session (players %02x, owners %02x) starts at frame %d",
-                m->ports, m->owners, s_switch_at);
+            pc_log_line("xeleenet: the next session (players %02x, owners %02x) starts at frame %d%s",
+                m->ports, m->owners, s_switch_at, m->reason == PC_XN_SWITCH_SETTINGS ? " (new settings)" : "");
         }
         return;
     }
@@ -946,6 +949,8 @@ static void start_build(void) {
     s_start.seed[3] = (uint8_t)seed;
     roster_build(&s_start.ports, &s_start.owners, &prev);
     s_dropped = 0;
+    s_start.reason = s_restart_req ? s_restart_reason : PC_XN_SWITCH_ROSTER;
+    s_restart_req = false;
     put64(s_start.nonces[0], s_nonce);
     for (int g = 1; g < 4; g++) {
         const Who* w = &s_who[g];
@@ -977,8 +982,8 @@ static void start_build(void) {
     }
     s_start_next = 0;
     s_phase = PH_STARTING;
-    pc_log_line("xeleenet: starting, players %02x, owners %02x, seed %u", s_start.ports,
-        s_start.owners, seed);
+    pc_log_line("xeleenet: starting, players %02x, owners %02x, seed %u%s", s_start.ports,
+        s_start.owners, seed, s_start.reason == PC_XN_SWITCH_SETTINGS ? " (new settings)" : "");
 }
 
 /* The host's start, until everyone has answered. Then, with nobody in a
@@ -1038,6 +1043,13 @@ static bool roster_changed(void) {
     roster_build(&ports, &owners, &s_start);
     int players = 0;
     return (ports != s_start.ports || owners != s_start.owners) && links_decided(&players);
+}
+
+/* Host: a restart asked for, with every link decided (a join in flight is
+ * waited for, and goes into the same session). */
+static bool restart_ready(void) {
+    int players = 0;
+    return s_restart_req && pc_net_active() && links_decided(&players);
 }
 
 int pc_xn_punch_poll(void) {
@@ -1126,7 +1138,7 @@ int pc_xn_punch_poll(void) {
         }
         if (s_local != 0 && s_switch_at >= 0 && pc_net_frame() >= s_switch_at) {
             begin_session(get32b(s_start.seed)); /* the frame the host named */
-        } else if (s_local == 0 && roster_changed()) {
+        } else if (s_local == 0 && (roster_changed() || restart_ready())) {
             start_build();
         }
         break;
@@ -1153,6 +1165,7 @@ bool pc_xn_punch_start(const char* url, const char* name, const char* code, int 
     s_session_seq = 0;
     s_lobby_code[0] = '\0';
     s_start_req = false;
+    s_restart_req = false;
     s_want_x = 0;
     s_want_seq = 0;
     s_dropped = 0;
@@ -1324,6 +1337,30 @@ bool pc_xn_punch_claim_refused(void) {
 
 void pc_xn_punch_set_seats(int seats) {
     s_seats_live = seats;
+}
+
+void pc_xn_punch_restart(int reason) {
+    if (s_local != 0) {
+        return;
+    }
+    s_restart_req = true;
+    s_restart_reason = (uint8_t)reason;
+    pc_log_line("xeleenet: the host asks for the next session (%s)",
+        reason == PC_XN_SWITCH_SETTINGS ? "new settings" : "roster");
+}
+
+int pc_xn_punch_direct(int port) {
+    if (s_phase != PH_DONE || port < 0 || port > 3 || !start_primary(&s_start, port)) {
+        return -1;
+    }
+    return s_start.direct[port];
+}
+
+int pc_xn_punch_switch_pending(void) {
+    if (s_restart_req || (s_local == 0 && s_phase == PH_STARTING && s_riding)) {
+        return s_restart_req ? s_restart_reason : s_start.reason;
+    }
+    return s_local != 0 && s_switch_at >= 0 ? s_start.reason : -1;
 }
 
 bool pc_xn_punch_seat_left(int port) {

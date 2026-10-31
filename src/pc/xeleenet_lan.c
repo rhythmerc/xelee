@@ -191,6 +191,9 @@ static char s_address[64]; /* the host's lobby socket, as the banner shows it */
 static struct {
     char name[40];
     char settings[320];
+    int seats;     /* the Lobby Settings' (pc_xn_update_settings); 0: s_args.seats */
+    int result;    /* its answer: 0 none yet, 1 taken, -1 refused */
+    bool announce; /* the thread announces the change at once */
 } s_opts;
 /* Browsing (s_lock): rows as heard, and when the list last asked. */
 static PcXnListing s_rows[PC_XN_LIST_MAX];
@@ -288,10 +291,11 @@ static void host_announce(void) {
     snprintf(name, sizeof name, "%s", s_opts.name[0] ? s_opts.name : s_args.name);
     snprintf(settings, sizeof settings, "%s", s_opts.settings);
     snprintf(taken, sizeof taken, "%d", 1 + s_nmembers + __builtin_popcount(s_extra));
+    snprintf(seats, sizeof seats, "%d", s_opts.seats ? s_opts.seats : s_args.seats);
     s_extra_announced = s_extra;
+    s_opts.announce = false;
     SDL_UnlockMutex(s_lock);
     snprintf(proto, sizeof proto, "%d", PC_NET_PROTO_VERSION);
-    snprintf(seats, sizeof seats, "%d", s_args.seats);
     snprintf(port, sizeof port, "%u", s_lobby_port);
     snprintf(instance, sizeof instance, "xn-%.16s", s_lobby_hex);
     const char* keys[] = {"v", "rev", "disc", "id", "name", "host", "tag", "seats", "taken", "port", "s"};
@@ -348,7 +352,7 @@ static void on_join(const LJoin* j, const struct sockaddr_in* from) {
         }
     }
     if (at < 0) {
-        if (1 + s_nmembers + __builtin_popcount(s_extra) >= s_args.seats) {
+        if (1 + s_nmembers + __builtin_popcount(s_extra) >= (s_opts.seats ? s_opts.seats : s_args.seats)) {
             SDL_UnlockMutex(s_lock);
             refuse(from, j->nonce, "full");
             return;
@@ -381,7 +385,7 @@ static void on_join(const LJoin* j, const struct sockaddr_in* from) {
     memcpy(w.nonce, j->nonce, 8);
     memcpy(w.lobby, s_lobby, 16);
     w.port = (uint8_t)s_members[at].port;
-    w.seats = (uint8_t)s_args.seats;
+    w.seats = (uint8_t)(s_opts.seats ? s_opts.seats : s_args.seats);
     /* Us first, then everyone who joined before them. */
     PcXnMember self;
     memset(&self, 0, sizeof self);
@@ -755,7 +759,10 @@ static int thread_main(void* unused) {
                 }
             }
             host_roster();
-            if (now_ms() - announced > 3000) {
+            SDL_LockMutex(s_lock);
+            const bool changed = s_opts.announce;
+            SDL_UnlockMutex(s_lock);
+            if (changed || now_ms() - announced > 3000) {
                 host_announce(); /* the settings may have changed (the CSS's own) */
                 announced = now_ms();
             }
@@ -908,7 +915,51 @@ static void lan_host_options(const char* name, bool open, const char* settings_j
     SDL_LockMutex(s_lock);
     snprintf(s_opts.name, sizeof s_opts.name, "%s", name != NULL ? name : "");
     snprintf(s_opts.settings, sizeof s_opts.settings, "%s", settings_json != NULL ? settings_json : "");
+    s_opts.seats = 0; /* the next lobby opens with its own */
+    s_opts.result = 0;
     SDL_UnlockMutex(s_lock);
+}
+
+static bool lan_update_settings(const char* name, bool open, const char* settings_json) {
+    (void)open; /* every LAN lobby is listed */
+    if (s_lock == NULL || lan_status() != PC_XN_IN || s_args.mode != M_HOST) {
+        return false;
+    }
+    PcXnListing x;
+    memset(&x, 0, sizeof x);
+    pc_xn_listing_settings(settings_json, &x);
+    SDL_LockMutex(s_lock);
+    const int taken = 1 + s_nmembers + __builtin_popcount(s_extra);
+    if (x.seats != 0 && x.seats < taken) {
+        s_opts.result = -1; /* no service to ask: its refusal, made here */
+        SDL_UnlockMutex(s_lock);
+        return true;
+    }
+    snprintf(s_opts.name, sizeof s_opts.name, "%s", name != NULL ? name : "");
+    snprintf(s_opts.settings, sizeof s_opts.settings, "%s", settings_json != NULL ? settings_json : "");
+    if (x.seats != 0) {
+        s_opts.seats = x.seats;
+    }
+    s_opts.result = 1;
+    s_opts.announce = true;
+    SDL_UnlockMutex(s_lock);
+    pc_log_line("xeleenet: LAN: settings taken (%d seats)", x.seats);
+    return true;
+}
+
+static int lan_settings_result(char* why, size_t cap) {
+    if (s_lock == NULL) {
+        return 0;
+    }
+    SDL_LockMutex(s_lock);
+    const int r = s_opts.result;
+    const int taken = 1 + s_nmembers + __builtin_popcount(s_extra);
+    s_opts.result = 0;
+    SDL_UnlockMutex(s_lock);
+    if (r < 0 && why != NULL) {
+        snprintf(why, cap, "%d players are in the lobby; remove someone first", taken);
+    }
+    return r;
 }
 
 static bool lan_lobby_info(PcXnListing* out) {
@@ -976,5 +1027,5 @@ bool pc_xn_lan_unavailable(void) {
 
 const PcXnBackend pc_xn_lan_backend = {
     lan_start, lan_status, lan_error, lan_lobby, lan_members, lan_set_roster, lan_stop,
-    lan_host_options, lan_lobby_info, lan_browse, lan_browse_poll,
+    lan_host_options, lan_update_settings, lan_settings_result, lan_lobby_info, lan_browse, lan_browse_poll,
 };

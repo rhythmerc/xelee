@@ -108,6 +108,14 @@ void pc_xn_exit(void);
 /* What the next host run opens: its name, visibility and the settings
  * summary the browser shows (JSON, the service's settings object). */
 void pc_xn_host_options(const char* name, bool open, const char* settings_json);
+/* The open lobby's settings changed (the Lobby Settings overlay, docs/
+ * xeleenet-settings-overlay-plan.md): the host tells the service (PUT
+ * settings, from the thread) or LAN's announcement, at once. False when no
+ * lobby is open. The answer comes later: pc_xn_settings_result is 0 while
+ * none has, then once 1 (taken) or -1 (refused: fewer seats than players,
+ * with the service's line in `why`). */
+bool pc_xn_update_settings(const char* name, bool open, const char* settings_json);
+int pc_xn_settings_result(char* why, size_t cap);
 /* The lobby we're in, as far as the service told us (name and summary). */
 bool pc_xn_lobby_info(PcXnListing* out);
 

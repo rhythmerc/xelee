@@ -2943,6 +2943,13 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                                             HSD_AObjReqAnim,
                                                             AOBJ_ARG_AF, 10.0);
                                             icons[i].anim_timer = 0xC;
+#ifdef TARGET_PC
+                                            if (gmOnline_XnFlow()) {
+                                                /* tools/net_test_xn_menu.py steers by it */
+                                                pc_log_line("css: P%d picked %d", player_idx + 1,
+                                                            icons[i].char_kind);
+                                            }
+#endif
                                             mnCharSel_804A0BD0[door]->x5 = 0;
                                             HSD_GObjGXLink_803909D8(
                                                 mnCharSel_804A0BD0[door]->gobj,
@@ -5789,12 +5796,13 @@ static void cssXnOverlayCreate(void)
  * into the next CSS (gmOnline_XnKeepPicks), for everyone still in it. */
 static void cssXnKeepPicks(void)
 {
-    u8 ckind[4], color[4], mask = 0;
+    u8 ckind[4], color[4], team[4], mask = 0;
     int i;
     for (i = 0; i < 4; i++) {
         const PlayerInitData* p = &mnCharSel_804D6CB0->vs.start.players[i];
         ckind[i] = p->ckind;
         color[i] = p->color;
+        team[i] = p->team;
         /* A pick off the list (a new one, just committed) goes too: every
          * player's xnPicksTake drops it, and says so. */
         if (i < (s32) mnCharSel_804D6CF5 && cssXnPicked(i) && p->ckind < ChKind_Max) {

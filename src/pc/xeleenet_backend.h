@@ -17,6 +17,8 @@ typedef struct PcXnBackend {
     void (*set_roster)(const uint8_t (*keys)[32], int n, uint8_t extra);
     void (*stop)(void);
     void (*host_options)(const char* name, bool open, const char* settings_json);
+    bool (*update_settings)(const char* name, bool open, const char* settings_json);
+    int (*settings_result)(char* why, size_t cap);
     bool (*lobby_info)(PcXnListing* out);
     bool (*browse)(const char* url, const PcNetIdentity* id, bool full);
     int (*browse_poll)(PcXnListing* out, int max, int* n, int* others);

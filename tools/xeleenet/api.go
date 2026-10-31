@@ -121,7 +121,7 @@ func (s *Service) route(w http.ResponseWriter, r *http.Request, ip string) answe
 		}
 		hb := beat{State: state, Roster: roster, Extra: extra, Score: score, XR: isTrue(b["xr"])}
 		return s.locked(func() answer { return s.heartbeat(s.lobby(id), me.Pubkey, hb) })
-	case "PUT settings":
+	case "PUT settings", "POST settings": // POST: the game only speaks GET and POST
 		name, vis, ask, st := s.lobbyName(b["name"]), visibility(b["visibility"]), isTrue(b["ask"]), settings(b["settings"])
 		return s.locked(func() answer { return s.setSettings(s.lobby(id), me.Pubkey, name, vis, ask, st) })
 	case "POST admit":

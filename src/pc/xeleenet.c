@@ -59,6 +59,11 @@ static struct {
     bool open;
     char settings[512];
 } s_host_opts = {"", false, ""};
+/* The Lobby Settings' changes, for the thread to send (s_lock), and its
+ * answer: 0 none yet, 1 taken, -1 refused (s_settings_why). */
+static bool s_settings_dirty;
+static int s_settings_result;
+static char s_settings_why[160];
 /* Browse's own thread and results (s_lock). */
 static SDL_Thread* s_browse_thread;
 static int s_browse_state; /* 0 fetching, 1 done, -1 failed */
@@ -437,6 +442,50 @@ static bool heartbeat(void) {
     return status == 200;
 }
 
+/* The host's new settings (pc_xn_update_settings), from the thread. The
+ * game only speaks GET and POST: the service takes POST for PUT here. */
+static void put_settings(void) {
+    char body[1024], name[64], path[96], settings[512];
+    bool open;
+    int status = 0;
+    PcSlippiJson* r;
+    SDL_LockMutex(s_lock);
+    s_settings_dirty = false;
+    pc_slippi_json_escape(s_host_opts.name[0] ? s_host_opts.name : s_args.name, name, sizeof name);
+    open = s_host_opts.open;
+    snprintf(settings, sizeof settings, "%s", s_host_opts.settings);
+    SDL_UnlockMutex(s_lock);
+    snprintf(body, sizeof body, "{\"name\":\"%s\",\"visibility\":\"%s\",\"ask\":false,\"settings\":%s}", name,
+        open ? "public" : "private", settings);
+    snprintf(path, sizeof path, "/v1/lobbies/%s/settings", s_lobby);
+    if (!call_auth(path, body, &status, &r)) {
+        SDL_LockMutex(s_lock);
+        s_settings_result = -1;
+        snprintf(s_settings_why, sizeof s_settings_why, "Couldn't reach XeleeNet");
+        SDL_UnlockMutex(s_lock);
+        return;
+    }
+    char why[160] = "";
+    pc_slippi_json_string(pc_slippi_json_get(r, "error"), why, sizeof why);
+    pc_slippi_json_free(r);
+    SDL_LockMutex(s_lock);
+    s_settings_result = status == 200 ? 1 : -1;
+    snprintf(s_settings_why, sizeof s_settings_why, "%s", why);
+    if (status == 200) {
+        PcSlippiJson* st = NULL;
+        if (s_host_opts.name[0] != '\0') {
+            snprintf(s_info.name, sizeof s_info.name, "%s", s_host_opts.name);
+        }
+        if (pc_slippi_json_parse(settings, strlen(settings), &st, NULL, 0)) {
+            parse_settings(st, &s_info);
+            pc_slippi_json_free(st);
+        }
+    }
+    SDL_UnlockMutex(s_lock);
+    pc_log_line("xeleenet: settings %s (HTTP %d)%s%s", status == 200 ? "taken" : "refused", status,
+        why[0] ? ": " : "", why);
+}
+
 static bool join(void) {
     char common[512], body[768];
     int status = 0;
@@ -504,6 +553,12 @@ static void wait_beat(void) {
     SDL_UnlockMutex(s_lock);
     const int ms = playing && !linking ? HEARTBEAT_PLAYING_MS : HEARTBEAT_MS;
     for (int t = 0; t < ms && !SDL_GetAtomicInt(&s_stop) && SDL_GetAtomicInt(&s_playing) == playing; t += 50) {
+        SDL_LockMutex(s_lock);
+        const bool dirty = s_settings_dirty;
+        SDL_UnlockMutex(s_lock);
+        if (dirty) {
+            put_settings(); /* the settings go at once, the beat when it's due */
+        }
         SDL_Delay(50);
     }
 }
@@ -647,6 +702,34 @@ static void svc_host_options(const char* name, bool open, const char* settings_j
     snprintf(s_host_opts.settings, sizeof s_host_opts.settings, "%s", settings_json != NULL ? settings_json : "");
 }
 
+static bool svc_update_settings(const char* name, bool open, const char* settings_json) {
+    if (s_lock == NULL || svc_status() != PC_XN_IN || s_args.code[0] != '\0') {
+        return false;
+    }
+    SDL_LockMutex(s_lock);
+    snprintf(s_host_opts.name, sizeof s_host_opts.name, "%s", name != NULL ? name : "");
+    s_host_opts.open = open;
+    snprintf(s_host_opts.settings, sizeof s_host_opts.settings, "%s", settings_json != NULL ? settings_json : "");
+    s_settings_dirty = true;
+    s_settings_result = 0;
+    SDL_UnlockMutex(s_lock);
+    return true;
+}
+
+static int svc_settings_result(char* why, size_t cap) {
+    if (s_lock == NULL) {
+        return 0;
+    }
+    SDL_LockMutex(s_lock);
+    const int r = s_settings_result;
+    if (r != 0 && why != NULL) {
+        snprintf(why, cap, "%s", s_settings_why);
+    }
+    s_settings_result = 0;
+    SDL_UnlockMutex(s_lock);
+    return r;
+}
+
 static bool svc_lobby_info(PcXnListing* out) {
     if (s_lock == NULL || svc_status() != PC_XN_IN) {
         return false;
@@ -749,7 +832,7 @@ static int svc_browse_poll(PcXnListing* out, int max, int* n, int* others) {
 
 const PcXnBackend pc_xn_service_backend = {
     svc_start, svc_status, svc_error, svc_lobby, svc_members, svc_set_roster, svc_stop,
-    svc_host_options, svc_lobby_info, svc_browse, svc_browse_poll,
+    svc_host_options, svc_update_settings, svc_settings_result, svc_lobby_info, svc_browse, svc_browse_poll,
 };
 
 static PcXnNet s_net = PC_XN_NET_SERVICE;
@@ -819,6 +902,14 @@ void pc_xn_exit(void) {
 
 void pc_xn_host_options(const char* name, bool open, const char* settings_json) {
     backend()->host_options(name, open, settings_json);
+}
+
+bool pc_xn_update_settings(const char* name, bool open, const char* settings_json) {
+    return backend()->update_settings(name, open, settings_json);
+}
+
+int pc_xn_settings_result(char* why, size_t cap) {
+    return backend()->settings_result(why, cap);
 }
 
 bool pc_xn_lobby_info(PcXnListing* out) {
