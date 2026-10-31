@@ -3175,7 +3175,7 @@ static sock_t session_stop(bool keep) {
         net.active = false;
         net.resim = false;
         net.hs = HS_IDLE;
-        rules_restore();
+        rules_restore(false);
         HSD_PadLibData.qtype = 0;
         pc_log_line("net: Slippi disconnected at frame %d (status %d)", net.tick_frame, s_status);
         snaps_free();
@@ -3232,7 +3232,7 @@ static sock_t session_stop(bool keep) {
     for (int i = 0; i < MAX_PEERS; i++) {
         s_peer[i].mac_seen = false;
     }
-    rules_restore();
+    rules_restore(keep);
     HSD_PadLibData.qtype = 0;
     SDL_UnlockMutex(net.tx_lock);
     pc_log_line("net: %s at frame %d (status %d)", keep ? "session ended, socket kept" : "disconnected",
@@ -3865,7 +3865,7 @@ bool pc_net_slippi_unadopt(void) {
     net.active = false;
     net.resim = false;
     net.hs = HS_IDLE;
-    rules_restore();
+    rules_restore(false);
     HSD_PadLibData.qtype = 0;
     snaps_free();
     pc_log_line("net: Slippi game over at frame %d; the link stays up for the next one",

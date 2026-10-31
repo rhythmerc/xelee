@@ -418,6 +418,9 @@ bool lan() { return pc_xn_network() == PC_XN_NET_LAN; }
 int lobby_seats(bool host) {
     static int known;
     PcXnListing info{};
+    // In a session, the seats its RULES put in force (every player's the same).
+    if (pc_net_active() && pc_net_rules_seats() >= 2)
+        return pc_net_rules_seats();
     if (host)
         return s_host.seats;
     if (pc_xn_lobby_info(&info) && info.seats)

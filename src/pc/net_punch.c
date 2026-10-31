@@ -242,6 +242,7 @@ static void fail(const char* why) {
         s_sock = SOCK_INVALID;
     }
     pc_xn_stop();
+    pc_net_set_rules_staging(false); /* no next session will commit any */
 }
 
 static const char* ip_text(uint32_t ip, uint16_t port) {
@@ -1165,6 +1166,7 @@ bool pc_xn_punch_start(const char* url, const char* name, const char* code, int 
     s_why[0] = '\0';
     s_local = -1;
     s_seats = seats;
+    pc_net_set_rules_staging(true); /* the lobby's sessions commit their rules on the agreed frame */
     snprintf(s_url, sizeof s_url, "%s", url);
     snprintf(s_name, sizeof s_name, "%.12s", name);
     snprintf(s_code, sizeof s_code, "%s", code != NULL ? code : "");
@@ -1409,6 +1411,7 @@ void pc_xn_punch_end(void) {
         s_sock = SOCK_INVALID;
     }
     pc_xn_stop(); /* leave the lobby; a host closes it */
+    pc_net_set_rules_staging(false);
     s_phase = PH_OFF;
     s_local = -1;
     crypto_wipe(&s_id, sizeof s_id);

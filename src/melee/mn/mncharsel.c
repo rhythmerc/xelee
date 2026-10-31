@@ -5795,9 +5795,9 @@ static void cssXnKeepPicks(void)
         const PlayerInitData* p = &mnCharSel_804D6CB0->vs.start.players[i];
         ckind[i] = p->ckind;
         color[i] = p->color;
-        if (i < (s32) mnCharSel_804D6CF5 && cssXnPicked(i) && p->ckind < ChKind_Max &&
-            ((pc_net_fighters() >> p->ckind) & 1)) /* the list's: an off-list pick isn't kept */
-        {
+        /* A pick off the list (a new one, just committed) goes too: every
+         * player's xnPicksTake drops it, and says so. */
+        if (i < (s32) mnCharSel_804D6CF5 && cssXnPicked(i) && p->ckind < ChKind_Max) {
             mask |= 1 << i;
         }
     }
@@ -6064,8 +6064,8 @@ static float cssXnShifted(CssXnShift* s, float now, float dx)
 
 /* Every visit: the lobby's seats, for as long as it lasts. A seat with a
  * player in it is never one of those hidden. Every player works the same
- * out (the host's settings, the guests' listing of them), as the hand's
- * tests against the moved doors (CSS_DOOR_X) need. */
+ * out (the seats the session's RULES put in force), as the hand's tests
+ * against the moved doors (CSS_DOOR_X) need. */
 static void cssXnCardsEnter(void)
 {
     int k;

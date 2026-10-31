@@ -1602,23 +1602,30 @@ int gmOnline_XnIntent(void)
     return xn_intent;
 }
 
-/* H1's rules into Melee's own, which the RULES handshake hands to everyone. */
-static void xnApplyRules(void)
+/* H1's rules, as Melee's own, for what the host's RULES carry: the
+ * handshake hands them to everyone, and every player puts them in force on
+ * the session's agreed frame (pc_net_rules_commit). `now`: the host alone,
+ * with no session to agree one: in force at once. */
+static void xnApplyRules(bool now)
 {
     PcXnRules r;
-    GameRules* rules = gmMainLib_GetGameRules();
+    GameRules rules = *gmMainLib_GetGameRules();
     pc_xn_menu_rules(&r);
-    rules->mode = r.stock ? 1 : 0; /* Melee's Time = 0, Stock = 1 */
-    rules->stock_count = (u8) r.stocks;
-    rules->time_limit = (u8) r.minutes;
-    rules->stock_time_limit = (u8) (r.stock ? r.minutes : 0);
-    rules->friendly_fire = r.friendly_fire;
-    rules->handicap = (u8) r.handicap;
-    rules->damage_ratio = (u8) r.damage_ratio;
-    rules->pause = r.pause;
-    gmMainLib_GetGamePrefs()->item_freq = (u8) (r.items < 0 ? 0xFF : r.items);
-    gmMainLib_GetGamePrefs()->stage_mask = r.stage_mask;
+    rules.mode = r.stock ? 1 : 0; /* Melee's Time = 0, Stock = 1 */
+    rules.stock_count = (u8) r.stocks;
+    rules.time_limit = (u8) r.minutes;
+    rules.stock_time_limit = (u8) (r.stock ? r.minutes : 0);
+    rules.friendly_fire = r.friendly_fire;
+    rules.handicap = (u8) r.handicap;
+    rules.damage_ratio = (u8) r.damage_ratio;
+    rules.pause = r.pause;
+    pc_net_set_rules_wanted(&rules, (u8) (r.items < 0 ? 0xFF : r.items), r.stage_mask, r.seats);
     pc_net_set_fighters(r.fighter_mask);
+    pc_net_set_teams(r.teams);
+    pc_net_set_frozen_stadium(r.frozen_stadium ? 1 : 0);
+    if (now) {
+        pc_net_rules_take_wanted();
+    }
 }
 
 /* The handshake of the session now running, once per session (each roster
@@ -1647,6 +1654,9 @@ static bool xnAgreeFrame(void)
     }
     if (xn_agreed && !xn_entered && pc_net_frame() >= xn_start_frame) {
         xn_entered = true;
+        /* The session's rules, on the same tick for everyone, before the CSS
+         * reads them again (docs/xeleenet-settings-overlay-plan.md, O1). */
+        pc_net_rules_commit();
         *HSD_RandSeedPtr = xn_seed;
         /* Until the CSS is entered (onEnterCss), the players run different
          * scenes: those in the CSS draw random numbers there (a pick on
@@ -1669,7 +1679,7 @@ static void xnLobbyFrame(void)
     case PC_XN_MENU_HOSTED:
         /* Into the CSS alone: the lobby is open, and the first to join
          * starts the session (gmOnline_XnCssFrame). */
-        xnApplyRules();
+        xnApplyRules(true);
         pc_xn_punch_request_start();
         xn_seq = 0;
         pc_log_line("online: XeleeNet lobby open, host to the CSS");

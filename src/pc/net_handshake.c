@@ -48,6 +48,7 @@
 #include <sysdolphin/baselib/random.h>
 
 #include <SDL3/SDL_timer.h>
+#include <stddef.h>
 #include <string.h>
 
 /* ---- nonce randomness -------------------------------------------------
@@ -137,6 +138,24 @@ static bool s_teams_wanted; /* what this host's RULES will carry */
 static uint32_t s_fighters_wanted = XN_FIGHTERS_ALL;
 static uint32_t s_rules_fighters = XN_FIGHTERS_ALL;
 static int s_frozen_wanted = -1; /* XeleeNet's lobby setting; -1: the player's own */
+/* XeleeNet's lobby rules (pc_net_set_rules_wanted): what this host's RULES
+ * carry in place of its own GameRules and GamePrefs, which stay as they are
+ * until the session commits them. */
+static bool s_game_wanted_set;
+static GameRules s_game_wanted;
+static uint8_t s_items_wanted;
+static uint32_t s_stages_wanted;
+static uint8_t s_seats_wanted;
+static uint8_t s_rules_seats; /* the seats the RULES in force carry */
+/* An XeleeNet lobby (docs/xeleenet-settings-overlay-plan.md, O1): a RULES set
+ * taken while the lobby runs is staged, not applied, on the host and on the
+ * guests, and pc_net_rules_commit puts it in force on the session's agreed
+ * frame, the same tick for everyone. The CSS reads the rules every frame, so
+ * one applied on whatever frame it landed would desync it. */
+static bool s_staging;
+static bool s_staged;
+static Rules s_rules_staged;
+static bool s_staged_from_peer;
 static bool s_rules_saved; /* guest: s_rules_orig holds its own values */
 static Rules s_rules_orig;
 static uint64_t s_nonce_local;   /* ours this session; 0: not drawn yet */
@@ -256,22 +275,30 @@ static void hs_flush(void) {
 }
 
 /* The match-affecting part of RULES, from (capture) or into (apply) the
- * game's own copies. */
-static void rules_capture(Rules* ru) {
+ * game's own copies. A host's lobby rules stand in for its own when set
+ * (pc_net_set_rules_wanted); `own` takes the game's copies regardless, for
+ * the guest's snapshot of what to put back. */
+static void rules_capture_from(Rules* ru, bool own) {
     const struct GamePrefs* p = gmMainLib_GetGamePrefs();
-    ru->game = *gmMainLib_GetGameRules();
-    ru->item_freq = p->item_freq;
+    const bool wanted = s_game_wanted_set && !own;
+    ru->game = wanted ? s_game_wanted : *gmMainLib_GetGameRules();
+    ru->item_freq = wanted ? s_items_wanted : p->item_freq;
     ru->item_mask = p->item_mask;
-    ru->stage_mask = p->stage_mask;
+    ru->stage_mask = wanted ? s_stages_wanted : p->stage_mask;
     ru->frozen_stadium = s_frozen_wanted >= 0 ? (uint8_t)s_frozen_wanted : pc_is_frozen_stadium_enabled();
     ru->teams = s_teams_wanted;
     ru->fighter_mask = s_fighters_wanted;
+    ru->seats = s_seats_wanted >= 2 && s_seats_wanted <= 4 ? s_seats_wanted : 4;
+}
+
+static void rules_capture(Rules* ru) {
+    rules_capture_from(ru, false);
 }
 
 static void rules_apply(const Rules* ru, bool from_peer) {
     struct GamePrefs* p = gmMainLib_GetGamePrefs();
     if (from_peer && !s_rules_saved) {
-        rules_capture(&s_rules_orig);
+        rules_capture_from(&s_rules_orig, true);
         s_rules_saved = true;
     }
     *gmMainLib_GetGameRules() = ru->game;
@@ -281,14 +308,82 @@ static void rules_apply(const Rules* ru, bool from_peer) {
     s_rules_frozen = ru->frozen_stadium != 0;
     s_rules_teams = ru->teams != 0;
     s_rules_fighters = ru->fighter_mask;
+    s_rules_seats = ru->seats;
     s_rules_on = true;
     pc_log_line("net: RULES %s mode=%u time=%u stock=%u handicap=%u dmg=%u stage_sel=%u ff=%u "
-                "pause=%u sd=%u items=%u/%016llx stages=%08x frozen=%u fighters=%07x unlock_all=1",
+                "pause=%u sd=%u items=%u/%016llx stages=%08x frozen=%u fighters=%07x seats=%u unlock_all=1",
         from_peer ? "applied" : "in force", ru->game.mode, ru->game.time_limit,
         ru->game.stock_count, ru->game.handicap, ru->game.damage_ratio, ru->game.stage_sel,
         ru->game.friendly_fire, ru->game.pause, ru->game.unk_xc, ru->item_freq,
         (unsigned long long)ru->item_mask, ru->stage_mask, ru->frozen_stadium,
-        (unsigned)ru->fighter_mask);
+        (unsigned)ru->fighter_mask, ru->seats);
+}
+
+/* What every player must agree on, as a number for the log: the match-
+ * affecting part of the wire image, without the seed, the nonce or the start
+ * frame (a re-issued RULES moves the frame, not the rules). */
+static uint32_t rules_content_hash(const Rules* ru) {
+    Rules w = *ru;
+    wire_rules(&w);
+    return fnv1a(2166136261u, (const uint8_t*)&w + offsetof(Rules, game),
+        offsetof(Rules, unlock_hash) - offsetof(Rules, game));
+}
+
+/* A RULES set the session agreed: applied at once, or staged for the commit
+ * in an XeleeNet lobby. */
+static void rules_take(const Rules* ru, bool from_peer) {
+    if (s_staging && !net.direct) {
+        s_rules_staged = *ru;
+        s_staged_from_peer = from_peer;
+        s_staged = true;
+        pc_log_line("net: RULES staged (hash %08x)", rules_content_hash(ru));
+        return;
+    }
+    rules_apply(ru, from_peer);
+}
+
+bool pc_net_rules_commit(void) {
+    if (!s_staged) {
+        return false;
+    }
+    s_staged = false;
+    rules_apply(&s_rules_staged, s_staged_from_peer);
+    pc_log_line("net: RULES in force at frame %d hash %08x", net.tick_frame, rules_content_hash(&s_rules_staged));
+    return true;
+}
+
+void pc_net_set_rules_staging(bool on) {
+    const bool was = s_staging;
+    s_staging = on;
+    if (!on) {
+        s_staged = false;
+        s_game_wanted_set = false; /* a lobby's rules end with it */
+        s_seats_wanted = 0;
+        if (was && !net.active) {
+            rules_restore(false); /* the host alone, its lobby's rules kept in force till now */
+        }
+    }
+}
+
+void pc_net_set_rules_wanted(const struct GameRules* game, uint8_t item_freq, uint32_t stage_mask, int seats) {
+    s_game_wanted = *game;
+    s_items_wanted = item_freq;
+    s_stages_wanted = stage_mask;
+    s_seats_wanted = (uint8_t)seats;
+    s_game_wanted_set = true;
+}
+
+void pc_net_rules_take_wanted(void) {
+    Rules ru = {0};
+    const bool on = s_rules_on;
+    rules_capture(&ru);
+    s_staged = false;
+    rules_apply(&ru, false);
+    s_rules_on = on; /* none in force (the lobby's first open): the wanted ones read as they */
+}
+
+int pc_net_rules_seats(void) {
+    return s_rules_on ? s_rules_seats : s_seats_wanted;
 }
 
 /* ---- unlock state -----------------------------------------------------
@@ -362,14 +457,22 @@ static uint32_t unlock_hash_now(void) {
     return fnv1a(2166136261u, be, sizeof be);
 }
 
-void rules_restore(void) {
-    unlock_restore();
-    if (s_rules_saved) {
-        s_rules_saved = false;
-        rules_apply(&s_rules_orig, false);
-        pc_log_line("net: RULES restored own settings");
+void rules_restore(bool keep) {
+    if (keep && s_staging && !net.direct && s_rules_on) {
+        /* An XeleeNet lobby's session giving way to the next: the CSS goes on
+         * reading the rules (and the unlocks) in force until that one
+         * commits its own, on its agreed frame. */
+        s_staged = false;
+    } else {
+        unlock_restore();
+        if (s_rules_saved) {
+            s_rules_saved = false;
+            rules_apply(&s_rules_orig, false);
+            pc_log_line("net: RULES restored own settings");
+        }
+        s_rules_on = false;
+        s_staged = false;
     }
-    s_rules_on = false;
     /* The session is over; its nonces must never be reused, anything it
      * still had to send dies with it, and the next one gets a fresh log
      * budget for each refusal class. */
@@ -423,7 +526,8 @@ static const char* rules_values_invalid(const Rules* ru) {
     if (ru->game.mode > 3 || ru->game.time_limit > 99 || ru->game.stock_count > 99 ||
         ru->game.damage_ratio < 5 || ru->game.damage_ratio > 20 ||
         (ru->item_freq > 4 && ru->item_freq != 0xFF) || ru->stage_mask == 0 ||
-        ru->fighter_mask == 0 || ru->fighter_mask != xn_fighters_normal(ru->fighter_mask))
+        ru->fighter_mask == 0 || ru->fighter_mask != xn_fighters_normal(ru->fighter_mask) || ru->seats < 2 ||
+        ru->seats > 4)
     {
         return "value out of range";
     }
@@ -564,7 +668,7 @@ static void on_rules(int peer, const uint8_t* payload, int len) {
     SDL_LockMutex(net.tx_lock);
     net_key_session(peer, ru.nonce, rd.nonce);
     SDL_UnlockMutex(net.tx_lock);
-    rules_apply(&ru, true);
+    rules_take(&ru, true);
     wire_ready(&rd);
     if (!hs_send(peer, REL_READY, &rd, sizeof rd)) {
         return; /* hs_poll() retries it, and finishes the handshake when it goes out */
@@ -812,7 +916,7 @@ bool pc_net_host_match(uint32_t seed, int32_t* start_frame) {
         rules_capture(&ru);
         unlock_force();
         ru.unlock_hash = unlock_hash_now();
-        rules_apply(&ru, false);
+        rules_take(&ru, false);
         s_hs_rules = ru;
         if (hs_send_rules()) {
             pc_log_line("net: RULES sent seed=%u start_frame=%d", seed, net.start_frame);
@@ -909,6 +1013,7 @@ void pc_net_slippi_rules_force(bool frozen_stadium) {
     ru.item_mask = p->item_mask;
     ru.stage_mask = 0xE70000B0; /* Slippi's "Singles Stages" */
     ru.fighter_mask = XN_FIGHTERS_ALL;
+    ru.seats = 2;
     /* alt_stage_mode: Direct's Frozen Stadium toggle, else 0 (Stadium transforms). */
     ru.frozen_stadium = frozen_stadium ? 1 : 0;
     unlock_force();

@@ -213,6 +213,23 @@ bool pc_net_rules_teams(void);
  * host's own setting before one), a bit per CharacterKind. All by default. */
 void pc_net_set_fighters(uint32_t mask);
 uint32_t pc_net_fighters(void);
+/* XeleeNet's lobby rules (docs/xeleenet-settings-overlay-plan.md, O1):
+ *   - pc_net_set_rules_staging: on while a lobby runs (net_punch.c). A RULES
+ *     set is then staged, on the host and on the guests, and the rules in
+ *     force stay through a session's switch to the next;
+ *   - pc_net_rules_commit: the staged set in force, on the session's agreed
+ *     frame (gmonlinemode.c's xnAgreeFrame); false when none was staged;
+ *   - pc_net_set_rules_wanted: what the host's RULES carry in place of its
+ *     own GameRules and GamePrefs, with the lobby's seats;
+ *   - pc_net_rules_take_wanted: those in force at once, the host alone;
+ *   - pc_net_rules_seats: the seats in force (the wanted ones before a
+ *     session), 0 when never set. */
+struct GameRules;
+void pc_net_set_rules_staging(bool on);
+bool pc_net_rules_commit(void);
+void pc_net_set_rules_wanted(const struct GameRules* game, uint8_t item_freq, uint32_t stage_mask, int seats);
+void pc_net_rules_take_wanted(void);
+int pc_net_rules_seats(void);
 
 /* Called once per simulation tick before the pad queue head is consumed.
  * Replaces the head sample's four ports with the synced inputs for this
