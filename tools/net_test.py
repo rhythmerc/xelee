@@ -80,6 +80,56 @@ SCENE_FILE = {
 }
 
 
+# Unpaced runs (docs/fast-tests-plan.md T3): the game runs as fast as it can
+# (MELEE_UNPACED=1) and every press is a frame script line on its key FIFO,
+# run by the game at frame boundaries, so it lands on exact frames whatever
+# the speed. A harness that has been ported sets this before its instances
+# start; the rest stay paced, with millisecond holds.
+UNPACED = False
+_mark = [0]
+
+
+def step(insts, lines, timeout=120):
+    """Unpaced: run `lines` (frame script commands) on each instance's FIFO,
+    then wait until every one has logged the mark that ends them. False on a
+    timeout or an exit."""
+    _mark[0] += 1
+    mark = f"s{_mark[0]}"
+    for inst in insts:
+        fifo_write(inst.fifo, "\n".join(list(lines) + [f"mark {mark}"]))
+    rx = re.compile(rf"script: P\d mark {mark} at frame")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if all(rx.search(i.text()) for i in insts):
+            return True
+        if any(i.proc.poll() is not None for i in insts):
+            return False
+        time.sleep(0.05)
+    return False
+
+
+def script_batch(inst, fifo, keys, stop=None, timeout=120):
+    """Unpaced: a batch of (key, ms) holds as frame lines on one FIFO (a pad
+    of `inst`'s), each followed by the old 150 ms gap, then wait for the
+    batch's mark: a workout never runs further ahead of the game than one
+    batch. False once `stop` is set, on a timeout or an exit."""
+    _mark[0] += 1
+    mark = f"w{_mark[0]}"
+    lines = []
+    for key, ms in keys:
+        lines += [f"{key} {max(1, round(ms * 60 / 1000))}f", "wait 9f"]
+    fifo_write(fifo, "\n".join(lines + [f"mark {mark}"]))
+    rx = re.compile(rf"script: P\d mark {mark} at frame")
+    deadline = time.time() + timeout
+    while time.time() < deadline and not (stop is not None and stop.is_set()):
+        if rx.search(inst.text()):
+            return True
+        if inst.proc.poll() is not None:
+            return False
+        time.sleep(0.05)
+    return False
+
+
 def fifo_write(path, line, tries=100):
     """One key line to a MELEE_KEY_FIFO; the game reopens it after every writer."""
     for _ in range(tries):
@@ -143,6 +193,8 @@ class Instance:
             "MELEE_FPS": "1",  # one line per second: the rate the drive scales its holds by
             "MELEE_NET_RECORD": self.rec_path,  # per-frame pads + checksum, for check_match()
         })
+        if UNPACED:
+            e["MELEE_UNPACED"] = "1"  # as fast as it runs; the inputs are frame scripts
         if not lobby:  # a lobby (matchmaking, XeleeNet) starts the session itself
             e["MELEE_NET"] = f"127.0.0.1:{peer_port}"
             e["MELEE_NET_PLAYER"] = "0" if name == "a" else "1"
@@ -209,6 +261,9 @@ def frame_ms(inst):
 def press(insts, key, frames, settle=0.6):
     """Hold `key` for `frames` simulated frames on each instance, then wait out
     the hold, the fifo thread's own 100 ms gap and `settle` seconds."""
+    if UNPACED:  # the same, in frames: the gap is 6, a second 60
+        step(insts, [f"{key} {frames}f", f"wait {6 + int(settle * 60)}f"])
+        return
     worst = 0.0
     for inst in insts:
         ms = frames * frame_ms(inst)
@@ -227,6 +282,14 @@ def press_until(insts, key, frames, pattern, want=1, tries=15, each=6.0, on=None
     def there():
         return all(count(i, pattern) >= want for i in insts)
 
+    if UNPACED:
+        # The retries in frames: a tap, then `each` seconds' worth of frames.
+        for _ in range(tries):
+            if there():
+                return True
+            if not step(on or insts, [f"tap {key} {frames}f", f"wait {int(each * 60)}f"]):
+                return there()
+        return there()
     for _ in range(tries):
         if there():
             return True
@@ -284,6 +347,15 @@ class Workout:
 
     def _combat(self, inst, side):
         i = 0
+        while UNPACED and not self._stop.is_set():
+            batch = []
+            for _ in range(12):
+                key, ms = COMBAT[i % len(COMBAT)]
+                i += 1
+                batch.append((mirror(key) if side else key, ms + 13 * side + (i % 3) * 7))
+            if inst.proc.poll() is not None or not script_batch(inst, inst.fifo, batch, self._stop):
+                return
+            self.n += len(batch)
         while not self._stop.is_set():
             key, ms = COMBAT[i % len(COMBAT)]
             i += 1
@@ -299,6 +371,16 @@ class Workout:
 
     def _run(self):
         i = 0
+        while UNPACED and not self._stop.is_set():
+            batch = [WORKOUT[(i + j) % len(WORKOUT)] for j in range(12)]
+            i += 12
+            for inst in self.insts:
+                if inst.proc.poll() is None:
+                    fifo_write(inst.fifo, "\n".join(
+                        [f"{k} {max(1, round(ms * 60 / 1000))}f\nwait 9f" for k, ms in batch]))
+            if not step(self.insts, [], timeout=120):
+                return
+            self.n += len(batch)
         while not self._stop.is_set():
             key, ms = WORKOUT[i % len(WORKOUT)]
             i += 1
@@ -348,6 +430,9 @@ def settle(insts, frames):
     Measured: /tmp/sf_scenes1, where b's Down at the main menu was dropped and
     the fixed schedule walked it into the vanilla CSS instead of the lobby
     while a reached the lobby from the identical key sequence."""
+    if UNPACED:
+        step(insts, [f"wait {frames}f"])
+        return
     time.sleep(max(frames * frame_ms(i) for i in insts) / 1000.0)
 
 

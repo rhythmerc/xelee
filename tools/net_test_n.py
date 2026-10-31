@@ -75,6 +75,15 @@ class Drive:
 
     def _run(self, inst, fifo, k):
         i = 2 * k
+        while nt.UNPACED and not self._stop.is_set():
+            batch = []
+            for _ in range(12):
+                key, ms = nt.WORKOUT[i % len(nt.WORKOUT)]
+                i += 1
+                batch.append((key, ms + 17 * k))
+            if inst.proc.poll() is not None or not nt.script_batch(inst, fifo, batch, self._stop):
+                return
+            self.n += len(batch)
         while not self._stop.is_set():
             key, ms = nt.WORKOUT[i % len(nt.WORKOUT)]
             i += 1
@@ -193,7 +202,10 @@ def run(args):
         kill_at = None
         if ok and args.kill:
             who, _, secs = args.kill.partition("@")
-            kill_at = (names.index(who), time.time() + float(secs or 20))
+            # Seconds of match: of wall time paced, of frames (60 a second)
+            # unpaced, where the wall runs several times faster.
+            now = max([int(x) for x in nt.re.findall(r"net: frame (\d+)", "".join(i.text() for i in insts))] or [0])
+            kill_at = (names.index(who), now + float(secs or 20) * 60 if nt.UNPACED else time.time() + float(secs or 20))
             print(f"net_test_n: {who} plays " + ", ".join(f"P{k + 1}" for k in plays[names.index(who)]),
                   flush=True)
         deadline = time.time() + frames / 12.0 + 60
@@ -202,7 +214,8 @@ def run(args):
         last_frame, last_progress = -1, time.time()
         while time.time() < deadline and any(i.proc.poll() is None for i in insts):
             time.sleep(1)
-            if kill_at is not None and time.time() >= kill_at[1]:
+            fr_now = max([int(x) for x in nt.re.findall(r"net: frame (\d+)", "".join(i.text() for i in insts))] or [0])
+            if kill_at is not None and (fr_now if nt.UNPACED else time.time()) >= kill_at[1]:
                 victim = insts[kill_at[0]]
                 print(f"net_test_n: killing {victim.name} (P{plays[kill_at[0]][0] + 1})", flush=True)
                 victim.proc.kill()
@@ -283,6 +296,8 @@ def main():
     ap.add_argument("--jitter", action="store_true")
     ap.add_argument("--minutes", type=float, default=1)
     ap.add_argument("--no-key", action="store_true", help="links keyed by the handshake only")
+    ap.add_argument("--paced", action="store_true",
+                    help="the old way: 60 Hz, key holds in milliseconds (docs/fast-tests-plan.md)")
     ap.add_argument("--owners", default="", help="the instance that plays each port, e.g. 0,1,1,2")
     ap.add_argument("--block", default="", help="port pairs that cannot reach each other, e.g. 1:2")
     ap.add_argument("--kill", default="", help="instance@seconds into the match to SIGKILL, e.g. c@20")
@@ -298,6 +313,7 @@ def main():
     ap.add_argument("--port", type=int, default=42150, help="P1's UDP port; P2.. use +1..")
     ap.add_argument("--work", default="/tmp/net_test_n")
     args = ap.parse_args()
+    nt.UNPACED = not args.paced  # docs/fast-tests-plan.md T4: as fast as it runs
     service = None
     if args.lan:
         args.xn, args.xn_url = True, "lan"  # no service: the code path stays --xn's
