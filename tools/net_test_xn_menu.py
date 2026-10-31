@@ -179,6 +179,110 @@ def ready_scenario(insts, shots):
     return True
 
 
+class PadHand:
+    """Another pad of an instance's machine (MELEE_KEY_FIFO_P2..), driven like
+    an instance: nt.press and the drives take it in a list of instances."""
+
+    def __init__(self, inst, pad):
+        self.inst, self.pad = inst, pad
+        self.fifo = os.path.join(os.path.dirname(inst.fifo), f"{inst.name}.pad{pad}.keys")
+        self.name = f"{inst.name}{pad}"
+
+    def key(self, line):
+        nt.fifo_write(self.fifo, line)
+
+    def __getattr__(self, attr):
+        return getattr(self.inst, attr)
+
+
+def multipad_scenario(insts, pad, shots):
+    """More than one player on one machine (docs/lan-multipad-plan.md): the
+    host's second pad presses START on the CSS and gets the open seat, P3;
+    everyone's CSS reloads with it. Its hold of B gives the seat up again
+    (the host stays), and a second START takes it back. run() then plays a
+    match with every seat, the second pad's included."""
+    host = insts[0]
+    nt.settle(insts, nt.MENU_SETTLE)
+    time.sleep(1.5)
+    shot(host, shots, "mp-1-css-spare")
+    seated = "(players 07"
+    for attempt in range(2):
+        before = [i.text().count(seated) for i in insts]
+        loads = [css_loads(i) for i in insts]
+        pad.key("Return 150")
+        for i, n in zip(insts, before):
+            deadline = time.time() + 40
+            while time.time() < deadline and i.text().count(seated) <= n:
+                time.sleep(0.5)
+            if i.text().count(seated) <= n:
+                print(f"[{i.name}] FAIL: no session with the second pad's seat {seated})")
+                return False
+        if not host.wait_log(r"net: this machine plays ports 5 \(P1<-pad 1 P3<-pad 2\)", 30):
+            print("FAIL: the host doesn't play P3 from its second pad")
+            return False
+        if not reloaded(insts, loads):
+            return False
+        time.sleep(1.5)
+        shot(host, shots, f"mp-{2 + 3 * attempt}-css-added-host")
+        shot(insts[1], shots, f"mp-{2 + 3 * attempt}-css-added-guest")
+        print(f"net_test_xn_menu: the second pad plays P3 ({'again' if attempt else 'first'})", flush=True)
+        if attempt:
+            break
+        # The second pad gives its seat up: a hold of B on it. The host stays.
+        menus = [menu_loads(i) for i in insts]
+        before = [i.text().count("(players 03") for i in insts]
+        loads = [css_loads(i) for i in insts]
+        pad.key(f"Z {int(90 * nt.frame_ms(host))}")
+        time.sleep(40 * nt.frame_ms(host) / 1000)
+        shot(host, shots, "mp-3-css-giving-up")
+        for i, n in zip(insts, before):
+            deadline = time.time() + 40
+            while time.time() < deadline and i.text().count("(players 03") <= n:
+                time.sleep(0.5)
+            if i.text().count("(players 03") <= n:
+                print(f"[{i.name}] FAIL: the seat was never given up")
+                return False
+        if any(menu_loads(i) > n for i, n in zip(insts, menus)):
+            print("FAIL: giving up the second pad's seat took someone out of the lobby")
+            return False
+        if not reloaded(insts, loads):
+            return False
+        time.sleep(1.5)
+        shot(host, shots, "mp-4-css-given-up")
+        print("net_test_xn_menu: the second pad gave its seat up; the host stayed", flush=True)
+    return True
+
+
+def reloaded(insts, loads, timeout=60):
+    """Every CSS has loaded again since `loads` (css_loads per instance)."""
+    for i, n in zip(insts, loads):
+        deadline = time.time() + timeout
+        while time.time() < deadline and css_loads(i) <= n:
+            time.sleep(0.3)
+        if css_loads(i) <= n:
+            print(f"[{i.name}] FAIL: the CSS never reloaded")
+            return False
+    return True
+
+
+def multipad_full(insts, pad, shots):
+    """A spare pad's START with no seat open: a notice on that machine only,
+    and no session change."""
+    host = insts[0]
+    nt.settle(insts, nt.MENU_SETTLE)
+    pad.key("Return 150")
+    if not host.wait_log(r"css: controller 2 asks for a seat; the lobby is full", 15):
+        print("FAIL: the full lobby's START wasn't refused")
+        return False
+    time.sleep(0.8)
+    shot(host, shots, "mp-full")
+    if "(players 07" in host.text():
+        print("FAIL: a seat came anyway")
+        return False
+    print("net_test_xn_menu: the full lobby refused the second pad", flush=True)
+    return True
+
+
 def css_loads(inst):
     return len(nt.re.findall(nt.SCENE_FILE["css"], inst.text()))
 
@@ -672,6 +776,10 @@ def run(args):
             env["MELEE_NET_SIM_NO_MCAST"] = "1"
         if args.scenario == "sss-repick" and k == 1:
             env["MELEE_NET_SIM_DELAY_MS"] = "80"  # P2's last change races P3's pick
+        if args.scenario.startswith("multipad") and k == 0:
+            fifo = os.path.join(args.work, f"{name}.pad2.keys")
+            os.mkfifo(fifo)
+            env["MELEE_KEY_FIFO_P2"] = fifo  # the host's second pad
         insts.append(nt.Instance(name, args.exe, args.disc, args.work, ports[k], 0, env, True))
     ok = False
     try:
@@ -688,7 +796,8 @@ def run(args):
         shot(host, shots, "2-xeleenet-menu")
         walk(host, [("X", 7)])
         time.sleep(1.5)
-        if args.players > 2 and args.scenario not in ("set", "teams"):  # their rules file has the seats
+        if (args.players > 2 or args.scenario == "multipad") and args.scenario not in ("set", "teams"):
+            # (their rules file has the seats)
             nt.press((host,), "Right", 7, 0.6)  # Preset: 1v1 (2 seats) -> Doubles (4)
         shot(host, shots, "3-host-page")
         nt.press((host,), "Return", 9, 1.0)  # START: open the lobby
@@ -771,6 +880,14 @@ def run(args):
             return ok
         if args.scenario == "css-b-hold" and not css_b_hold(insts, shots):
             return False
+        pad = PadHand(host, 2) if args.scenario.startswith("multipad") else None
+        if args.scenario == "multipad-full":
+            ok = multipad_full(insts, pad, shots)
+            return ok
+        if args.scenario == "multipad":
+            if not multipad_scenario(insts, pad, shots):
+                return False
+            insts = insts + [pad]  # its hand picks, readies and plays from here on
         if args.scenario == "teams" and not teams_scenario(insts, shots):
             return False
         if args.scenario != "ready" and not drive_css(insts):
@@ -835,7 +952,8 @@ def main():
     ap.add_argument("--block", default="")
     ap.add_argument("--scenario", default="",
                     choices=("", "sss-host-b", "ready", "leave-guest", "leave-host", "sss-repick", "sss-timeout",
-                             "sss-same", "css-b-hold", "leave-host-alone", "set", "teams"),
+                             "sss-same", "css-b-hold", "leave-host-alone", "set", "teams", "multipad",
+                             "multipad-full"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
@@ -847,7 +965,9 @@ def main():
                          "leave-host-alone: the host alone holds B and leaves its lobby; "
                          "set: 1-minute matches, the results, back to the CSS and a rematch; "
                          "teams: Teams with a seat per player (doors moved unless 4), the host turns "
-                         "its team on its door's button")
+                         "its team on its door's button; "
+                         "multipad: the host's second pad takes a seat, gives it up, takes it again, and "
+                         "plays (use --players 2); multipad-full: a 2-seat lobby refuses it")
     ap.add_argument("--join-shots", action="store_true", help="shots every 0.35 s through the first join")
     ap.add_argument("--url", default="", help="a running service instead of a local lobby service")
     ap.add_argument("--net", choices=("service", "lan"), default="service",

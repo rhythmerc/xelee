@@ -407,6 +407,17 @@ xeleenet:
     tag_waiting: Waiting on you · START
     holding: Keep holding B to leave the lobby
     left: "{name} left the lobby"
+    # More than one player on one machine (docs/lan-multipad-plan.md).
+    holding_seat: "Keep holding B to give up P{p} (controller {n})"
+    holding_all: "Keep holding B: you and {names} leave the lobby"
+    seat_mine: "Controller {n} plays as P{p}"
+    seat_added: "{name} added a player (P{p})"
+    seat_full: "Controller {n}: the lobby is full ({m}/{m})"
+    tag_controller: CONTROLLER {n}
+    tag_owner: "on {name}'s PC"   # another machine's other pad, on everyone else's CSS
+    spare_title: CONTROLLER {n}
+    spare_line: Press START to play here
+    spare_adding: adding a player…
 
   banner:
     brand: XeleeNet

@@ -381,6 +381,8 @@ static struct CSSDoorsData2 data2 = {
 #include "pc/region.h"
 #include "pc/xr_pointer.h"
 #include "pc/xeleenet_menu.h"
+#include "pc/net_punch.h"
+#include <dolphin/pad.h>
 #include <aurora/aurora.h>
 #include <melee/lb/lbvector.h>
 #include <sysdolphin/baselib/initialize.h>
@@ -5772,6 +5774,57 @@ static void cssXnReadyReset(void)
     memset(css_xn_hold, 0, sizeof css_xn_hold);
 }
 
+/* A spare pad on this machine (connected, playing no seat) asking for one
+ * with START (docs/lan-multipad-plan.md). Read off the pads as the netplay
+ * engine sampled them, not the shared ones: only this machine sees it, and
+ * nothing reaches the simulation until the host's next session seats it. */
+static void cssXnSparePads(PcXnCssState* st)
+{
+    static u8 start_down;
+    int claims[2], nclaims = pc_xn_punch_claims(claims);
+    int phys, k;
+    u8 taken = 0;
+    st->spare = -1;
+    st->claimed = 0;
+    for (k = 0; k < nclaims; k++) {
+        st->claimed |= (u8) (1u << claims[k]);
+    }
+    if (!pc_net_active()) {
+        return;
+    }
+    for (k = 0; k < 4; k++) {
+        if (pc_net_port_phys(k) >= 0) {
+            taken |= (u8) (1u << pc_net_port_phys(k));
+        }
+    }
+    for (phys = 1; phys < 4; phys++) {
+        PADStatus pad;
+        const u8 bit = (u8) (1u << phys);
+        const bool on = pc_net_phys_pad(phys, &pad);
+        const bool start = on && (pad.button & PAD_BUTTON_START);
+        if (!on || (taken & bit) || (st->claimed & bit)) {
+            start_down = start ? start_down | bit : start_down & ~bit;
+            continue;
+        }
+        if (st->spare < 0) {
+            st->spare = phys;
+        }
+        if (start && !(start_down & bit)) {
+            const int used = __builtin_popcount((unsigned) pc_net_port_mask() & 15u) + nclaims;
+            if (used < css_xn_seats) {
+                pc_log_line("css: controller %d asks for a seat", phys + 1);
+                pc_xn_punch_want_seat(phys);
+                st->claimed |= bit;
+                nclaims++;
+            } else {
+                pc_log_line("css: controller %d asks for a seat; the lobby is full", phys + 1);
+                pc_xn_css_seat_full(phys);
+            }
+        }
+        start_down = start ? start_down | bit : start_down & ~bit;
+    }
+}
+
 /* Before the procs read the pads (Scene_OnFrame): START and a Ready player's
  * B are taken out of the pads, so the CSS never starts on START and a B that
  * takes Ready back doesn't also un-pick. Held B is taken out too: Melee's own
@@ -5892,12 +5945,26 @@ static bool cssXnReadyFrame(void)
             st.countdown_total = CSS_XN_COUNTDOWN;
             st.seats = css_xn_seats;
             {
-                /* Only the one holding sees their hold: the ring and the notice. */
+                /* Only the one holding sees their hold: the ring and the
+                 * notice. This machine's seats are all ours: the one held
+                 * longest (docs/lan-multipad-plan.md). */
                 const int me = pc_net_active() ? pc_net_local_player() : 0;
-                st.hold = me >= 0 && me < 4 ? css_xn_hold[me] : 0;
+                const unsigned mine = pc_net_active() ? (unsigned) pc_net_local_mask() : 1u;
+                int k, held = me;
+                for (k = 0; k < 4; k++) {
+                    if ((mine & (1u << k)) && held >= 0 && held < 4 &&
+                        css_xn_hold[k] > css_xn_hold[held])
+                    {
+                        held = k;
+                    }
+                }
+                st.local = (u8) mine;
+                st.hold_port = held;
+                st.hold = held >= 0 && held < 4 ? css_xn_hold[held] : 0;
                 st.hold_total = CSS_XN_LEAVE;
-                st.hand_ok = cssXnHandOnScreen(me, &st.hand_x, &st.hand_y);
+                st.hand_ok = cssXnHandOnScreen(held, &st.hand_x, &st.hand_y);
             }
+            cssXnSparePads(&st);
             pc_xn_css_frame(&st);
         }
     }
@@ -6412,7 +6479,9 @@ static void cssXnCardsFrame(void)
         }
         td->text->pos_y = cssXnShifted(&css_xn_tag_lift[i], td->text->pos_y, css_xn_name_dy[i]);
         {
-            GXColor c = i == local ? port_color[i] : (GXColor) { 0xFF, 0xFF, 0xFF, 0xFF };
+            /* Every seat this machine plays is ours (its other pads too). */
+            bool ours = i == local || (pc_net_local_mask() & (1u << i));
+            GXColor c = ours ? port_color[i] : (GXColor) { 0xFF, 0xFF, 0xFF, 0xFF };
             HSD_SisLib_803A74F0(td->text, 0, &c);
         }
         td->text->hidden = 0;

@@ -99,6 +99,13 @@ typedef struct PcXnCssState {
     bool hand_ok;         /* their hand on screen, as fractions of it */
     float hand_x, hand_y;
     int seats; /* the doors shown, the lobby's seats: those of ports 0 to seats-1, centred */
+    /* This machine's seats (docs/lan-multipad-plan.md): its ports, which one
+     * `hold` is, its first connected pad with no seat (-1 none), and its pads
+     * waiting for one (bit = pad). */
+    uint8_t local;
+    int hold_port;
+    int spare;
+    uint8_t claimed;
 } PcXnCssState;
 void pc_xn_css_frame(const PcXnCssState* state);
 /* For the CSS's doors (mncharsel.c): the lobby's seats (2-4, 4 when not
@@ -109,6 +116,9 @@ unsigned pc_xn_css_names(char names[4][16], int* local);
 /* A player left the lobby (gmonlinemode.c): the notice slot says so for a few
  * seconds, through the CSS's reload. */
 void pc_xn_css_left(const char* name);
+/* START on a spare pad (physical pad `phys`) with no seat open: the notice
+ * slot says the lobby is full, on this machine only. */
+void pc_xn_css_seat_full(int phys);
 /* A line for the next XeleeNet page (pc_xn_menu_begin), e.g. why the player
  * is back there. A lang key. */
 void pc_xn_menu_note(const char* key);

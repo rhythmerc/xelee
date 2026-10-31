@@ -1786,6 +1786,21 @@ int gmOnline_XnLeave(int port)
         pc_xn_punch_end();
         return 1;
     }
+    if (pc_net_port_owner(port) >= 0 && pc_net_port_owner(port) != port) {
+        /* A machine's other pad gave up its seat (docs/lan-multipad-plan.md):
+         * its machine stays, and the host's next session leaves the seat
+         * open. Every player sees it on this frame. */
+        PcXnPunchView v;
+        int k;
+        pc_xn_punch_view(&v);
+        for (k = 0; k < v.nplayers; k++) {
+            if (v.players[k].port == port) {
+                pc_xn_css_left(v.players[k].name);
+            }
+        }
+        pc_xn_punch_seat_left(port);
+        return 0;
+    }
     if (port == me || port == 0) {
         /* We leave: our own hold, or the host's, which closes the lobby. The
          * others need our input up to this frame (they leave too, or play on

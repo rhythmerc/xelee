@@ -340,6 +340,7 @@ void view(PcXnPunchView* v) {
         std::snprintf(v->players[i].name, sizeof v->players[i].name, "%s", full ? full_names[i] : names[i]);
         v->players[i].local = i == (full ? 0 : 2);
         v->players[i].linked = full || i != 1;
+        v->players[i].owner = i;
     }
 }
 
@@ -1576,6 +1577,64 @@ constexpr uint64_t kLeftNoticeMs = 5000, kLeftReloadMs = 15000;
 // The hold's notice shows from this many frames of it on.
 constexpr int kHoldNotice = 10;
 
+// This machine's other pads (docs/lan-multipad-plan.md): the notice a seat
+// change gives (one at a time, for a few seconds), the door whose controller
+// tag shows new, and what the last frame had, to tell what changed.
+std::string s_seat_note, s_seat_note_kind;
+uint64_t s_seat_note_at = 0;
+int s_seat_new_port = -1;
+uint64_t s_seat_new_at = 0;
+unsigned s_prev_local = 0, s_prev_others = 0, s_prev_claimed = 0;
+constexpr uint64_t kSeatNoteMs = 4000;
+
+void seat_note(const std::string& kind, const std::string& text) {
+    s_seat_note_kind = kind;
+    s_seat_note = text;
+    s_seat_note_at = SDL_GetTicks();
+}
+
+// The name a player goes by on the doors: "NAME" of "NAME#TAG".
+std::string short_name(const char* name) {
+    std::string n = name;
+    const size_t hash = n.find('#');
+    return hash == std::string::npos ? n : n.substr(0, hash);
+}
+
+// What changed in this machine's seats and the others' since the last frame.
+void seat_changes(const PcXnPunchView& v, int seats) {
+    const unsigned local = unsigned(pc_net_local_mask());
+    unsigned others = 0;
+    for (int i = 0; i < v.nplayers; i++)
+        if (v.players[i].owner != v.players[i].port && !v.players[i].local)
+            others |= 1u << v.players[i].port;
+    if (pc_xn_punch_claim_refused() && s_prev_claimed != 0)
+        pc_xn_css_seat_full(__builtin_ctz(s_prev_claimed));
+    s_prev_claimed = s_css.claimed;
+    if (local == 0)
+        return; // between sessions
+    if (s_prev_local != 0) {
+        for (int q = 0; q < 4; q++) {
+            const unsigned bit = 1u << q;
+            if ((local & ~s_prev_local & bit) && q != pc_net_local_player()) {
+                seat_note("gold", tr("xeleenet.css.seat_mine", {{"n", pc_net_port_phys(q) + 1}, {"p", q + 1}}));
+                s_seat_new_port = q;
+                s_seat_new_at = SDL_GetTicks();
+            }
+            // Another machine's new seat: named after its machine, as the
+            // lobby tells it (the engine may not have switched yet).
+            for (int i = 0; i < v.nplayers && (others & ~s_prev_others & bit); i++)
+                if (v.players[i].port == q)
+                    for (int j = 0; j < v.nplayers; j++)
+                        if (v.players[j].port == v.players[i].owner)
+                            seat_note("info", tr("xeleenet.css.seat_added",
+                                                 {{"name", short_name(v.players[j].name)}, {"p", q + 1}}));
+        }
+    }
+    (void)seats;
+    s_prev_local = local;
+    s_prev_others = others;
+}
+
 // The doors' rectangles in the CSS as Melee lays it out, as fractions of the
 // game's picture (the RmlUi context is that picture: Aurora's content
 // framebuffer, not the window): four in a row under the portraits, measured
@@ -1657,8 +1716,24 @@ struct Banner {
         // The notice slot, under the banner: our own hold toward leaving, the
         // countdown, who's waited on, or who left.
         std::string notice;
+        if (css)
+            seat_changes(v, seats);
+        const unsigned local = css ? s_css.local : 0u;
+        const int me = pc_net_local_player();
         if (css && s_css.hold >= kHoldNotice) {
-            notice = "<div class=\"notice red\">" + enc(tr("xeleenet.css.holding")) + "</div>";
+            // Another seat of ours gives up only itself; our own takes them all.
+            std::string text = tr("xeleenet.css.holding");
+            const int hp = s_css.hold_port;
+            if (hp >= 0 && hp < 4 && hp != me && (local & (1u << hp))) {
+                text = tr("xeleenet.css.holding_seat", {{"p", hp + 1}, {"n", pc_net_port_phys(hp) + 1}});
+            } else if (local & ~(1u << me) & 15u) {
+                std::string names;
+                for (int i = 0; i < v.nplayers; i++)
+                    if (v.players[i].local && v.players[i].port != me)
+                        names += (names.empty() ? "" : ", ") + short_name(v.players[i].name);
+                text = tr("xeleenet.css.holding_all", {{"names", names}});
+            }
+            notice = "<div class=\"notice red\">" + enc(text) + "</div>";
         } else if (css && s_css.countdown > 0) {
             const int secs = (s_css.countdown + 59) / 60;
             const float left = s_css.countdown_total > 0 ? float(s_css.countdown) / s_css.countdown_total : 0.f;
@@ -1673,6 +1748,8 @@ struct Banner {
             notice = "<div class=\"notice warn\">" +
                      enc(tr("xeleenet.css.waiting_on", {{"name", hash == std::string::npos ? who : who.substr(0, hash)}})) +
                      "</div>";
+        } else if (s_seat_note_at != 0 && SDL_GetTicks() - s_seat_note_at < kSeatNoteMs) {
+            notice = "<div class=\"notice " + s_seat_note_kind + "\">" + enc(s_seat_note) + "</div>";
         } else if (s_left_at != 0 && SDL_GetTicks() - s_left_at < kLeftNoticeMs) {
             notice = "<div class=\"notice info\">" + enc(tr("xeleenet.css.left", {{"name", s_left_name}})) + "</div>";
         }
@@ -1702,25 +1779,65 @@ struct Banner {
             // The lobby's seats' doors stand centred (mncharsel.c moves them).
             const int seats = s_css.seats >= 2 && s_css.seats <= 4 ? s_css.seats : 4;
             const float shift = (4 - seats) * kDoorPitch / 2;
+            // The first open seat a spare pad of ours can take (docs/lan-multipad-plan.md).
+            int open = -1;
+            for (int i = 0; i < seats && open < 0; i++)
+                if (!(s_css.humans & (1u << i)))
+                    open = i;
+            // Our doors carry their controller's number once we play more
+            // than one, or a spare pad could join.
+            const bool tags = __builtin_popcount(s_css.local & 15u) > 1 || s_css.spare >= 0;
             for (int i = 0; i < 4; i++) {
                 const unsigned bit = 1u << i;
-                if (!(s_css.humans & bit))
-                    continue;
                 const float x = css_zoom(kDoorX0 + i * kDoorPitch + shift) * d.x, w = kDoorW * PC_XN_CSS_ZOOM * d.x;
                 const float y = css_zoom(kDoorY0) * d.y, h = kDoorH * PC_XN_CSS_ZOOM * d.y;
+                if (i == open && (s_css.spare >= 0 || s_css.claimed != 0)) {
+                    const bool adding = s_css.claimed != 0;
+                    const int pad = (adding ? __builtin_ctz(s_css.claimed) : s_css.spare) + 1;
+                    r += "<div class=\"door spare\" style=\"left: " + fmt(x) + "px; top: " + fmt(y) + "px; width: " +
+                         fmt(w) + "px; height: " + fmt(h) + "px; font-size: " + fmt(15.f * k) + "px;\">" +
+                         "<div class=\"st\" style=\"margin-top: " + fmt(0.38f * h) + "px;\">" +
+                         enc(tr("xeleenet.css.spare_title", {{"n", pad}})) + "</div><div class=\"sl\" style=\"font-size: " +
+                         fmt(12.f * k) + "px;\">" +
+                         enc(tr(adding ? "xeleenet.css.spare_adding" : "xeleenet.css.spare_line")) + "</div>" +
+                         (adding ? "" : "<div class=\"sk\" style=\"font-size: " + fmt(9.f * k) + "px;\">START</div>") +
+                         "</div>";
+                    continue;
+                }
+                if (!(s_css.humans & bit))
+                    continue;
                 std::string tag;
+                // Another machine's other pad: whose machine it plays from.
+                const int owner = pc_net_port_owner(i);
+                if (owner >= 0 && owner != i && !(s_css.local & bit)) {
+                    PcXnPunchView pv;
+                    view(&pv);
+                    for (int j = 0; j < pv.nplayers; j++)
+                        if (pv.players[j].port == owner)
+                            tag += "<div class=\"owner\" style=\"top: " + fmt(0.62f * h) + "px; font-size: " +
+                                   fmt(11.f * k) + "px;\">" +
+                                   enc(tr("xeleenet.css.tag_owner", {{"name", short_name(pv.players[j].name)}})) +
+                                   "</div>";
+                }
+                if (tags && (s_css.local & bit)) {
+                    const bool fresh = i == s_seat_new_port && SDL_GetTicks() - s_seat_new_at < kSeatNoteMs;
+                    tag += "<div class=\"ctag" + std::string(fresh ? " new" : "") + "\" style=\"top: " + fmt(0.16f * h) +
+                           "px; left: " + fmt(0.066f * w) + "px; font-size: " + fmt(10.f * k) + "px; height: " +
+                           fmt(18.f * k) + "px; line-height: " + fmt(16.f * k) + "px;\">" +
+                           enc(tr("xeleenet.css.tag_controller", {{"n", pc_net_port_phys(i) + 1}})) + "</div>";
+                }
                 if (s_css.ready & bit) {
                     // At the card's foot, inside its frame (3 px, as at its sides).
-                    tag = "<div class=\"ribbon\" style=\"bottom: 3px; height: " + fmt(0.10f * h) +
+                    tag += "<div class=\"ribbon\" style=\"bottom: 3px; height: " + fmt(0.10f * h) +
                           "px; line-height: " + fmt(0.10f * h) + "px; font-size: " + fmt(18.f * k) + "px;\">" +
                           enc(tr("xeleenet.css.tag_ready")) + "</div>";
                 } else if (s_css.waiting & bit) {
-                    tag = "<div class=\"dash\"></div><div class=\"tag warn\" style=\"bottom: " + fmt(0.1f * w) +
+                    tag += "<div class=\"dash\"></div><div class=\"tag warn\" style=\"bottom: " + fmt(0.1f * w) +
                           "px; font-size: " + fmt(11.f * k) + "px; height: " + fmt(22.f * k) + "px; line-height: " +
                           fmt(20.f * k) + "px;\">" + enc(tr("xeleenet.css.tag_waiting")) + "</div>";
                 } else if (s_css.picked & bit) {
                     // Off the foot as far as off the sides (10% of the card's width).
-                    tag = "<div class=\"tag\" style=\"bottom: " + fmt(0.1f * w) + "px; font-size: " + fmt(11.f * k) +
+                    tag += "<div class=\"tag\" style=\"bottom: " + fmt(0.1f * w) + "px; font-size: " + fmt(11.f * k) +
                           "px; height: " + fmt(22.f * k) + "px; line-height: " + fmt(20.f * k) + "px;\">" +
                           enc(tr("xeleenet.css.tag_start")) + "</div>";
                 }
@@ -1730,6 +1847,7 @@ struct Banner {
             // The legend: what this player's buttons do now.
             const int me = pc_net_local_player();
             const unsigned mine = me >= 0 && me < 4 ? 1u << me : 0u;
+            (void)open;
             std::string keys;
             if (s_css.countdown > 0)
                 keys = legend_key("b", "xeleenet.legend.cancel");
@@ -2329,6 +2447,10 @@ extern "C" bool pc_xn_overlay_full_size(void) { return s_banner.shown || s_sss.s
 extern "C" void pc_xn_banner_show(bool show) {
     if (show && s_left_reload && SDL_GetTicks() - s_left_at < kLeftReloadMs)
         s_left_at = SDL_GetTicks(); /* the CSS is back, without them */
+    // A seat change comes with the session, before the CSS reloads with its
+    // door: say it again once the door is there.
+    if (show && s_seat_note_at != 0 && SDL_GetTicks() - s_seat_note_at < kLeftReloadMs)
+        s_seat_note_at = s_seat_new_at = SDL_GetTicks();
     if (show)
         s_left_reload = false;
     s_banner.show(show);
@@ -2388,6 +2510,11 @@ extern "C" unsigned pc_xn_css_names(char names[4][16], int* local) {
             *local = port;
     }
     return named;
+}
+
+extern "C" void pc_xn_css_seat_full(int phys) {
+    const int seats = pc_xn_css_seats();
+    seat_note("warn", tr("xeleenet.css.seat_full", {{"n", phys + 1}, {"m", seats}}));
 }
 
 extern "C" void pc_xn_css_left(const char* name) {

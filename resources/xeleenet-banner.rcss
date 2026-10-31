@@ -47,6 +47,16 @@ div, span { display: block; }
 .tag { position: absolute; left: 10%; right: 10%; text-align: center; font-weight: 800; color: #d6d3cb;
        border: 1px #aeaba399; border-radius: 11px; background-color: #0b0b10d8; }
 .tag.warn { color: #ffe066; border-color: #f0c226; background-color: #2a1f08; }
+.ctag { position: absolute; padding: 0 7px; font-weight: 800; color: #f0e4b8; border: 1px #f0c226b0;
+        border-radius: 9px; background-color: #0b0b10e6; }
+.owner { position: absolute; left: 0; right: 0; text-align: center; font-weight: 700; color: #f0e4b8; }
+.ctag.new { color: #1a1406; background-color: #f0c226; }
+/* The first open seat, when a spare pad of this machine's can take it. */
+.door.spare { text-align: center; border: 2px #f0c226; border-radius: 8px; background-color: #0e1230e0; }
+.door.spare .st { color: #ffe066; font-weight: 900; }
+.door.spare .sl { color: #c9b77c; margin-top: 4px; }
+.door.spare .sk { display: inline-block; margin-top: 8px; padding: 1px 10px; border-radius: 8px; color: #26241f;
+                  background-color: #aeaba3; font-weight: 900; }
 .dash { position: absolute; left: 0; right: 0; top: 0; bottom: 0; border: 3px #fff4c4; border-radius: 8px; }
 /* The ring around a hand while its player holds B to leave: dots that fill
  * red as the hold goes on. */
