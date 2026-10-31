@@ -46,6 +46,21 @@ void pc_xn_punch_end(void);
  * without them. True when that leaves the host alone: the session has ended
  * and the lobby waits for the next to join, as it did when it opened. */
 bool pc_xn_punch_left(int port);
+/* A spare pad of ours (physical pad `phys`, 1-3) asked for a seat (START on
+ * the CSS): the host gives it the lowest free port at the next session, as
+ * for a joiner, and that pad plays it (docs/lan-multipad-plan.md). Up to
+ * two. A claim the host doesn't fill within a few seconds is dropped. */
+void pc_xn_punch_want_seat(int phys);
+/* Our pads waiting for a seat, oldest first: their count, and them in phys. */
+int pc_xn_punch_claims(int* phys);
+/* True once after claims were dropped for want of a seat. */
+bool pc_xn_punch_claim_refused(void);
+/* Another seat of a machine's (its other pad) gave up its seat: every player
+ * calls this on the frame they see it, as pc_xn_punch_left. False for a
+ * machine's own seat. */
+bool pc_xn_punch_seat_left(int port);
+/* Host: the lobby's seats now, which caps the seats other pads get. */
+void pc_xn_punch_set_seats(int seats);
 
 /* What the waiting room shows (gmonlinemode.c). */
 enum {
@@ -67,7 +82,10 @@ typedef struct PcXnPunchView {
         bool local;
         bool linked;   /* punched (us: always) */
         bool via_host; /* a guest we gave up reaching directly */
+        int owner;     /* the machine that plays it, by primary port: its own, or
+                        * another seat's machine (docs/lan-multipad-plan.md) */
     } players[4];
+    int want_x; /* seats we asked for our other pads */
     bool can_start; /* host: someone joined and every link is decided */
     const char* error;
 } PcXnPunchView;

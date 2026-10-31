@@ -103,8 +103,10 @@ class XnClient:
             "compat": self.compat, "settings": settings or DEFAULT_SETTINGS, "candidates": candidates,
         })
 
-    def heartbeat(self, lobby, roster=(), state="open", score=None, xr=False):
+    def heartbeat(self, lobby, roster=(), state="open", score=None, xr=False, extra=None):
         body = {"roster": list(roster), "state": state, "xr": xr}
+        if extra is not None:
+            body["extra"] = list(extra)  # ports machines' other pads hold
         if score is not None:
             body["score"] = score
         return self.call("POST", f"/v1/lobbies/{lobby}/heartbeat", body)

@@ -54,11 +54,14 @@ type Lobby struct {
 	Host     Member   `json:"host"`
 	HostGeo  Geo      `json:"host_geo"`
 	Members  []Member `json:"members"`
-	Banned   []string `json:"banned"`
-	State    string   `json:"state"`
-	Score    []int    `json:"score"`
-	Created  int64    `json:"created"` // ms
-	Beat     int64    `json:"beat"`    // ms, the last heartbeat
+	// Seats a machine's other pads hold (docs/lan-multipad-plan.md), as
+	// the host's heartbeat names them: taken, and never given to a joiner.
+	Extra   []int    `json:"extra"`
+	Banned  []string `json:"banned"`
+	State   string   `json:"state"`
+	Score   []int    `json:"score"`
+	Created int64    `json:"created"` // ms
+	Beat    int64    `json:"beat"`    // ms, the last heartbeat
 
 	pending map[string]*pending // joiner key -> request
 	closed  bool
@@ -89,7 +92,7 @@ func refused(r *Refusal) answer         { return answer{refusal: r} }
 func okTrue() answer                    { return okBody(map[string]any{"ok": true}) }
 func nowMs() int64                      { return time.Now().UnixMilli() }
 func closedLobby() answer               { return refused(refuse(404, "closed", "The lobby closed")) }
-func (l *Lobby) taken() int             { return 1 + len(l.Members) }
+func (l *Lobby) taken() int             { return 1 + len(l.Members) + len(l.Extra) }
 func (l *Lobby) isHost(key string) bool { return key == l.Host.Key }
 
 func (l *Lobby) public(m Member) map[string]any {
@@ -239,6 +242,7 @@ func (s *Service) hostOnly(l *Lobby, key string) *answer {
 type beat struct {
 	State  string
 	Roster []string
+	Extra  []int // ports other pads hold
 	Score  []int // nil: unchanged
 	XR     bool
 }
@@ -265,6 +269,19 @@ func (s *Service) heartbeat(l *Lobby, key string, b beat) answer {
 		}
 	}
 	l.Members = kept
+	l.Extra = []int{}
+	for _, q := range b.Extra {
+		held := q < 1 || q > 3
+		for _, m := range l.Members {
+			held = held || m.Port == q
+		}
+		for _, e := range l.Extra {
+			held = held || e == q
+		}
+		if !held {
+			l.Extra = append(l.Extra, q)
+		}
+	}
 	members := []map[string]any{}
 	for _, m := range l.Members {
 		members = append(members, l.public(m))
@@ -424,9 +441,15 @@ func (s *Service) seat(l *Lobby, j Joiner) answer {
 		for _, m := range l.Members {
 			if m.Port == port {
 				used = true
-				port++
-				break
 			}
+		}
+		for _, e := range l.Extra {
+			if e == port {
+				used = true
+			}
+		}
+		if used {
+			port++
 		}
 	}
 	m := j.Member

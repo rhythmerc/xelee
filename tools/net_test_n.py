@@ -31,6 +31,12 @@ and its LAN address for candidates, and the punch (net_punch.c) decides every
 link and keys it before the engine starts. With --block, the blocked pairs
 must come out of the punch "through the host".
 
+--owners 0,1,1,2 lets one instance play several ports, as a PC with more than
+one pad does (docs/lan-multipad-plan.md): entry k is the instance that plays
+port k, here b plays P2 and P3. Its entry in MELEE_NET_PEERS lists them all
+("1+2=..."), and each extra port reads a pad of its own, driven through
+MELEE_KEY_FIFO_P2.. with a workout of its own. Direct sessions only.
+
 --no-key leaves MELEE_NET_KEY unset, so the links run on keys derived from
 the handshake: host<->guest from RULES/READY, guest<->guest from the host's
 REL_NONCES (net_handshake.c). The link simulator's knobs apply to every link
@@ -53,19 +59,21 @@ import net_test as nt  # noqa: E402
 
 
 class Drive:
-    """One workout thread per instance, each starting at a different point of
+    """One workout thread per port, each starting at a different point of
     WORKOUT and holding a little longer than the last, so no two players'
-    inputs move in step."""
+    inputs move in step. `pads` is an instance (its keyboard FIFO) or an
+    (instance, fifo) pair per port."""
 
-    def __init__(self, insts):
+    def __init__(self, pads):
         self._stop = threading.Event()
         self.n = 0
-        self._threads = [threading.Thread(target=self._run, args=(inst, k), daemon=True)
-                         for k, inst in enumerate(insts)]
+        pads = [p if isinstance(p, tuple) else (p, p.fifo) for p in pads]
+        self._threads = [threading.Thread(target=self._run, args=(inst, fifo, k), daemon=True)
+                         for k, (inst, fifo) in enumerate(pads)]
         for t in self._threads:
             t.start()
 
-    def _run(self, inst, k):
+    def _run(self, inst, fifo, k):
         i = 2 * k
         while not self._stop.is_set():
             key, ms = nt.WORKOUT[i % len(nt.WORKOUT)]
@@ -73,7 +81,7 @@ class Drive:
             ms += 17 * k
             if inst.proc.poll() is None:
                 try:
-                    inst.key(f"{key} {ms}")
+                    nt.fifo_write(fifo, f"{key} {ms}")
                 except Exception:
                     return
             self.n += 1
@@ -87,10 +95,19 @@ class Drive:
 
 
 def run(args):
-    names = "abcd"[:args.players]
-    ports = [args.port + k for k in range(args.players)]
+    owners = [int(x) for x in args.owners.split(",")] if args.owners else list(range(args.players))
+    if len(owners) != args.players or sorted(set(owners)) != list(range(max(owners) + 1)) or \
+            any(owners[k] > k for k in range(len(owners))) or args.xn_url and args.owners:
+        print("net_test_n: --owners wants one instance per port, numbered in port order, "
+              "direct sessions only", flush=True)
+        return False
+    machines = max(owners) + 1
+    plays = [[k for k in range(args.players) if owners[k] == m] for m in range(machines)]
+    names = "abcd"[:machines]
+    ports = [args.port + m for m in range(machines)]
     frames = int(args.minutes * 3600) + nt.BOOT_FRAMES
-    peers = ",".join(f"{k}=127.0.0.1:{p}" for k, p in enumerate(ports))
+    peers = ",".join("+".join(str(k) for k in plays[m]) + f"=127.0.0.1:{ports[m]}"
+                     for m in range(machines))
     shutil.rmtree(args.work, ignore_errors=True)
     os.makedirs(args.work)
     for p in ports:
@@ -98,10 +115,11 @@ def run(args):
             return False
     insts = []
     code = None
+    pad_fifos = {}  # port -> the FIFO of the pad that drives it
     for k, name in enumerate(names):
         env = {
             "MELEE_NET_PEERS": peers,
-            "MELEE_NET_PLAYER": str(k),
+            "MELEE_NET_PLAYER": str(plays[k][0]),
             "MELEE_DEBUG_VS": f"human{args.players}",
             "MELEE_NET_EXIT_AFTER_FRAMES": str(frames),
         }
@@ -131,8 +149,14 @@ def run(args):
             env["MELEE_NET_SIM_JITTER_MS"] = "20"
         if args.block:
             env["MELEE_NET_SIM_BLOCK"] = args.block
+        for pad, port in enumerate(plays[k][1:], start=2):
+            fifo = os.path.join(args.work, f"{name}.pad{pad}.keys")
+            os.mkfifo(fifo)
+            env[f"MELEE_KEY_FIFO_P{pad}"] = fifo
+            pad_fifos[port] = fifo
         # lobby=True: Instance sets no MELEE_NET of its own; the env above is the session.
         insts.append(nt.Instance(name, args.exe, args.disc, args.work, ports[k], 0, env, True))
+        pad_fifos[plays[k][0]] = insts[-1].fifo
         if args.xn_url and k == 0:
             # The others join with the code the host's log names.
             if not insts[0].wait_log(r"xeleenet: lobby code [A-Z0-9]{6}", 60):
@@ -165,11 +189,13 @@ def run(args):
             nt.press((insts[0],), "Return", 9, 2)  # a Start that landed mid-load paused it
             ok = nt.wait_match(insts, 120)
         if ok:
-            drive = Drive(insts)
+            drive = Drive([(insts[owners[k]], pad_fifos[k]) for k in range(args.players)])
         kill_at = None
         if ok and args.kill:
             who, _, secs = args.kill.partition("@")
             kill_at = (names.index(who), time.time() + float(secs or 20))
+            print(f"net_test_n: {who} plays " + ", ".join(f"P{k + 1}" for k in plays[names.index(who)]),
+                  flush=True)
         deadline = time.time() + frames / 12.0 + 60
         term = (r"net: DESYNC", r"peer silent for \d+ ms at frame \d+, leaving netplay",
                 r"net: disconnected", r"cannot roll back")
@@ -178,7 +204,7 @@ def run(args):
             time.sleep(1)
             if kill_at is not None and time.time() >= kill_at[1]:
                 victim = insts[kill_at[0]]
-                print(f"net_test_n: killing {victim.name} (P{kill_at[0] + 1})", flush=True)
+                print(f"net_test_n: killing {victim.name} (P{plays[kill_at[0]][0] + 1})", flush=True)
                 victim.proc.kill()
                 kill_at = None
             texts = "".join(i.text() for i in insts)
@@ -213,8 +239,14 @@ def run(args):
     # Every instance must have linked to every other one.
     for inst in judged:
         seen = len(nt.re.findall(r"net: peer \d+ is P\d at ", inst.text()))
-        if seen != args.players - 1:
-            print(f"[{inst.name}] FAIL: session names {seen} peers, want {args.players - 1}")
+        if seen != machines - 1:
+            print(f"[{inst.name}] FAIL: session names {seen} peers, want {machines - 1}")
+            ok = False
+    for k, inst in enumerate(insts):
+        mask = sum(1 << p for p in plays[k])
+        if len(plays[k]) > 1 and inst in judged and \
+                not nt.re.search(rf"net: this machine plays ports {mask:x} ", inst.text()):
+            print(f"[{inst.name}] FAIL: it does not say it plays ports {mask:x}")
             ok = False
     if args.kill:
         # Every survivor agreed on the same last frame and the same void frame.
@@ -251,6 +283,7 @@ def main():
     ap.add_argument("--jitter", action="store_true")
     ap.add_argument("--minutes", type=float, default=1)
     ap.add_argument("--no-key", action="store_true", help="links keyed by the handshake only")
+    ap.add_argument("--owners", default="", help="the instance that plays each port, e.g. 0,1,1,2")
     ap.add_argument("--block", default="", help="port pairs that cannot reach each other, e.g. 1:2")
     ap.add_argument("--kill", default="", help="instance@seconds into the match to SIGKILL, e.g. c@20")
     ap.add_argument("--xn", action="store_true", help="join by code through a local XeleeNet service")

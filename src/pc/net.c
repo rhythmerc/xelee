@@ -63,7 +63,6 @@
 struct NetSession net = {
     .sock = SOCK_INVALID, .tick_frame = -1, .rb_barrier = -1, .start_frame = -1};
 
-static WirePad s_local_ring[RING]; /* indexed by frame & (RING-1) */
 /* Remote input, one ring per controller port: real input, or the prediction
  * in use. s_remote_mask has a bit for every port a remote player drives (one
  * in a 1v1); each of those ports keeps its own contiguous mark. s_remote_have
@@ -71,6 +70,12 @@ static WirePad s_local_ring[RING]; /* indexed by frame & (RING-1) */
  * s_remote_have is real, which is what the rollback loop waits and checks on.
  * remote_marks_update() recomputes them after any port moves. */
 #define PORTS 4
+/* Our own input, one ring per port this machine plays (net.local_mask), all on
+ * one timeline: s_wrote is every one's newest frame. Indexed by frame &
+ * (RING-1). s_local_phys[port] is the physical pad (PADRead index) each one
+ * reads: the primary port pad 0, the others pads 1.. in port order. */
+static WirePad s_local_ring[PORTS][RING];
+static int s_local_phys[PORTS];
 static uint8_t s_remote_mask;
 static WirePad s_remote_ring[PORTS][RING];
 static int32_t s_port_have[PORTS] = {-1, -1, -1, -1};   /* newest contiguous real frame */
@@ -89,7 +94,8 @@ static bool s_game_over;         /* the match end can no longer be rolled back *
  * Each group's comment says which thread owns it; the locks are the ones the
  * whole-session versions of these fields had. */
 typedef struct Peer {
-    int port; /* the controller port it drives */
+    int port;      /* the controller port it drives: its primary one */
+    uint8_t ports; /* every port it plays, `port` included (fixed for a session) */
     /* Its address: the receive thread follows a dual-stack peer to the address
      * it answers from (rx_datagram), under tx_lock. */
     struct sockaddr_storage addr;
@@ -140,6 +146,28 @@ static int32_t s_rb_frame = -1;      /* oldest mispredicted frame not rolled bac
 
 static int peer_index(const Peer* p) {
     return (int)(p - s_peer);
+}
+
+/* Its ports other than the primary one: what its packets' xports must say. */
+static uint8_t peer_xports(const Peer* p) {
+    return (uint8_t)(p->ports & ~(1u << p->port));
+}
+
+/* The newest frame of its input we hold on every one of its ports. They move
+ * together (one packet carries them all), so this is each one's mark. */
+static int32_t peer_have(const Peer* p) {
+    int32_t have = INT32_MAX;
+    for (int q = 0; q < PORTS; q++) {
+        if ((p->ports & (1u << q)) && s_port_have[q] < have) {
+            have = s_port_have[q];
+        }
+    }
+    return have == INT32_MAX ? -1 : have;
+}
+
+/* Our ports other than net.local, lowest first, as a packet's xports. */
+static uint8_t local_xports(void) {
+    return (uint8_t)(net.local_mask & ~(1u << net.local));
 }
 
 int net_host_peer(void) {
@@ -213,7 +241,10 @@ static bool s_no_progress; /* the wait ended on a talking peer that never advanc
 static uint32_t s_seed_after_tick;
 static bool s_seed_have;
 static bool s_lockstep;      /* snapshot failure: stop predicting, retain older corrections */
-static PADStatus s_raw_last; /* newest physical sample (port 0) */
+static PADStatus s_raw_last[PORTS]; /* newest physical sample, by local port */
+/* Every physical pad as the last fresh tick read it, ours or not: a spare pad
+ * asking for a seat on the CSS is read here (pc_net_phys_pad). */
+static PADStatus s_phys_last[PORTS];
 static int s_status;         /* pc_net_peer_status(); kept until the next connect */
 static bool s_peer_left;     /* BYE received or version mismatch: stop waiting */
 static bool s_warn_src, s_warn_sess, s_warn_bad, s_warn_mac; /* one reject line each per session */
@@ -428,8 +459,9 @@ static int32_t confirmed_frame(void) {
 
 /* ---- transmit --------------------------------------------------------- */
 
+/* The host-order struct's bytes in use: the queue copies this much. */
 static size_t packet_len(const Packet* pk) {
-    return offsetof(Packet, pads) + pk->count * sizeof(WirePad);
+    return pk->xports != 0 ? sizeof(Packet) : offsetof(Packet, pads) + pk->count * sizeof(WirePad);
 }
 
 #if defined(_WIN32)
@@ -511,7 +543,7 @@ static void send_packet(Peer* p, Packet* pk) {
     wire_packet(&w);
     uint8_t out[PACKET_WIRE_MAX];
     memcpy(out, &w, offsetof(Packet, pads));
-    size_t n = offsetof(Packet, pads) + pads_encode(w.pads, w.count, out + offsetof(Packet, pads));
+    size_t n = offsetof(Packet, pads) + pads_encode_all(&w, out + offsetof(Packet, pads));
     tx(peer_index(p), out, n);
 }
 
@@ -673,9 +705,9 @@ static void send_forwarded(void) {
         if (s_fwd[o] == 0) {
             continue;
         }
-        int32_t have = s_port_have[o];
         const Peer* op = peer_by_port(o);
-        if (have < 0 || op == NULL) {
+        int32_t have = op != NULL ? peer_have(op) : -1;
+        if (have < 0) {
             continue;
         }
         for (int i = 0; i < net.npeers; i++) {
@@ -702,8 +734,14 @@ static void send_forwarded(void) {
             pk.ck_frame = ck ? op->ck_last_frame : -1;
             pk.ck = ck ? op->ck_last : 0;
             pk.count = (uint8_t)count;
+            pk.xports = peer_xports(op);
             for (int32_t f = 0; f < count; f++) {
                 pk.pads[f] = s_remote_ring[o][(first + f) & (RING - 1)];
+                for (int q = 0, x = 0; q < PORTS; q++) {
+                    if (pk.xports & (1u << q)) {
+                        pk.xpads[x++][f] = s_remote_ring[q][(first + f) & (RING - 1)];
+                    }
+                }
             }
             wire_packet(&pk);
             uint8_t out[HELD_BYTES];
@@ -711,7 +749,7 @@ static void send_forwarded(void) {
             memcpy(out, &fh, sizeof fh);
             size_t body = offsetof(Packet, pads) - sizeof(Hdr);
             memcpy(out + sizeof fh, (const uint8_t*)&pk + sizeof(Hdr), body);
-            size_t n = sizeof fh + body + pads_encode(pk.pads, (int)count, out + sizeof fh + body);
+            size_t n = sizeof fh + body + pads_encode_all(&pk, out + sizeof fh + body);
             tx(i, out, n);
         }
     }
@@ -758,7 +796,7 @@ static void drop_begin(int port, const char* why) {
     s_gone |= (uint8_t)(1u << port);
     link_kill(peer_index(x), why);
     s_drop_quiet = SDL_GetTicksNS();
-    s_drop_mark = s_port_have[port];
+    s_drop_mark = peer_have(x);
     uint8_t p = (uint8_t)port;
     pc_net_send_reliable(REL_DROP, &p, 1);
     SDL_LockMutex(net.tx_lock);
@@ -780,23 +818,35 @@ static void drop_end(int port, int32_t last, int32_t at) {
     if (s_port_end[port] >= 0) {
         return;
     }
-    if (s_port_have[port] < last) {
+    /* Every port of that machine ends on the same frame: they all came in
+     * the same packets. */
+    const Peer* x = peer_by_port(port);
+    const uint8_t ports = x != NULL ? x->ports : (uint8_t)(1u << port);
+    const int32_t held = x != NULL ? peer_have(x) : s_port_have[port];
+    if (held < last) {
         pc_log_line("net: P%d's input ends at %d but we hold only %d; leaving netplay", port + 1,
-            last, s_port_have[port]);
+            last, held);
         s_status = PC_NET_PEER_TIMEOUT;
         s_peer_left = true;
         return;
     }
     static const WirePad released;
     int32_t upto = simulated_upto();
-    for (int32_t f = last + 1; f <= upto && f > upto - RING; f++) {
-        WirePad* slot = &s_remote_ring[port][f & (RING - 1)];
-        if (memcmp(slot, &released, sizeof released) != 0 && (s_rb_frame < 0 || f < s_rb_frame)) {
-            s_rb_frame = f;
+    for (int q = 0; q < PORTS; q++) {
+        if (!(ports & (1u << q))) {
+            continue;
         }
-        *slot = released;
+        for (int32_t f = last + 1; f <= upto && f > upto - RING; f++) {
+            WirePad* slot = &s_remote_ring[q][f & (RING - 1)];
+            if (memcmp(slot, &released, sizeof released) != 0 &&
+                (s_rb_frame < 0 || f < s_rb_frame))
+            {
+                s_rb_frame = f;
+            }
+            *slot = released;
+        }
+        s_port_end[q] = last;
     }
-    s_port_end[port] = last;
     s_gone |= (uint8_t)(1u << port);
     SDL_LockMutex(net.tx_lock);
     s_fwd[port] = 0;
@@ -824,7 +874,7 @@ void net_link_rel(int peer, uint8_t type, const void* payload, int len) {
         }
         SDL_LockMutex(net.tx_lock);
         for (int o = 0; o < PORTS; o++) {
-            if (o == net.local || (s_gone & (1u << o))) {
+            if ((net.local_mask & (1u << o)) || peer_by_port(o) == NULL || (s_gone & (1u << o))) {
                 continue; /* a player who left goes to everyone anyway */
             }
             bool want = (b[0] & (1u << o)) != 0, have = (s_fwd[o] & (1u << peer)) != 0;
@@ -984,14 +1034,16 @@ static void links_poll(void) {
             if (!(s_gone & (1u << port)) || s_port_end[port] >= 0) {
                 continue;
             }
-            if (s_port_have[port] != s_drop_mark) {
-                s_drop_mark = s_port_have[port];
+            const Peer* gone = peer_by_port(port);
+            const int32_t held = gone != NULL ? peer_have(gone) : s_port_have[port];
+            if (held != s_drop_mark) {
+                s_drop_mark = held;
                 s_drop_quiet = now;
             }
             bool all = now - s_drop_quiet > DROP_SETTLE_MS * 1000000ull;
             SDL_LockMutex(net.tx_lock);
             for (int i = 0; i < net.npeers && all; i++) {
-                if (!net.link_dead[i] && s_fwd_acked[port][i] < s_port_have[port]) {
+                if (!net.link_dead[i] && s_fwd_acked[port][i] < held) {
                     all = false;
                 }
             }
@@ -999,7 +1051,7 @@ static void links_poll(void) {
             if (!all) {
                 continue;
             }
-            int32_t lastf = s_port_have[port];
+            int32_t lastf = held;
             int32_t from = net.frame > lastf ? net.frame : lastf;
             VoidMsg v = {(uint8_t)port, (int32_t)htonl((uint32_t)lastf),
                 (int32_t)htonl((uint32_t)(in_fight() ? from + VOID_LEAD : -1))};
@@ -1081,8 +1133,14 @@ static void send_inputs(void) {
             first = newest64;
         }
         red = (int)count > red ? (int)count : red;
+        pk.xports = local_xports();
         for (int32_t f = 0; f < count; f++) {
-            pk.pads[f] = s_local_ring[(first + f) & (RING - 1)];
+            pk.pads[f] = s_local_ring[net.local][(first + f) & (RING - 1)];
+            for (int q = 0, x = 0; q < PORTS; q++) {
+                if (pk.xports & (1u << q)) {
+                    pk.xpads[x++][f] = s_local_ring[q][(first + f) & (RING - 1)];
+                }
+            }
         }
         pk.count = (uint8_t)count;
         pk.first = (int32_t)first;
@@ -1092,7 +1150,7 @@ static void send_inputs(void) {
         /* How far this simulation has run past the newest input this peer
          * has given us. The peer compares it with its own for us and only
          * the side further ahead gives a frame back (net_sync.c time_sync). */
-        int32_t adv = net.frame - 1 - s_port_have[p->port];
+        int32_t adv = net.frame - 1 - peer_have(p);
         pk.adv = (int8_t)(adv < -127 ? -127 : adv > 127 ? 127 : adv);
         atomic_store_explicit(&s_adv_pub[i], pk.adv, memory_order_relaxed);
         send_packet(p, &pk);
@@ -1252,7 +1310,8 @@ static void rx_input(Peer* p, const Packet* pk, int n, bool reordered, const Pee
     bool is_keepalive = (count == 0 && newest == -1 && first == 0 && ckf == -1);
 
     if (!is_keepalive && (n < (int)(offsetof(Packet, pads) + (size_t)count * sizeof(WirePad)) ||
-                             first < 0 || newest < first || last > newest ||
+                             pk->xports != peer_xports(p) || first < 0 || newest < first ||
+                             last > newest ||
                              newest > (int64_t)frame + RING / 2 || ckf < -1 || ckf > newest))
     {
         s_rx_malformed++;
@@ -1286,8 +1345,8 @@ static void rx_input(Peer* p, const Packet* pk, int n, bool reordered, const Pee
 /* The game thread's half of a packet rx_input queued. rx_input's rule over
  * the same packets in the same order, against a net.frame never behind the
  * one it checked, so a drain leaves the port's mark at or above rx_have. */
-static void on_inputs(Peer* p, const Packet* pk, bool reordered) {
-    const int port = p->port;
+/* One port's pads of a packet into its ring (on_inputs). */
+static void on_port_pads(int port, const Packet* pk, const WirePad* pads) {
     if (s_port_end[port] >= 0) {
         return; /* the player left and everyone agreed where its input ends */
     }
@@ -1298,7 +1357,7 @@ static void on_inputs(Peer* p, const Packet* pk, bool reordered) {
     {
         int32_t upto = simulated_upto();
         for (int32_t f = s_port_have[port] + 1; f <= last; f++) {
-            WirePad pad = pk->pads[f - pk->first];
+            WirePad pad = pads[f - pk->first];
             WirePad* slot = &s_remote_ring[port][f & (RING - 1)];
             /* A frame already simulated holds the prediction it ran on. */
             if (f <= upto && memcmp(slot, &pad, sizeof pad) != 0 &&
@@ -1311,6 +1370,27 @@ static void on_inputs(Peer* p, const Packet* pk, bool reordered) {
         s_port_have[port] = (int32_t)last;
         remote_marks_update();
         s_progress_ns = SDL_GetTicksNS();
+    }
+    if (pk->newest > s_port_newest[port]) {
+        s_port_newest[port] = pk->newest;
+        remote_marks_update();
+    }
+}
+
+/* The game thread's half of a packet rx_input queued. rx_input's rule over
+ * the same packets in the same order, against a net.frame never behind the
+ * one it checked, so a drain leaves the port's mark at or above rx_have.
+ * Every port the peer plays rides in the packet (xports); each moves alike. */
+static void on_inputs(Peer* p, const Packet* pk, bool reordered) {
+    const int port = p->port;
+    if (s_port_end[port] >= 0) {
+        return; /* the player left and everyone agreed where its input ends */
+    }
+    on_port_pads(port, pk, pk->pads);
+    for (int q = 0, x = 0; q < PORTS && x < MAX_XPORTS; q++) {
+        if (pk->xports & (1u << q)) {
+            on_port_pads(q, pk, pk->xpads[x++]);
+        }
     }
     if (pk->ck_frame >= 0) {
         p->rck[pk->ck_frame & (RING - 1)].frame = pk->ck_frame;
@@ -1341,11 +1421,7 @@ static void on_inputs(Peer* p, const Packet* pk, bool reordered) {
      * the reorder as phase error. (tx_timer restamps its resends, so those
      * carry an adv as fresh as any.) */
     if (!reordered) {
-        adv_note(peer_index(p), pk->adv, net.frame - 1 - s_port_have[port]);
-    }
-    if (pk->newest > s_port_newest[port]) {
-        s_port_newest[port] = pk->newest;
-        remote_marks_update();
+        adv_note(peer_index(p), pk->adv, net.frame - 1 - peer_have(p));
     }
 }
 
@@ -1467,7 +1543,7 @@ static void s_slippi_send_inputs(void) {
     }
     uint64_t now = s_slippi_now_us();
     for (int32_t f = s_slippi_sent_upto + 1; f <= s_wrote; f++) {
-        WirePad w = s_local_ring[f & (RING - 1)];
+        WirePad w = s_local_ring[net.local][f & (RING - 1)];
         w.button = (uint16_t)__builtin_bswap16(w.button); /* big-endian on the wire */
         if (!pc_slippi_adapter_send_local(&s_slippi, f, &w, now)) {
             break;
@@ -1659,8 +1735,8 @@ static void rx_dispatch(Peer* p, void* buf, int n) {
             return;
         }
         memcpy(&pk, buf, offsetof(Packet, pads));
-        if (pk.count > REDUNDANCY || !pads_decode((const uint8_t*)buf + offsetof(Packet, pads),
-                                         n - (int)offsetof(Packet, pads), pk.count, pk.pads))
+        if (!pads_decode_all((const uint8_t*)buf + offsetof(Packet, pads),
+                n - (int)offsetof(Packet, pads), &pk))
         {
             return;
         }
@@ -1702,9 +1778,7 @@ static void rx_dispatch(Peer* p, void* buf, int n) {
         pk.h.player = (uint8_t)o->port;
         memcpy((uint8_t*)&pk + sizeof(Hdr), (const uint8_t*)buf + sizeof *fh, body);
         int pads_at = (int)(sizeof *fh + body);
-        if (pk.count > REDUNDANCY ||
-            !pads_decode((const uint8_t*)buf + pads_at, n - pads_at, pk.count, pk.pads))
-        {
+        if (!pads_decode_all((const uint8_t*)buf + pads_at, n - pads_at, &pk)) {
             return;
         }
         wire_packet(&pk);
@@ -1785,7 +1859,8 @@ static bool packet_shape(const void* buf, int n) {
         const Packet* p = buf;
         int body = n - (int)offsetof(Packet, pads);
         return body >= 0 && p->count <= REDUNDANCY &&
-               pads_wire_len((const uint8_t*)buf + offsetof(Packet, pads), body, p->count) == body;
+               pads_wire_len_all((const uint8_t*)buf + offsetof(Packet, pads), body, p->count,
+                   p->xports) == body;
     }
     case 'A':
         return n == (int)sizeof(Ack);
@@ -1800,7 +1875,8 @@ static bool packet_shape(const void* buf, int n) {
         int head = (int)(sizeof(FwdHdr) + offsetof(Packet, pads) - sizeof(Hdr));
         const Packet* q = (const Packet*)((const uint8_t*)buf + sizeof(FwdHdr) - sizeof(Hdr));
         return n >= head && q->count <= REDUNDANCY &&
-               pads_wire_len((const uint8_t*)buf + head, n - head, q->count) == n - head;
+               pads_wire_len_all((const uint8_t*)buf + head, n - head, q->count, q->xports) ==
+                   n - head;
     }
     case 'G':
         return n == (int)sizeof(FwdAck);
@@ -2054,12 +2130,12 @@ static void rx_datagram(void* buf, int n, const struct sockaddr_storage* from, s
 /* Drain the socket through the gate, then release what the link simulator
  * held back. Runs on the receive thread, or on the game thread when there
  * is none. False on a hard socket error (sock_err_note logged it). */
-_Static_assert(HELD_BYTES + NET_MAC_LEN <= 512, "a full input packet must fit rx_pump's buffer");
+_Static_assert(HELD_BYTES + NET_MAC_LEN <= 1024, "a full input packet must fit rx_pump's buffer");
 static bool rx_pump(void) {
     for (int budget = RX_BUDGET; budget > 0; budget--) {
         union {
             Hdr h;
-            uint8_t raw[512];
+            uint8_t raw[1024];
         } u;
         struct sockaddr_storage from;
         socklen_t from_len = sizeof from;
@@ -2211,7 +2287,7 @@ static void dump_rings_around(int32_t f) {
         if (i < 0 || i > net.frame || i <= net.frame - RING) {
             continue;
         }
-        const WirePad* m = &s_local_ring[i & (RING - 1)];
+        const WirePad* m = &s_local_ring[net.local][i & (RING - 1)];
         char theirs[PORTS * 24] = "";
         size_t n = 0;
         for (int p = 0; p < PORTS && n < sizeof theirs; p++) {
@@ -2367,7 +2443,7 @@ static void resume_send(void) {
     bool all = true;
     for (int i = 0; i < net.npeers; i++) {
         if (!sent[i]) {
-            Resume r = {net.session, net.seed, s_wrote, s_port_have[s_peer[i].port], net.frame};
+            Resume r = {net.session, net.seed, s_wrote, peer_have(&s_peer[i]), net.frame};
             wire_resume(&r);
             sent[i] = rel_send_to(i, REL_RESUME, &r, sizeof r);
         }
@@ -2449,10 +2525,10 @@ void net_resume_rel(int peer, const void* payload, int len) {
     /* Each side can only serve frames still in its RING-frame ring. In
      * int64 so a corrupt payload at the int32 extremes cannot overflow the
      * comparison. */
-    if ((int64_t)s_wrote - r.have > RING || (int64_t)r.newest - s_port_have[port] > RING) {
+    if ((int64_t)s_wrote - r.have > RING || (int64_t)r.newest - peer_have(p) > RING) {
         pc_log_line("net: cannot resume at frame %d, the gap outruns the %d-frame ring (P%d "
                     "holds our %d of %d, we hold its %d of %d)",
-            net.frame, RING, port + 1, r.have, s_wrote, s_port_have[port], r.newest);
+            net.frame, RING, port + 1, r.have, s_wrote, peer_have(p), r.newest);
         resume_fail();
         return;
     }
@@ -2462,13 +2538,15 @@ void net_resume_rel(int peer, const void* payload, int len) {
     if (r.have > p->last_acked && r.have <= s_wrote) {
         p->last_acked = r.have;
     }
-    if (r.newest > s_port_newest[port]) {
-        s_port_newest[port] = r.newest;
-        remote_marks_update();
+    for (int q = 0; q < PORTS; q++) {
+        if ((p->ports & (1u << q)) && r.newest > s_port_newest[q]) {
+            s_port_newest[q] = r.newest;
+        }
     }
+    remote_marks_update();
     pc_log_line("net: P%d resumes from frame %d, holds our %d, newest %d (we are at %d, hold "
                 "its %d, newest %d)",
-        port + 1, r.frame, r.have, r.newest, net.frame, s_port_have[port], s_wrote);
+        port + 1, r.frame, r.have, r.newest, net.frame, peer_have(p), s_wrote);
 }
 
 /* The stall timeout fired: open the phase instead of dropping the session.
@@ -2859,9 +2937,16 @@ bool net_local_idle(void) {
     if (s_wrote < 0) {
         return true;
     }
-    const WirePad* p = &s_local_ring[s_wrote & (RING - 1)];
-    return p->button == 0 && p->stickX == 0 && p->stickY == 0 && p->substickX == 0 &&
-           p->substickY == 0 && p->triggerLeft == 0 && p->triggerRight == 0;
+    for (int q = 0; q < PORTS; q++) {
+        const WirePad* p = &s_local_ring[q][s_wrote & (RING - 1)];
+        if ((net.local_mask & (1u << q)) &&
+            (p->button != 0 || p->stickX != 0 || p->stickY != 0 || p->substickX != 0 ||
+                p->substickY != 0 || p->triggerLeft != 0 || p->triggerRight != 0))
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 static void audio_journal_reset(void);
@@ -2880,7 +2965,7 @@ static void session_reset(void) {
      * fresh one comes. Left over from the last session it can be a button
      * still held there: XeleeNet's leave happens mid-hold of B, so the next
      * lobby's first frames read B, and the Joining page took it for back. */
-    memset(&s_raw_last, 0, sizeof s_raw_last);
+    memset(s_raw_last, 0, sizeof s_raw_last);
     memset(s_local_ring, 0, sizeof s_local_ring);
     memset(s_remote_ring, 0, sizeof s_remote_ring);
     memset(s_ck_ring, 0, sizeof s_ck_ring);
@@ -3002,17 +3087,25 @@ void pc_net_port_leave(int port, int32_t last) {
     }
     /* drop_end's release without its void, and the host keeps passing on what
      * it holds of the port: a guest that hears it through the host may not
-     * have every frame up to `last` yet. */
+     * have every frame up to `last` yet. A machine's primary port leaving
+     * takes its other ports along: their input stops with it. */
+    const Peer* x = peer_by_port(port);
+    const uint8_t ports = x != NULL ? x->ports : (uint8_t)(1u << port);
     static const WirePad released;
     int32_t upto = simulated_upto();
-    for (int32_t f = last + 1; f <= upto && f > upto - RING; f++) {
-        s_remote_ring[port][f & (RING - 1)] = released;
+    for (int q = 0; q < PORTS; q++) {
+        if (!(ports & (1u << q)) || s_port_end[q] >= 0) {
+            continue;
+        }
+        for (int32_t f = last + 1; f <= upto && f > upto - RING; f++) {
+            s_remote_ring[q][f & (RING - 1)] = released;
+        }
+        s_port_end[q] = last;
     }
-    s_port_end[port] = last;
     s_gone |= (uint8_t)(1u << port);
     remote_marks_update();
-    pc_log_line("net: P%d left the session after frame %d (planned; we are at %d)", port + 1, last,
-        net.frame);
+    pc_log_line("net: P%d left the session after frame %d (planned; ports %x; we are at %d)",
+        port + 1, last, ports, net.frame);
 }
 
 bool pc_net_settle(int32_t last, int ms) {
@@ -3225,19 +3318,21 @@ typedef struct PeerSpec {
     const char* ip;
     uint16_t port;
     int player;         /* its controller port, 0-3 */
+    uint8_t xports;     /* the other ports that machine plays (docs/lan-multipad-plan.md) */
     const uint8_t* key; /* the link's MAC key from XeleeNet's punch; NULL: the handshake's */
     bool dead;          /* never punched: through the host from the start */
 } PeerSpec;
 
 /* A session with n peers (1..MAX_PEERS), this side on controller port
- * `local`. Port 0 hosts: it names the session and leads the handshake. */
-static bool connect_impl(
-    sock_t supplied, const PeerSpec* peers, int n, int local, uint32_t seed) {
+ * `local` and the ports in `local_x` as well. Port 0 hosts: it names the
+ * session and leads the handshake. */
+static bool connect_impl(sock_t supplied, const PeerSpec* peers, int n, int local,
+    uint8_t local_x, const int* local_phys, uint32_t seed) {
 #ifdef __EMSCRIPTEN__
     /* A page has no UDP: Emscripten's sockets are WebSocket proxies. Every
      * session path (MELEE_NET, the lobby's DHT socket) comes through here, so
      * refusing here keeps netplay inert and its receive thread unstarted. */
-    (void)supplied, (void)peers, (void)n, (void)local, (void)seed;
+    (void)supplied, (void)peers, (void)n, (void)local, (void)local_x, (void)local_phys, (void)seed;
     pc_log_line("net: netplay is unavailable in the browser");
     return false;
 #endif
@@ -3247,8 +3342,11 @@ static bool connect_impl(
         sock_startup();
     }
     pc_net_disconnect();
-    if (n < 1 || n > MAX_PEERS || local < 0 || local > 3) {
-        pc_log_line("net: %d peers with local port %d is not a session", n, local);
+    const uint8_t local_mask = (uint8_t)((1u << (local & 3)) | local_x);
+    if (n < 1 || n > MAX_PEERS || local < 0 || local > 3 || (local_x & ~15u) != 0 ||
+        port_count(local_x) > MAX_XPORTS || (local_x & (1u << local)))
+    {
+        pc_log_line("net: %d peers with local port %d (+%x) is not a session", n, local, local_x);
         return false;
     }
     struct sockaddr_storage peer_addr[MAX_PEERS];
@@ -3257,11 +3355,16 @@ static bool connect_impl(
     int family = AF_UNSPEC;
     for (int i = 0; i < n; i++) {
         const PeerSpec* ps = &peers[i];
-        if (ps->player < 0 || ps->player > 3 || ps->player == local || (mask & (1u << ps->player))) {
-            pc_log_line("net: peer %d's port P%d is taken or out of range", i, ps->player + 1);
+        uint8_t theirs = ps->player >= 0 && ps->player <= 3 ?
+                             (uint8_t)((1u << ps->player) | ps->xports) : 0;
+        if (theirs == 0 || (ps->xports & ~15u) != 0 || (ps->xports & (1u << ps->player)) ||
+            (theirs & (mask | local_mask)))
+        {
+            pc_log_line("net: peer %d's port P%d (+%x) is taken or out of range", i,
+                ps->player + 1, ps->xports);
             return false;
         }
-        mask |= (uint8_t)(1u << ps->player);
+        mask |= theirs;
         char portstr[8];
         snprintf(portstr, sizeof portstr, "%u", ps->port);
         struct addrinfo hints, *res = NULL;
@@ -3353,11 +3456,22 @@ static bool connect_impl(
      * head anyway. */
     HSD_PadLibData.qtype = 2;
     net.local = local;
+    net.local_mask = local_mask;
+    /* Our other ports read the pads the caller names (the ones that took
+     * those seats), or else pads 1.. in port order. */
+    for (int q = 0, phys = 1; q < PORTS; q++) {
+        const bool named = local_phys != NULL && local_phys[q] >= 1 && local_phys[q] < PORTS;
+        s_local_phys[q] = q == local                 ? 0 :
+                          !(local_x & (1u << q))     ? 0 :
+                          named                      ? local_phys[q] :
+                                                       phys++;
+    }
     net.remote = peers[0].player;
     remote_ports_set(mask);
     net.npeers = n;
     for (int i = 0; i < n; i++) {
         net.peer_port[i] = s_peer[i].port = peers[i].player;
+        s_peer[i].ports = (uint8_t)((1u << peers[i].player) | peers[i].xports);
         s_peer[i].addr = peer_addr[i];
         s_peer[i].addr_len = peer_len[i];
     }
@@ -3440,8 +3554,19 @@ static bool connect_impl(
     net.active = true;
     SDL_UnlockMutex(net.tx_lock);
     for (int i = 0; i < n; i++) {
-        pc_log_line("net: peer %d is P%d at %s:%u", i, peers[i].player + 1, peers[i].ip,
-            peers[i].port);
+        pc_log_line("net: peer %d is P%d at %s:%u (ports %x)", i, peers[i].player + 1, peers[i].ip,
+            peers[i].port, s_peer[i].ports);
+    }
+    if (local_x != 0) {
+        char pads[48];
+        size_t o = 0;
+        for (int q = 0; q < PORTS; q++) {
+            if (local_mask & (1u << q)) {
+                o += (size_t)snprintf(pads + o, sizeof pads - o, " P%d<-pad %d", q + 1,
+                    s_local_phys[q] + 1);
+            }
+        }
+        pc_log_line("net: this machine plays ports %x (%s)", local_mask, pads + 1);
     }
     pc_log_line(
         "net: rollback with %d peer%s (P%d first at %s:%u), local port %u, player P%d, delay "
@@ -3481,8 +3606,8 @@ static bool connect_impl(
 }
 
 bool pc_net_connect(const char* ip, uint16_t port, int player, uint32_t seed) {
-    PeerSpec peer = {ip, port, player ? 0 : 1};
-    return connect_impl(SOCK_INVALID, &peer, 1, player ? 1 : 0, seed);
+    PeerSpec peer = {ip, port, player ? 0 : 1, 0, NULL, false};
+    return connect_impl(SOCK_INVALID, &peer, 1, player ? 1 : 0, 0, NULL, seed);
 }
 
 /* Connect over the Slippi transport (MELEE_NET_STACK=slippi). The game-visible
@@ -3507,6 +3632,7 @@ bool pc_net_connect_slippi(
     session_reset();
     HSD_PadLibData.qtype = 2;
     net.local = player ? 1 : 0;
+    net.local_mask = (uint8_t)(1u << net.local);
     net.remote = 1 - net.local;
     remote_ports_set((uint8_t)(1u << net.remote));
     net.npeers = 1;
@@ -3668,6 +3794,7 @@ bool pc_net_slippi_adopt(int local_player, uint32_t rng_offset) {
     session_reset();
     HSD_PadLibData.qtype = 2;
     net.local = local_player ? 1 : 0;
+    net.local_mask = (uint8_t)(1u << net.local);
     net.remote = 1 - net.local;
     remote_ports_set((uint8_t)(1u << net.remote));
     net.npeers = 1;
@@ -3751,12 +3878,12 @@ bool pc_net_connect_socket(
     intptr_t socket, const char* ip, uint16_t port, int player, uint32_t seed) {
     if (socket == -1)
         return false;
-    PeerSpec peer = {ip, port, player ? 0 : 1};
-    return connect_impl((sock_t)socket, &peer, 1, player ? 1 : 0, seed);
+    PeerSpec peer = {ip, port, player ? 0 : 1, 0, NULL, false};
+    return connect_impl((sock_t)socket, &peer, 1, player ? 1 : 0, 0, NULL, seed);
 }
 
-bool pc_net_connect_links(
-    intptr_t socket, const PcNetLink* links, int n, int local, uint32_t seed) {
+bool pc_net_connect_links(intptr_t socket, const PcNetLink* links, int n, int local,
+    uint8_t local_xports, const int* local_phys, uint32_t seed) {
     if (socket == -1 || n < 1 || n > MAX_PEERS) {
         return false;
     }
@@ -3766,29 +3893,64 @@ bool pc_net_connect_links(
         struct in_addr a;
         a.s_addr = links[i].ip;
         inet_ntop(AF_INET, &a, ips[i], sizeof ips[i]);
-        peers[i] = (PeerSpec){ips[i], links[i].port, links[i].player, links[i].key,
-            links[i].via_host};
+        peers[i] = (PeerSpec){ips[i], links[i].port, links[i].player, links[i].xports,
+            links[i].key, links[i].via_host};
     }
     /* A lobby-started session: the lobby drives the handshake
      * (pc_net_host_match / pc_net_guest_wait_match); the
      * boot-time env path sets net.direct itself (net_punch.c). */
-    return connect_impl((sock_t)socket, peers, n, local, seed);
+    return connect_impl((sock_t)socket, peers, n, local, local_xports, local_phys, seed);
 }
 
 int pc_net_port_mask(void) {
     if (!net.active) {
         return 0;
     }
-    int mask = 1 << net.local;
+    int mask = net.local_mask;
     for (int i = 0; i < net.npeers; i++) {
-        mask |= 1 << net.peer_port[i];
+        mask |= s_peer[i].ports;
     }
     return mask;
 }
 
+int pc_net_local_mask(void) {
+    return net.active ? net.local_mask : 0;
+}
+
+int pc_net_port_phys(int port) {
+    return net.active && port >= 0 && port < PORTS && (net.local_mask & (1u << port)) ?
+               s_local_phys[port] :
+               -1;
+}
+
+bool pc_net_phys_pad(int phys, PADStatus* out) {
+    if (!net.active || phys < 0 || phys >= PORTS) {
+        return false;
+    }
+    *out = s_phys_last[phys];
+    return out->err == PAD_ERR_NONE;
+}
+
+int pc_net_port_owner(int port) {
+    if (!net.active || port < 0 || port >= PORTS) {
+        return -1;
+    }
+    if (net.local_mask & (1u << port)) {
+        return net.local;
+    }
+    for (int i = 0; i < net.npeers; i++) {
+        if (s_peer[i].ports & (1u << port)) {
+            return s_peer[i].port;
+        }
+    }
+    return -1;
+}
+
 /* MELEE_NET_PEERS="0=host:port,1=host:port,2=host:port": a direct session of
  * up to four players, every one listed by controller port (this side's own
- * entry, MELEE_NET_PLAYER's, is skipped). False when unset or malformed. */
+ * entry, MELEE_NET_PLAYER's, is skipped). A machine playing more than one
+ * port lists them all on its entry, primary first: "0+2=host:port" (its
+ * other pads drive them). False when unset or malformed. */
 static bool peers_from_env(uint32_t seed) {
     const char* spec = getenv("MELEE_NET_PEERS");
     if (spec == NULL || spec[0] == '\0') {
@@ -3796,8 +3958,9 @@ static bool peers_from_env(uint32_t seed) {
     }
     const char* player = getenv("MELEE_NET_PLAYER");
     int local = player != NULL ? atoi(player) : 0;
+    uint8_t local_x = 0;
     static char hosts[4][256];
-    PeerSpec peers[MAX_PEERS];
+    PeerSpec peers[MAX_PEERS] = {0};
     int n = 0;
     for (const char* q = spec; *q != '\0';) {
         const char* end = strchr(q, ',');
@@ -3808,13 +3971,21 @@ static bool peers_from_env(uint32_t seed) {
             colon = *c == ':' ? c : colon;
         }
         int port = eq != NULL ? atoi(q) : -1;
+        uint8_t xports = 0;
+        for (const char* c = q; eq != NULL && c < eq; c++) {
+            if (*c == '+' && c[1] >= '0' && c[1] <= '3') {
+                xports |= (uint8_t)(1u << (c[1] - '0'));
+            }
+        }
         if (eq == NULL || colon == NULL || colon < eq || port < 0 || port > 3 ||
             (size_t)(colon - eq - 1) >= sizeof hosts[0])
         {
             pc_log_line("net: MELEE_NET_PEERS wants port=host:port,..., not %s", spec);
             return false;
         }
-        if (port != local) {
+        if (port == local) {
+            local_x = xports;
+        } else {
             if (n == MAX_PEERS) {
                 pc_log_line("net: MELEE_NET_PEERS lists more than %d other players", MAX_PEERS);
                 return false;
@@ -3824,11 +3995,12 @@ static bool peers_from_env(uint32_t seed) {
             peers[n].ip = hosts[port];
             peers[n].port = (uint16_t)atoi(colon + 1);
             peers[n].player = port;
+            peers[n].xports = xports;
             n++;
         }
         q = end != NULL ? end + 1 : q + len;
     }
-    return connect_impl(SOCK_INVALID, peers, n, local, seed);
+    return connect_impl(SOCK_INVALID, peers, n, local, local_x, NULL, seed);
 }
 
 void pc_net_init(void) {
@@ -4288,7 +4460,7 @@ static void head_check(void) {
     }
     const PadLibData* p = &HSD_PadLibData;
     for (int port = 0; port < PORTS; port++) {
-        if (port != net.local && !(s_remote_mask & (1u << port))) {
+        if (!(net.local_mask & (1u << port)) && !(s_remote_mask & (1u << port))) {
             continue;
         }
         /* HSD_PadADConvert ORs synthetic direction bits above 0xffff into
@@ -4356,10 +4528,9 @@ static void fight_reseed(int32_t f) {
 /* Ports 0-3 of the queue head become the synced inputs for frame f. */
 static void write_head(PADStatus* head, int32_t f) {
     static const WirePad neutral;
-    const WirePad* mine = f >= net.delay ? &s_local_ring[f & (RING - 1)] : &neutral;
     for (int p = 0; p < PORTS; p++) {
-        if (p == net.local) {
-            from_wire(&head[p], mine);
+        if (net.local_mask & (1u << p)) {
+            from_wire(&head[p], f >= net.delay ? &s_local_ring[p][f & (RING - 1)] : &neutral);
             continue;
         }
         if (!(s_remote_mask & (1u << p))) {
@@ -4666,12 +4837,18 @@ static void hitch_test(void) {
 /* Read the latest published hardware state immediately before input is
  * sent. Extra time-sync ticks and rollback must reuse their recorded sample;
  * they must never sample hardware a second time. Physical port zero is the
- * local controller even when matchmaking assigned this peer player two. */
+ * local controller even when matchmaking assigned this peer player two; a
+ * machine playing more ports reads its next pads for them (s_local_phys). */
 static void capture_local_sample(bool fresh) {
     if (fresh) {
         PADStatus pads[4];
         PADRead(pads);
-        s_raw_last = pads[0];
+        memcpy(s_phys_last, pads, sizeof s_phys_last);
+        for (int q = 0; q < PORTS; q++) {
+            if (net.local_mask & (1u << q)) {
+                s_raw_last[q] = pads[s_local_phys[q]];
+            }
+        }
     }
 }
 
@@ -4701,7 +4878,11 @@ static void fresh_tick(PADStatus* head, bool raw) {
          * with the same sample, or already-sent frames that must not move. */
         int64_t target_w = (int64_t)net.frame + net.delay;
         for (int32_t w = s_wrote + 1; (int64_t)w <= target_w; w++) {
-            to_wire(&s_local_ring[w & (RING - 1)], &s_raw_last);
+            for (int q = 0; q < PORTS; q++) {
+                if (net.local_mask & (1u << q)) {
+                    to_wire(&s_local_ring[q][w & (RING - 1)], &s_raw_last[q]);
+                }
+            }
             s_wrote = w;
         }
         send_inputs();

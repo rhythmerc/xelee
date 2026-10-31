@@ -43,7 +43,11 @@ extern "C" {
  * input on (relayed by the host, or collected after a drop), and reliable
  * types 0x30-0x34 carry routes, relayed messages and drops (net.c). A 1v1
  * sends none of them, but a peer on 11 does not know them. */
-#define PC_NET_PROTO_VERSION 12
+/* Version 13 lets one machine play several controller ports: an input packet
+ * gains an xports byte, and the pads of those ports follow the primary
+ * port's (docs/lan-multipad-plan.md). A peer on 12 reads every packet as
+ * malformed. */
+#define PC_NET_PROTO_VERSION 13
 void pc_net_init(void);
 void pc_net_set_input_delay(int frames);
 bool pc_net_active(void);
@@ -83,13 +87,16 @@ typedef struct PcNetLink {
     uint32_t ip; /* network order */
     uint16_t port;
     int player;       /* its controller port */
+    uint8_t xports;   /* the other ports that machine plays (docs/lan-multipad-plan.md) */
     uint8_t key[32];  /* this link's MAC key; the handshake does not rekey it */
     bool via_host;    /* never punched: its input and messages come through the host */
 } PcNetLink;
-/* A session of n + 1 players on an already-punched IPv4 socket, this side on
- * controller port `local`. Ownership of the socket moves on success only. */
-bool pc_net_connect_links(
-    intptr_t socket, const PcNetLink* links, int n, int local, uint32_t seed);
+/* A session of n + 1 machines on an already-punched IPv4 socket, this side on
+ * controller port `local` (and `local_xports` too, from its other pads:
+ * local_phys[port] names the pad, NULL for pads 1.. in port order).
+ * Ownership of the socket moves on success only. */
+bool pc_net_connect_links(intptr_t socket, const PcNetLink* links, int n, int local,
+    uint8_t local_xports, const int* local_phys, uint32_t seed);
 /* End the session without a goodbye and hand its socket back (-1 when there
  * is none): XeleeNet restarts the session on it when a player joins. */
 intptr_t pc_net_release_socket(void);
@@ -114,6 +121,19 @@ void pc_net_leave_quietly(int32_t last, int ms);
 bool pc_net_settle(int32_t last, int ms);
 /* The controller ports in the session, ours included (bit per port); 0 offline. */
 int pc_net_port_mask(void);
+/* The ports this machine plays (pc_net_local_player()'s and any more its other
+ * pads drive, docs/lan-multipad-plan.md); 0 offline. */
+int pc_net_local_mask(void);
+/* The physical pad (PADRead index) one of our ports reads; -1 for a port that
+ * isn't ours. */
+int pc_net_port_phys(int port);
+/* Physical pad `phys` as the last fresh tick read it (whether it plays or
+ * not); false when nothing is connected there or no session runs. */
+struct PADStatus;
+bool pc_net_phys_pad(int phys, struct PADStatus* out);
+/* The primary port of the machine that plays `port` (its own for a primary
+ * port), -1 for a port nobody plays. */
+int pc_net_port_owner(int port);
 /* Connect over the Slippi transport (MELEE_NET_STACK=slippi,
  * docs/slippi-migration-plan.md). Uses the Slippi ENet protocol; the game-side
  * rollback/barrier/ring machinery is unchanged. `local_udp_port` 0 lets ENet

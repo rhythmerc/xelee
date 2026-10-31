@@ -82,8 +82,12 @@ void wire_packet(Packet* pk) {
     be32(&pk->first);
     be32(&pk->ck_frame);
     be32(&pk->ck);
+    int nx = port_count(pk->xports);
     for (int i = 0; i < pk->count && i < REDUNDANCY; i++) {
         be16(&pk->pads[i].button);
+        for (int x = 0; x < nx && x < MAX_XPORTS; x++) {
+            be16(&pk->xpads[x][i].button);
+        }
     }
 }
 
@@ -142,6 +146,47 @@ bool pads_decode(const uint8_t* in, int len, int count, WirePad* pads) {
             }
         }
         memcpy(&pads[i], prev, sizeof prev);
+    }
+    return true;
+}
+
+size_t pads_encode_all(const Packet* pk, uint8_t* out) {
+    size_t n = pads_encode(pk->pads, pk->count, out);
+    for (int x = 0; x < port_count(pk->xports) && x < MAX_XPORTS; x++) {
+        n += pads_encode(pk->xpads[x], pk->count, out + n);
+    }
+    return n;
+}
+
+/* Bytes every port's encoded pads take, or -1 when `len` cannot hold them
+ * or xports names more ports than a packet carries. */
+int pads_wire_len_all(const uint8_t* in, int len, int count, uint8_t xports) {
+    int nx = port_count(xports);
+    if (nx > MAX_XPORTS || (xports & ~15u) != 0) {
+        return -1;
+    }
+    int n = 0;
+    for (int x = 0; x <= nx; x++) {
+        int one = pads_wire_len(in + n, len - n, count);
+        if (one < 0) {
+            return -1;
+        }
+        n += one;
+    }
+    return n;
+}
+
+/* pads_encode_all's inverse; false unless the pads fill exactly `len`. */
+bool pads_decode_all(const uint8_t* in, int len, Packet* pk) {
+    if (pk->count > REDUNDANCY || pads_wire_len_all(in, len, pk->count, pk->xports) != len) {
+        return false;
+    }
+    int n = pads_wire_len(in, len, pk->count);
+    pads_decode(in, n, pk->count, pk->pads);
+    for (int x = 0; x < port_count(pk->xports); x++) {
+        int one = pads_wire_len(in + n, len - n, pk->count);
+        pads_decode(in + n, one, pk->count, pk->xpads[x]);
+        n += one;
     }
     return true;
 }

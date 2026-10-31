@@ -93,14 +93,24 @@ static SDL_Mutex* s_key_mutex;
 
 /* MELEE_KEY_FIFO=path: test driver that does not depend on X focus. Each
  * line is "Name[+Name...] hold_ms" with SDL scancode names ("Return 150",
- * "X+Down 200"); the keys read as held for hold_ms, one line at a time. */
+ * "X+Down 200"); the keys read as held for hold_ms, one line at a time.
+ * MELEE_KEY_FIFO_P2..P4 drive physical pads 2-4 the same way, each on a
+ * timeline of its own: a machine playing more than one port online reads
+ * its other pads (docs/lan-multipad-plan.md), and the harness needs a hand
+ * on them. Those take the keyboard's mapping, from their FIFO only. */
 static bool s_fifo_key[SDL_SCANCODE_COUNT];
 static bool s_fifo_started;
+static bool s_pfifo_key[4][SDL_SCANCODE_COUNT];   /* pads 2-4 (index 1-3) */
+static bool s_pfifo_latch[4][SDL_SCANCODE_COUNT]; /* a press shorter than a frame */
+static const char* s_fifo_path[4];
 
-static int fifo_thread(void* path) {
+static int fifo_thread(void* arg) {
+    const int pad = (int)(intptr_t)arg;
+    const char* path = s_fifo_path[pad];
+    bool* held = pad == 0 ? s_fifo_key : s_pfifo_key[pad];
     char line[128];
     for (;;) {
-        FILE* f = fopen((const char*)path, "r"); /* blocks until a writer opens */
+        FILE* f = fopen(path, "r"); /* blocks until a writer opens */
         if (f == NULL) {
             SDL_Delay(200);
             continue;
@@ -124,15 +134,19 @@ static int fifo_thread(void* path) {
             }
             SDL_LockMutex(s_key_mutex);
             for (int i = 0; i < n; i++) {
-                s_fifo_key[keys[i]] = true;
-                s_key_latched[keys[i]] = true;
+                held[keys[i]] = true;
+                if (pad == 0) {
+                    s_key_latched[keys[i]] = true;
+                } else {
+                    s_pfifo_latch[pad][keys[i]] = true;
+                }
             }
             s_active = true;
             SDL_UnlockMutex(s_key_mutex);
             SDL_Delay((Uint32)hold);
             SDL_LockMutex(s_key_mutex);
             for (int i = 0; i < n; i++) {
-                s_fifo_key[keys[i]] = false;
+                held[keys[i]] = false;
             }
             SDL_UnlockMutex(s_key_mutex);
             SDL_Delay(100);
@@ -140,6 +154,34 @@ static int fifo_thread(void* path) {
         fclose(f);
     }
     return 0;
+}
+
+/* Pads 2-4 from their FIFOs (s_key_mutex held): the keyboard's mapping. */
+static void publish_pad_fifos_locked(void) {
+    for (int pad = 1; pad < 4; pad++) {
+        if (s_fifo_path[pad] == NULL) {
+            continue;
+        }
+        const bool* k = s_pfifo_key[pad];
+        const bool* l = s_pfifo_latch[pad];
+#define ON(sc) (k[sc] || l[sc])
+        PADStatus st = {0};
+        for (size_t i = 0; i < sizeof(s_button_map) / sizeof(s_button_map[0]); i++) {
+            if (ON(s_button_map[i].key)) {
+                st.button |= s_button_map[i].button;
+            }
+        }
+        st.stickX = (s8)((ON(SDL_SCANCODE_RIGHT) ? 80 : 0) - (ON(SDL_SCANCODE_LEFT) ? 80 : 0));
+        st.stickY = (s8)((ON(SDL_SCANCODE_UP) ? 80 : 0) - (ON(SDL_SCANCODE_DOWN) ? 80 : 0));
+        st.substickX = (s8)((ON(SDL_SCANCODE_L) ? 80 : 0) - (ON(SDL_SCANCODE_J) ? 80 : 0));
+        st.substickY = (s8)((ON(SDL_SCANCODE_I) ? 80 : 0) - (ON(SDL_SCANCODE_K) ? 80 : 0));
+        st.triggerLeft = ON(SDL_SCANCODE_Q) ? 255 : 0;
+        st.triggerRight = ON(SDL_SCANCODE_E) ? 255 : 0;
+#undef ON
+        memset(s_pfifo_latch[pad], 0, sizeof s_pfifo_latch[pad]);
+        /* Connected from the start, at rest between lines: a pad, not no pad. */
+        PADSetVirtualStatus((u32)pad, &st);
+    }
 }
 
 static void lock_keys(void) {
@@ -217,14 +259,20 @@ static void trace_locked(const PADStatus* st) {
  * and the latch - into port 0's virtual pad. Call with s_key_mutex held. */
 static void publish_locked(void) {
     if (!s_fifo_started) {
-        const char* fifo = getenv("MELEE_KEY_FIFO");
+        static const char* const names[4] = {
+            "MELEE_KEY_FIFO", "MELEE_KEY_FIFO_P2", "MELEE_KEY_FIFO_P3", "MELEE_KEY_FIFO_P4"};
         s_fifo_started = true;
         s_trace = getenv("MELEE_INPUT_TRACE") != NULL;
-        if (fifo != NULL && fifo[0] != '\0') {
-            SDL_DetachThread(SDL_CreateThread(fifo_thread, "keyfifo", (void*)fifo));
-            s_active = true;
+        for (int pad = 0; pad < 4; pad++) {
+            const char* fifo = getenv(names[pad]);
+            if (fifo != NULL && fifo[0] != '\0') {
+                s_fifo_path[pad] = fifo;
+                SDL_DetachThread(SDL_CreateThread(fifo_thread, "keyfifo", (void*)(intptr_t)pad));
+                s_active = s_active || pad == 0;
+            }
         }
     }
+    publish_pad_fifos_locked();
     PADStatus st = {0};
     bool any_active = false;
     unsigned engaged = 0; /* port 1's devices showing input, for rumble */

@@ -199,6 +199,16 @@ def run(url):
     hb = a.heartbeat(lobby, roster=[c.pubkey])
     check(sorted(m["name"] for m in hb["members"]) == ["KOOPA"], "players the host no longer reaches are dropped")
 
+    print("-- seats a machine's other pads hold")
+    a.heartbeat(lobby, roster=[c.pubkey], extra=[1])
+    i = player("ITEM")
+    check(i.join(code, ["203.0.113.8:41000"])["port"] == 3, "a joiner skips a port another pad holds (P2)")
+    a.heartbeat(lobby, roster=[c.pubkey, i.pubkey], extra=[1])
+    j = player("JUNK")
+    refused(lambda: j.join(code, ["203.0.113.9:41000"]), "full", "a joiner when other pads fill the last seat")
+    a.heartbeat(lobby, roster=[c.pubkey, i.pubkey], extra=[])
+    check(j.join(code, ["203.0.113.9:41000"])["port"] == 1, "a seat another pad gave up goes to the next joiner")
+
     print("-- ask before joining")
     f = player("HOST2")
     r = f.host("Ask first", ["198.51.100.6:41000"], visibility="private", ask=True,

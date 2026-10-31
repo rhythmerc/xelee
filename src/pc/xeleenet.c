@@ -50,6 +50,7 @@ static PcXnMember s_members[3];
 static int s_nmembers;
 static uint8_t s_roster[3][32];
 static int s_nroster;
+static uint8_t s_extra; /* ports other pads hold (docs/lan-multipad-plan.md) */
 
 static char s_token[256]; /* the thread's own */
 static PcXnListing s_info;  /* the lobby we're in (s_lock) */
@@ -414,6 +415,12 @@ static bool heartbeat(void) {
         b64url(s_roster[i], 32, k);
         o += (size_t)snprintf(body + o, sizeof body - o, "%s\"%s\"", i ? "," : "", k);
     }
+    o += (size_t)snprintf(body + o, sizeof body - o, "],\"extra\":[");
+    for (int q = 1, k = 0; q < 4; q++) {
+        if (s_extra & (1u << q)) {
+            o += (size_t)snprintf(body + o, sizeof body - o, "%s%d", k++ ? "," : "", q);
+        }
+    }
     SDL_UnlockMutex(s_lock);
     snprintf(body + o, sizeof body - o, "]}");
     snprintf(path, sizeof path, "/v1/lobbies/%s/heartbeat", s_lobby);
@@ -610,11 +617,12 @@ static int svc_members(PcXnMember* out, int max) {
     return n;
 }
 
-static void svc_set_roster(const uint8_t (*keys)[32], int n) {
+static void svc_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra) {
     if (s_lock == NULL) {
         return;
     }
     SDL_LockMutex(s_lock);
+    s_extra = (uint8_t)(extra & 14u);
     s_nroster = n < 3 ? n : 3;
     memcpy(s_roster, keys, (size_t)s_nroster * 32);
     SDL_UnlockMutex(s_lock);
@@ -790,8 +798,8 @@ int pc_xn_members(PcXnMember* out, int max) {
     return backend()->members(out, max);
 }
 
-void pc_xn_set_roster(const uint8_t (*keys)[32], int n) {
-    backend()->set_roster(keys, n);
+void pc_xn_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra) {
+    backend()->set_roster(keys, n, extra);
 }
 
 void pc_xn_stop(void) {

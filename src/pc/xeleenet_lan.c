@@ -182,6 +182,9 @@ static PcXnMember s_members[3];
 static int s_nmembers;
 static uint8_t s_roster[3][32];
 static int s_nroster;
+/* Ports machines' other pads hold (docs/lan-multipad-plan.md): taken seats
+ * that no joiner is given. The host's game names them with the roster. */
+static uint8_t s_extra, s_extra_announced;
 static PcXnListing s_info;
 static bool s_info_known;
 static char s_address[64]; /* the host's lobby socket, as the banner shows it */
@@ -284,7 +287,8 @@ static void host_announce(void) {
     SDL_LockMutex(s_lock);
     snprintf(name, sizeof name, "%s", s_opts.name[0] ? s_opts.name : s_args.name);
     snprintf(settings, sizeof settings, "%s", s_opts.settings);
-    snprintf(taken, sizeof taken, "%d", 1 + s_nmembers);
+    snprintf(taken, sizeof taken, "%d", 1 + s_nmembers + __builtin_popcount(s_extra));
+    s_extra_announced = s_extra;
     SDL_UnlockMutex(s_lock);
     snprintf(proto, sizeof proto, "%d", PC_NET_PROTO_VERSION);
     snprintf(seats, sizeof seats, "%d", s_args.seats);
@@ -344,14 +348,14 @@ static void on_join(const LJoin* j, const struct sockaddr_in* from) {
         }
     }
     if (at < 0) {
-        if (1 + s_nmembers >= s_args.seats) {
+        if (1 + s_nmembers + __builtin_popcount(s_extra) >= s_args.seats) {
             SDL_UnlockMutex(s_lock);
             refuse(from, j->nonce, "full");
             return;
         }
         int port = 1;
         for (bool used = true; used && port < 4; port += used) {
-            used = false;
+            used = (s_extra & (1u << port)) != 0;
             for (int i = 0; i < s_nmembers; i++) {
                 used |= s_members[i].port == port;
             }
@@ -431,6 +435,7 @@ static void on_leave(const LLeave* l) {
 static void host_roster(void) {
     bool changed = false;
     SDL_LockMutex(s_lock);
+    changed = s_extra != s_extra_announced; /* the list's seats taken */
     for (int i = 0; i < s_nmembers;) {
         bool linked = false;
         for (int r = 0; r < s_nroster; r++) {
@@ -876,11 +881,12 @@ static int lan_members(PcXnMember* out, int max) {
     return n;
 }
 
-static void lan_set_roster(const uint8_t (*keys)[32], int n) {
+static void lan_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra) {
     if (s_lock == NULL) {
         return;
     }
     SDL_LockMutex(s_lock);
+    s_extra = (uint8_t)(extra & 14u);
     s_nroster = n < 3 ? n : 3;
     memcpy(s_roster, keys, (size_t)s_nroster * 32);
     SDL_UnlockMutex(s_lock);

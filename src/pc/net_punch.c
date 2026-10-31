@@ -63,14 +63,22 @@ typedef struct XnIntro { /* host -> guest: a player who joined after it */
 
 typedef struct XnReport { /* guest -> host: how its links are going (port masks) */
     XnHead h;
-    uint8_t known, up, gave, reserved;
+    uint8_t known, up, gave;
+    /* Seats it wants for its other pads (docs/lan-multipad-plan.md): the
+     * count in bits 0-1, and in bits 2-7 a number it moves on every change,
+     * so the host can tell a report from before a seat was given up. */
+    uint8_t want;
     uint8_t sig[64];
 } XnReport;
 
 typedef struct XnStart { /* host -> guest */
     XnHead h;
-    uint8_t ports;     /* who plays */
-    uint8_t reserved[3];
+    uint8_t ports; /* who plays */
+    /* owners: each port's machine, as that machine's primary port (2 bits a
+     * port, port 0 lowest). A machine plays its primary port and any whose
+     * owner it is: a PC's other pads (docs/lan-multipad-plan.md). */
+    uint8_t owners;
+    uint8_t reserved[2];
     uint8_t direct[4]; /* per port: the ports it has its own link to */
     uint8_t seed[4];
     uint8_t nonces[4][8];
@@ -104,6 +112,9 @@ typedef struct Who { /* another player, by controller port */
     bool seen_set;
     uint64_t next_probe;
     uint8_t known_m, up_m, gave_m; /* host: this guest's last report */
+    uint8_t want_x;                /* host: seats it wants for its other pads */
+    uint8_t want_seq;              /* host: the number on that report */
+    int want_stale;                /* host: 1 + the number of reports that predate a seat it gave up */
     bool acked;                    /* host: it answered the start */
     double joined;                 /* the service's stamp for their seat, 0 if introduced */
 } Who;
@@ -135,6 +146,40 @@ static XnStart s_start; /* the host's, sent or accepted */
 static int s_session_seq; /* sessions started this run: a new one is a roster change */
 static uint32_t s_running_seed; /* the session running's start, 0 none */
 static int32_t s_switch_at = -1; /* in a session: the frame the next one starts on */
+/* Seats for our other pads (docs/lan-multipad-plan.md): how many we want,
+ * and the number our reports carry, moved on every change. */
+static int s_want_x;
+static uint8_t s_want_seq;
+static uint8_t s_dropped;   /* host: extra seats given up, not to be kept */
+static int s_seats_live;    /* host: the lobby's seats now (its settings may change) */
+/* Our pads: the ones that asked for a seat and have none yet (oldest first),
+ * and which pad plays each of our other seats once given. */
+static int s_claim[2], s_nclaim;
+static uint64_t s_claim_ms;     /* when the oldest claim was made */
+static bool s_claim_refused;    /* claims the host never filled, for the CSS to say so */
+static int s_port_phys[4] = {-1, -1, -1, -1};
+#define CLAIM_MS 6000 /* a seat the host hasn't given by then isn't coming */
+
+/* The machine that plays port q in a start: its primary port. */
+static int start_owner(const XnStart* st, int q) {
+    return (st->owners >> (2 * q)) & 3;
+}
+
+/* The ports a machine plays besides its primary one, in a start. */
+static uint8_t start_xports(const XnStart* st, int primary) {
+    uint8_t m = 0;
+    for (int q = 0; q < 4; q++) {
+        if ((st->ports & (1u << q)) && q != primary && start_owner(st, q) == primary) {
+            m |= (uint8_t)(1u << q);
+        }
+    }
+    return m;
+}
+
+/* A machine's own link: its primary port, not one of its other pads'. */
+static bool start_primary(const XnStart* st, int q) {
+    return (st->ports & (1u << q)) && start_owner(st, q) == q;
+}
 
 /* Once a session runs, the engine owns the socket: its receive thread hands
  * punch datagrams over (ride_datagram) and the game thread drains them
@@ -343,19 +388,34 @@ static void begin_session(uint32_t seed) {
     PcNetLink links[3];
     int n = 0;
     for (int p = 0; p < 4; p++) {
-        if (p == s_local || !(s_start.ports & (1u << p))) {
+        if (p == s_local || !start_primary(&s_start, p)) {
             continue;
         }
         const Who* w = &s_who[p];
         PcNetLink* l = &links[n++];
         memset(l, 0, sizeof *l);
         l->player = p;
+        l->xports = start_xports(&s_start, p);
         l->ip = w->up ? w->addr.sin_addr.s_addr : w->ip[0];
         l->port = w->up ? ntohs(w->addr.sin_port) : w->udp[0];
         l->via_host = !(s_start.direct[s_local] & (1u << p));
         link_key(s_local, p, (const uint8_t(*)[8])s_start.nonces, l->key);
         pc_log_line("xeleenet: P%d %s at %s", p + 1, l->via_host ? "through the host" : "direct",
             ip_text(l->ip, l->port));
+    }
+    /* Our other seats: each keeps the pad it had, and a new one takes the
+     * oldest pad still waiting for one. */
+    const uint8_t mine = start_xports(&s_start, s_local);
+    for (int q = 0; q < 4; q++) {
+        if (!(mine & (1u << q))) {
+            s_port_phys[q] = -1;
+        } else if (s_port_phys[q] < 0 && s_nclaim > 0) {
+            s_port_phys[q] = s_claim[0];
+            s_claim[0] = s_claim[1];
+            s_nclaim--;
+            s_claim_ms = now_ms();
+            pc_log_line("xeleenet: controller %d plays P%d", s_port_phys[q] + 1, q + 1);
+        }
     }
     /* The first session takes our socket; a later one (someone joined) takes
      * it back from the running session, with no goodbye: every peer restarts.
@@ -367,7 +427,8 @@ static void begin_session(uint32_t seed) {
     }
     sock_t sock = s_sock != SOCK_INVALID ? s_sock : (sock_t)pc_net_release_socket();
     s_sock = SOCK_INVALID;
-    if (sock == SOCK_INVALID || !pc_net_connect_links((intptr_t)sock, links, n, s_local, seed)) {
+    if (sock == SOCK_INVALID || !pc_net_connect_links((intptr_t)sock, links, n, s_local, mine,
+                                     s_port_phys, seed)) {
         if (sock != SOCK_INVALID) {
             sock_close(sock);
         }
@@ -471,7 +532,7 @@ static void on_start(const XnStart* m) {
         return;
     }
     for (int p = 1; p < 4; p++) {
-        if ((m->ports & (1u << p)) && p != s_local && !s_who[p].known) {
+        if (start_primary(m, p) && p != s_local && !s_who[p].known) {
             return; /* cannot happen: the host waits for our report to know them */
         }
     }
@@ -485,7 +546,8 @@ static void on_start(const XnStart* m) {
         const uint32_t at = get32b(m->at);
         if (at != 0xFFFFFFFFu) {
             s_switch_at = (int32_t)at;
-            pc_log_line("xeleenet: the next session (players %02x) starts at frame %d", m->ports, s_switch_at);
+            pc_log_line("xeleenet: the next session (players %02x, owners %02x) starts at frame %d",
+                m->ports, m->owners, s_switch_at);
         }
         return;
     }
@@ -541,6 +603,11 @@ static void receive(void) {
                 w->known_m = r->known;
                 w->up_m = r->up;
                 w->gave_m = r->gave;
+                const uint8_t seq = (uint8_t)(r->want >> 2);
+                if (seq + 1 != w->want_stale) {
+                    w->want_x = (uint8_t)((r->want & 3) > 2 ? 2 : r->want & 3);
+                    w->want_seq = seq;
+                }
             }
             break;
         case T_START:
@@ -745,6 +812,7 @@ static void punch_tick(void) {
             r.known = mask_of(is_known);
             r.up = mask_of(is_up);
             r.gave = mask_of(is_gave);
+            r.want = (uint8_t)(s_want_seq << 2 | (s_want_x & 3));
             send_signed(&r, sizeof r, 0);
         }
         return;
@@ -778,7 +846,14 @@ static void punch_tick(void) {
             send_signed(&m, sizeof m, g);
         }
     }
-    pc_xn_set_roster((const uint8_t(*)[32])keys, nkeys);
+    /* The seats other pads hold, so the lobby gives a joiner none of them. */
+    uint8_t extra = 0;
+    for (int q = 0; q < 4 && s_start.ports != 0; q++) {
+        if ((s_start.ports & (1u << q)) && !start_primary(&s_start, q)) {
+            extra |= (uint8_t)(1u << q);
+        }
+    }
+    pc_xn_set_roster((const uint8_t(*)[32])keys, nkeys, extra);
 }
 
 /* Host: someone has joined, every guest reaches us and every pair of guests
@@ -809,7 +884,57 @@ static bool ready_to_start(void) {
     return links_decided(&players) && (players >= s_seats || s_start_req);
 }
 
+/* Host: who plays the next session -- every machine on its primary port, then
+ * the seats their other pads want (docs/lan-multipad-plan.md). A seat keeps
+ * the port it had while its machine still wants it; one a player joined on
+ * goes to that player; new ones take the lowest free ports, up to the
+ * lobby's seats. `prev` is the session running (zeroed: none). */
+static void roster_build(uint8_t* ports_out, uint8_t* owners_out, const XnStart* prev) {
+    int own[4] = {0, -1, -1, -1}, want[4] = {s_want_x, 0, 0, 0}, have[4] = {0};
+    uint8_t ports = 1;
+    for (int g = 1; g < 4; g++) {
+        if (s_who[g].known) {
+            ports |= (uint8_t)(1u << g);
+            own[g] = g;
+            want[g] = s_who[g].want_x;
+        }
+    }
+    const int seats = s_seats_live >= 2 && s_seats_live <= 4 ? s_seats_live :
+                      s_seats >= 2 && s_seats <= 4         ? s_seats :
+                                                              4;
+    int used = __builtin_popcount(ports);
+    for (int q = 0; q < 4; q++) {
+        const int o = start_owner(prev, q);
+        if ((ports & (1u << q)) || !(prev->ports & (1u << q)) || (s_dropped & (1u << q)) ||
+            o == q || own[o] != o || have[o] >= want[o] || used >= seats)
+        {
+            continue;
+        }
+        ports |= (uint8_t)(1u << q);
+        own[q] = o;
+        have[o]++;
+        used++;
+    }
+    for (int o = 0; o < 4; o++) {
+        for (int q = 0; q < 4 && own[o] == o && have[o] < want[o] && used < seats; q++) {
+            if (!(ports & (1u << q))) {
+                ports |= (uint8_t)(1u << q);
+                own[q] = o;
+                have[o]++;
+                used++;
+            }
+        }
+    }
+    uint8_t owners = 0;
+    for (int q = 0; q < 4; q++) {
+        owners |= (uint8_t)((own[q] >= 0 ? own[q] : q) << (2 * q));
+    }
+    *ports_out = ports;
+    *owners_out = owners;
+}
+
 static void start_build(void) {
+    const XnStart prev = s_start;
     memset(&s_start, 0, sizeof s_start);
     uint32_t seed;
     pc_identity_random(&seed, sizeof seed);
@@ -818,14 +943,14 @@ static void start_build(void) {
     s_start.seed[1] = (uint8_t)(seed >> 16);
     s_start.seed[2] = (uint8_t)(seed >> 8);
     s_start.seed[3] = (uint8_t)seed;
-    s_start.ports = 1;
+    roster_build(&s_start.ports, &s_start.owners, &prev);
+    s_dropped = 0;
     put64(s_start.nonces[0], s_nonce);
     for (int g = 1; g < 4; g++) {
         const Who* w = &s_who[g];
         if (!w->known) {
             continue;
         }
-        s_start.ports |= (uint8_t)(1u << g);
         put64(s_start.nonces[g], w->nonce);
         s_start.direct[0] |= (uint8_t)(1u << g);
         s_start.direct[g] |= 1;
@@ -838,7 +963,7 @@ static void start_build(void) {
     }
     for (int g = 1; g < 4; g++) {
         for (int o = g + 1; o < 4; o++) {
-            if ((s_start.ports & (1u << g)) && (s_start.ports & (1u << o)) &&
+            if (start_primary(&s_start, g) && start_primary(&s_start, o) &&
                 !(s_start.direct[g] & (1u << o)))
             {
                 pc_log_line("xeleenet: P%d and P%d go through the host", g + 1, o + 1);
@@ -851,7 +976,8 @@ static void start_build(void) {
     }
     s_start_next = 0;
     s_phase = PH_STARTING;
-    pc_log_line("xeleenet: starting, players %02x, seed %u", s_start.ports, seed);
+    pc_log_line("xeleenet: starting, players %02x, owners %02x, seed %u", s_start.ports,
+        s_start.owners, seed);
 }
 
 /* The host's start, until everyone has answered. Then, with nobody in a
@@ -869,7 +995,7 @@ static void start_tick(void) {
         if (t >= s_start_next) {
             s_start_next = t + START_MS;
             for (int g = 1; g < 4; g++) {
-                if (s_start.ports & (1u << g)) {
+                if (start_primary(&s_start, g)) {
                     head(&s_start.h, T_START, g);
                     send_signed(&s_start, sizeof s_start, g);
                 }
@@ -883,7 +1009,7 @@ static void start_tick(void) {
     s_start_next = t + START_MS;
     bool all = true;
     for (int g = 1; g < 4; g++) {
-        if ((s_start.ports & (1u << g)) && !s_who[g].acked) {
+        if (start_primary(&s_start, g) && !s_who[g].acked) {
             all = false;
             head(&s_start.h, T_START, g);
             send_signed(&s_start, sizeof s_start, g);
@@ -898,19 +1024,19 @@ static void start_tick(void) {
     }
     put32b(s_start.at, (uint32_t)(pc_net_frame() + SWITCH_LEAD));
     s_start_next = 0; /* the named frame goes out on the next tick */
-    pc_log_line("xeleenet: everyone answered; the next session (players %02x) starts at frame %d",
-        s_start.ports, (int)get32b(s_start.at));
+    pc_log_line("xeleenet: everyone answered; the next session (players %02x, owners %02x) starts "
+                "at frame %d",
+        s_start.ports, s_start.owners, (int)get32b(s_start.at));
 }
 
 /* Host, with a session running: a guest the session doesn't have yet, linked
- * to everyone, or one it has who left, means the next session. */
+ * to everyone, or one it has who left, means the next session; so does a
+ * seat a machine's other pad wants or gave up. */
 static bool roster_changed(void) {
-    uint8_t guests = 0;
-    for (int g = 1; g < 4; g++) {
-        guests |= s_who[g].known ? (uint8_t)(1u << g) : 0;
-    }
+    uint8_t ports, owners;
+    roster_build(&ports, &owners, &s_start);
     int players = 0;
-    return guests != (s_start.ports & ~1u) && links_decided(&players);
+    return (ports != s_start.ports || owners != s_start.owners) && links_decided(&players);
 }
 
 int pc_xn_punch_poll(void) {
@@ -988,6 +1114,15 @@ int pc_xn_punch_poll(void) {
             break;
         }
         punch_tick();
+        if (s_nclaim > 0 && t - s_claim_ms > CLAIM_MS) {
+            /* No seat came (the lobby filled first): stop asking. */
+            pc_log_line("xeleenet: no seat for %d pad%s; the lobby is full", s_nclaim,
+                s_nclaim == 1 ? "" : "s");
+            s_want_x = s_want_x > s_nclaim ? s_want_x - s_nclaim : 0;
+            s_want_seq = (uint8_t)((s_want_seq + 1) & 63);
+            s_nclaim = 0;
+            s_claim_refused = true;
+        }
         if (s_local != 0 && s_switch_at >= 0 && pc_net_frame() >= s_switch_at) {
             begin_session(get32b(s_start.seed)); /* the frame the host named */
         } else if (s_local == 0 && roster_changed()) {
@@ -1017,6 +1152,15 @@ bool pc_xn_punch_start(const char* url, const char* name, const char* code, int 
     s_session_seq = 0;
     s_lobby_code[0] = '\0';
     s_start_req = false;
+    s_want_x = 0;
+    s_want_seq = 0;
+    s_dropped = 0;
+    s_seats_live = 0;
+    s_nclaim = 0;
+    s_claim_refused = false;
+    for (int q = 0; q < 4; q++) {
+        s_port_phys[q] = -1;
+    }
     s_phase = PH_STUN;
     s_why[0] = '\0';
     s_local = -1;
@@ -1140,6 +1284,71 @@ void pc_xn_punch_request_start(void) {
     }
 }
 
+void pc_xn_punch_want_seat(int phys) {
+    if (s_want_x >= 2 || phys < 1 || phys > 3 || s_local < 0) {
+        return;
+    }
+    for (int q = 0; q < 4; q++) {
+        if (s_port_phys[q] == phys) {
+            return; /* it plays already */
+        }
+    }
+    for (int i = 0; i < s_nclaim; i++) {
+        if (s_claim[i] == phys) {
+            return; /* it asked already */
+        }
+    }
+    if (s_nclaim == 0) {
+        s_claim_ms = now_ms();
+    }
+    s_claim[s_nclaim++] = phys;
+    s_want_x++;
+    s_want_seq = (uint8_t)((s_want_seq + 1) & 63);
+    pc_log_line("xeleenet: this machine wants %d more seat%s", s_want_x, s_want_x == 1 ? "" : "s");
+}
+
+int pc_xn_punch_claims(int* phys) {
+    for (int i = 0; i < s_nclaim; i++) {
+        phys[i] = s_claim[i];
+    }
+    return s_nclaim;
+}
+
+bool pc_xn_punch_claim_refused(void) {
+    const bool r = s_claim_refused;
+    s_claim_refused = false;
+    return r;
+}
+
+void pc_xn_punch_set_seats(int seats) {
+    s_seats_live = seats;
+}
+
+bool pc_xn_punch_seat_left(int port) {
+    if (port < 0 || port > 3 || !(s_start.ports & (1u << port))) {
+        return false;
+    }
+    const int o = start_owner(&s_start, port);
+    if (o == port) {
+        return false; /* a machine's own seat: pc_xn_punch_left */
+    }
+    if (o == s_local && s_want_x > 0) {
+        s_want_x--;
+        s_want_seq = (uint8_t)((s_want_seq + 1) & 63);
+        s_port_phys[port] = -1;
+    }
+    if (s_local == 0) {
+        s_dropped |= (uint8_t)(1u << port);
+        Who* w = &s_who[o];
+        if (o != 0 && w->want_x > 0) {
+            w->want_x--;
+            w->want_stale = w->want_seq + 1; /* its reports so far still count the seat */
+        }
+    }
+    pc_log_line("xeleenet: P%d (P%d's other pad) gave up its seat", port + 1, o + 1);
+    return true;
+}
+
 bool pc_xn_punch_left(int port) {
     if (port < 1 || port > 3 || port == s_local || !s_who[port].known) {
         return false;
@@ -1171,6 +1380,13 @@ bool pc_xn_punch_left(int port) {
     memset(&s_start, 0, sizeof s_start);
     s_running_seed = 0;
     s_switch_at = -1;
+    /* Our other pads' seats ended with the session: they ask again. */
+    s_want_x = 0;
+    s_want_seq = (uint8_t)((s_want_seq + 1) & 63);
+    s_nclaim = 0;
+    for (int q = 0; q < 4; q++) {
+        s_port_phys[q] = -1;
+    }
     if (s_sock == SOCK_INVALID) {
         fail("Couldn't keep the lobby's socket");
         return true;
@@ -1209,7 +1425,29 @@ void pc_xn_punch_view(PcXnPunchView* v) {
     v->host = s_code[0] == '\0';
     v->error = s_why;
     memcpy(v->code, s_lobby_code, sizeof v->code);
+    const bool running = s_phase == PH_DONE || s_phase == PH_STARTING;
+    int seat_no[4] = {1, 1, 1, 1}; /* by machine: the seats named so far */
     for (int p = 0; p < 4; p++) {
+        const int o = running && (s_start.ports & (1u << p)) ? start_owner(&s_start, p) : p;
+        if (o != p) {
+            /* Another seat of a machine's (its other pad): its name, numbered. */
+            const bool mine = o == s_local;
+            if (s_local < 0 || (!mine && !s_who[o].known)) {
+                continue;
+            }
+            int i = v->nplayers++;
+            v->players[i].port = p;
+            v->players[i].local = mine;
+            v->players[i].owner = o;
+            v->players[i].linked = mine || s_who[o].up;
+            v->players[i].via_host = !mine && s_who[o].gave;
+            const char* base = mine ? s_name : s_who[o].name;
+            const char* hash = strchr(base, '#');
+            const int len = hash != NULL ? (int)(hash - base) : (int)strlen(base);
+            snprintf(v->players[i].name, sizeof v->players[i].name, "%.*s %d", len > 12 ? 12 : len,
+                base, ++seat_no[o]);
+            continue;
+        }
         bool me = p == s_local;
         if (!me && !s_who[p].known) {
             continue;
@@ -1220,10 +1458,12 @@ void pc_xn_punch_view(PcXnPunchView* v) {
         int i = v->nplayers++;
         v->players[i].port = p;
         v->players[i].local = me;
+        v->players[i].owner = p;
         v->players[i].linked = me || s_who[p].up;
         v->players[i].via_host = !me && s_who[p].gave;
         snprintf(v->players[i].name, sizeof v->players[i].name, "%s", me ? s_name : s_who[p].name);
     }
+    v->want_x = s_want_x;
     int players = 0;
     v->can_start = s_local == 0 && s_phase == PH_PUNCH && links_decided(&players);
 }

@@ -90,8 +90,10 @@ bool pc_xn_lobby(char id[33], char code[8], int* port);
  * it, the host everyone (refreshed every heartbeat). */
 int pc_xn_members(PcXnMember* out, int max);
 /* Host: the guests its game is linked to, sent with every heartbeat; the
- * service lets go of a member left out of it for a while. */
-void pc_xn_set_roster(const uint8_t (*keys)[32], int n);
+ * service lets go of a member left out of it for a while. `extra`: the ports
+ * machines' other pads hold (docs/lan-multipad-plan.md), taken seats that no
+ * joiner is given. */
+void pc_xn_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra);
 /* Leave the lobby (a host closes it) and stop the thread. */
 void pc_xn_stop(void);
 /* A game is running (VS to the results) or not: the host's heartbeat says so

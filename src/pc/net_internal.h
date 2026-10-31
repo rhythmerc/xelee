@@ -146,6 +146,11 @@ static inline void sock_startup(void) {}
  * -- its address, key, sequence spaces, reliable lanes -- is indexed by its
  * peer number, 0..net.npeers-1, in every module. */
 #define MAX_PEERS 3
+/* A machine may play more than one controller port (a PC with several pads,
+ * docs/lan-multipad-plan.md): its primary port names its link, as above, and
+ * up to MAX_XPORTS more ride in the same input packets. Four ports, and at
+ * least one is someone else's. */
+#define MAX_XPORTS 2
 
 /* ---- wire format ------------------------------------------------------ */
 
@@ -193,7 +198,12 @@ typedef struct Packet {
      * assumption in it (net_sync.c time_sync). Clamped to a byte; the window
      * it can legitimately reach is WINDOW + delay. */
     int8_t adv;
-    WirePad pads[REDUNDANCY];
+    /* The sender's other ports (proto 13), lowest first: each one's pads
+     * follow the primary port's on the wire, for the same frames. 0 for a
+     * machine with one port. Fixed for a session (Peer.ports). */
+    uint8_t xports;
+    WirePad pads[REDUNDANCY]; /* the primary port's (Hdr.player) */
+    WirePad xpads[MAX_XPORTS][REDUNDANCY];
 } __attribute__((packed)) Packet;
 
 typedef struct Ack {
@@ -319,7 +329,7 @@ typedef struct SceneMsg {
 
 _Static_assert(sizeof(WirePad) == 8, "wire layout");
 _Static_assert(sizeof(Hdr) == 7, "wire layout");
-_Static_assert(sizeof(Packet) == 27 + REDUNDANCY * 8, "wire layout");
+_Static_assert(sizeof(Packet) == 28 + (1 + MAX_XPORTS) * REDUNDANCY * 8, "wire layout");
 _Static_assert(sizeof(Ack) == 13, "wire layout");
 _Static_assert(sizeof(FwdHdr) == 8 && sizeof(FwdAck) == 12, "wire layout");
 _Static_assert(sizeof(Rel) == 11 + REL_MAX, "wire layout");
@@ -331,9 +341,10 @@ _Static_assert(sizeof(Resume) == 20 && sizeof(Resume) % 4 == 0, "wire layout");
 _Static_assert(sizeof(DelayMsg) == 8, "wire layout");
 _Static_assert(sizeof(SceneMsg) == 8, "wire layout");
 
-/* An input packet on the wire: the fields before pads as they are, then the
- * pads delta-coded (pads_encode, net_wire.c), at most 9 bytes each. */
-#define PACKET_WIRE_MAX (offsetof(Packet, pads) + REDUNDANCY * (sizeof(WirePad) + 1))
+/* An input packet on the wire: the fields before pads as they are, then each
+ * port's pads delta-coded (pads_encode, net_wire.c), at most 9 bytes each. */
+#define PACKET_WIRE_MAX \
+    (offsetof(Packet, pads) + (1 + MAX_XPORTS) * REDUNDANCY * (sizeof(WirePad) + 1))
 
 /* The largest message tx() stamps and the link simulator holds: a full input
  * packet outgrew a reliable one when REDUNDANCY went to 32. */
@@ -396,6 +407,10 @@ struct NetSession {
      * messages come through the host instead (net.c, "routes and drops"). */
     bool link_dead[MAX_PEERS];
     int local, remote, delay; /* remote: peer 0's port (the only one in a 1v1) */
+    /* Every port this machine plays, local included: one bit in a 1v1. The
+     * rest (MAX_XPORTS at most) read the machine's other pads and ride in its
+     * input packets (docs/lan-multipad-plan.md). */
+    uint8_t local_mask;
     uint32_t session; /* 0 on the guest until the host's first packet */
     /* How long to wait for the peer's first datagram, ms. CONNECT_TIMEOUT_MS
      * for a session the user dialled by hand (the other end may simply be
@@ -490,6 +505,16 @@ void from_wire(PADStatus* p, const WirePad* w);
 void wire_hdr(Hdr* h);
 void wire_packet(Packet* pk);
 size_t pads_encode(const WirePad* pads, int count, uint8_t* out);
+/* Every port's pads of a packet after wire_packet: the primary port's, then
+ * each of xports' (net_wire.c). The _all forms are the same codec over all of
+ * them; decode fills pk->pads/xpads from pk->count and pk->xports. */
+size_t pads_encode_all(const Packet* pk, uint8_t* out);
+int pads_wire_len_all(const uint8_t* in, int len, int count, uint8_t xports);
+bool pads_decode_all(const uint8_t* in, int len, Packet* pk);
+/* How many of the 4 ports a mask names. */
+static inline int port_count(unsigned mask) {
+    return __builtin_popcount(mask & 15u);
+}
 int pads_wire_len(const uint8_t* in, int len, int count);
 bool pads_decode(const uint8_t* in, int len, int count, WirePad* pads);
 void wire_ack(Ack* a);

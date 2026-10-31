@@ -109,7 +109,17 @@ func (s *Service) route(w http.ResponseWriter, r *http.Request, ip string) answe
 				score = append(score, int(int32(f)))
 			}
 		}
-		hb := beat{State: state, Roster: roster, Score: score, XR: isTrue(b["xr"])}
+		extra := []int{}
+		if list, ok := b["extra"].([]any); ok {
+			for i, n := range list {
+				if i == 3 {
+					break
+				}
+				f, _ := n.(float64)
+				extra = append(extra, int(f))
+			}
+		}
+		hb := beat{State: state, Roster: roster, Extra: extra, Score: score, XR: isTrue(b["xr"])}
 		return s.locked(func() answer { return s.heartbeat(s.lobby(id), me.Pubkey, hb) })
 	case "PUT settings":
 		name, vis, ask, st := s.lobbyName(b["name"]), visibility(b["visibility"]), isTrue(b["ask"]), settings(b["settings"])

@@ -128,9 +128,13 @@ int pc_pad_active_device(void) {
 
 void pc_pad_rumble_command(unsigned port, unsigned command) {
     if (pc_net_active()) {
-        if ((int)port != pc_net_local_player())
+        /* Online, our ports read our own pads (the primary one pad 0, port
+         * 1's merged device; any more the pads after it), and the rest are
+         * other machines'. */
+        const int phys = pc_net_port_phys((int)port);
+        if (phys < 0)
             return;
-        port = 0;
+        port = (unsigned)phys;
     }
     if (port != 0) {
         PADControlMotor(port, command);
