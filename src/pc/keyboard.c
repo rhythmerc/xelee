@@ -32,6 +32,7 @@
 #include <string.h>
 #include <dolphin/pad.h>
 #ifndef _WIN32
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #endif
@@ -414,6 +415,41 @@ static void script_tick_locked(void) {
     }
 }
 
+#ifndef _WIN32
+/* The FIFO's lines, read with read() rather than stdio: this thread waits in
+ * the read for good (the FIFO never reads as EOF, below), and inside fgets it
+ * would hold the FILE's lock there, which exit() takes to flush every stream
+ * -- the game hung at exit until the harness killed it. */
+typedef struct LineIn {
+    int fd;
+    size_t n;
+    char buf[512];
+} LineIn;
+
+static bool line_next(LineIn* in, char* out, int size) {
+    for (;;) {
+        char* nl = memchr(in->buf, '\n', in->n);
+        if (nl != NULL || in->n >= sizeof in->buf) {
+            size_t len = nl != NULL ? (size_t)(nl - in->buf) + 1 : sizeof in->buf;
+            size_t keep = len < (size_t)size - 1 ? len : (size_t)size - 1;
+            memcpy(out, in->buf, keep);
+            out[keep] = '\0';
+            in->n -= len;
+            memmove(in->buf, in->buf + len, in->n);
+            return true;
+        }
+        ssize_t r = read(in->fd, in->buf + in->n, sizeof in->buf - in->n);
+        if (r > 0) {
+            in->n += (size_t)r;
+        } else if (r < 0 && errno == EINTR) {
+            continue;
+        } else {
+            return false;
+        }
+    }
+}
+#endif
+
 static int fifo_thread(void* arg) {
     const int pad = (int)(intptr_t)arg;
     const char* path = s_fifo_path[pad];
@@ -427,19 +463,20 @@ static int fifo_thread(void* arg) {
          * with the closing pipe -- harness threads writing one FIFO (a
          * match's workout and the main thread's waits) lost a mark that
          * way, and the step waited out its 120 s. */
-        int fd = open(path, O_RDWR);
-        FILE* f = fd >= 0 ? fdopen(fd, "r") : NULL;
-        if (f == NULL && fd >= 0) {
-            close(fd);
+        LineIn in = { .fd = open(path, O_RDWR) };
+        if (in.fd < 0) {
+            SDL_Delay(200);
+            continue;
         }
+        while (line_next(&in, line, sizeof line)) {
 #else
         FILE* f = fopen(path, "r"); /* blocks until a writer opens */
-#endif
         if (f == NULL) {
             SDL_Delay(200);
             continue;
         }
         while (fgets(line, sizeof line, f) != NULL) {
+#endif
             ScCmd cmd;
             if (script_parse(line, &cmd)) {
                 /* A frame command: into its queue, for the frame boundaries. */
@@ -490,7 +527,11 @@ static int fifo_thread(void* arg) {
             SDL_UnlockMutex(s_key_mutex);
             SDL_Delay(100);
         }
+#ifndef _WIN32
+        close(in.fd);
+#else
         fclose(f);
+#endif
     }
     return 0;
 }
