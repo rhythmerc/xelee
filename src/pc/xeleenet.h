@@ -28,7 +28,18 @@ typedef struct PcXnMember {
     uint32_t ip[PC_XN_CANDS]; /* network order */
     uint16_t udp[PC_XN_CANDS];
     double joined; /* when they took the seat (service ms): a rejoin is a new stay */
+    bool xr;       /* in a headset, as they joined */
 } PcXnMember;
+
+/* A seat as the browser lists it, for a lobby's Details
+ * (docs/xeleenet-lobby-details-plan.md). */
+typedef struct PcXnSeat {
+    char name[16], tag[12];
+    uint8_t port;
+    bool xr;
+    bool extra;    /* a machine's other pad: no name of its own */
+    uint8_t owner; /* an extra seat's machine, by its port */
+} PcXnSeat;
 
 /* A lobby as the browser lists it (and as joining learns it): the
  * service's summary (tools/xeleenet/src/common.js settings()). */
@@ -49,6 +60,12 @@ typedef struct PcXnListing {
     bool first_to; /* else endless */
     int first_to_n;
     bool playing, xr;
+    /* The lists themselves: a bit per CharacterKind, a bit per Random Stage
+     * Switch id. 0 when unknown: read as the named list. */
+    uint32_t fighter_mask, stage_mask;
+    int nplayers; /* the seats taken, port order (0: not told) */
+    PcXnSeat players[4];
+    char address[48]; /* LAN: the host's lobby address (":port" off the usual one) */
 } PcXnListing;
 /* The most lobbies one listing holds (the service sends 50 at most). */
 #define PC_XN_LIST_MAX 50
@@ -93,13 +110,16 @@ int pc_xn_members(PcXnMember* out, int max);
 /* Host: the guests its game is linked to, sent with every heartbeat; the
  * service lets go of a member left out of it for a while. `extra`: the ports
  * machines' other pads hold (docs/lan-multipad-plan.md), taken seats that no
- * joiner is given. */
-void pc_xn_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra);
+ * joiner is given. `owners`: each port's machine, by its primary port, two
+ * bits a port (net_punch.c's XnStart.owners), so the list names an extra seat
+ * after the player whose pad it is. */
+void pc_xn_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra, uint8_t owners);
 /* Leave the lobby (a host closes it) and stop the thread. */
 void pc_xn_stop(void);
 /* A game is running (VS to the results) or not: the host's heartbeat says so
  * (the browser's "in game") and slows down meanwhile. LAN has no heartbeat. */
 void pc_xn_set_playing(bool playing);
+bool pc_xn_playing(void);
 /* The app is closing: a LAN lobby says goodbye (the host's announcement, a
  * guest's LEAVE) at once. The service's lobby is left to its own timeouts, as
  * a lost connection would be. */

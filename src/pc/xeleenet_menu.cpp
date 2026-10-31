@@ -321,17 +321,19 @@ std::string rules_line(bool teams, int seats, bool stock, int stocks, int minute
     return r;
 }
 
+// The masks go last: LAN's announcement cuts them off its `s` and sends them
+// as keys of their own (xeleenet_lan.c host_announce).
 std::string settings_json() {
     const HostSettings& h = s_host;
     char b[512];
     std::snprintf(b, sizeof b,
                   "{\"preset\":\"%s\",\"seats\":%d,\"mode\":\"%s\",\"win\":\"%s\",\"stocks\":%d,\"time_min\":%d,"
                   "\"items\":\"%s\",\"stage_list\":\"%s\",\"fighter_list\":\"%s\",\"pick\":\"everyone\","
-                  "\"format\":\"endless\",\"first_to\":2,\"place_secs\":15}",
+                  "\"format\":\"endless\",\"first_to\":2,\"place_secs\":15,\"fighter_mask\":%u,\"stage_mask\":%u}",
                   kPresetIds[h.preset], h.seats, h.teams ? "teams" : "ffa", h.stock ? "stock" : "time", h.stocks,
                   h.minutes, kItemIds[h.items + 1],
                   h.stages == kCompetitive ? "competitive" : h.stages == kAllStages ? "all" : "custom",
-                  fighter_list_id(h.fighters));
+                  fighter_list_id(h.fighters), h.fighters, h.stages);
     return b;
 }
 

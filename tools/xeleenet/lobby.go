@@ -56,8 +56,11 @@ type Lobby struct {
 	Members  []Member `json:"members"`
 	// Seats a machine's other pads hold (docs/lan-multipad-plan.md), as
 	// the host's heartbeat names them: taken, and never given to a joiner.
-	Extra   []int    `json:"extra"`
-	Banned  []string `json:"banned"`
+	Extra []int `json:"extra"`
+	// Whose machine each Extra seat plays from, by that machine's port
+	// (0 the host's): the list names the seat after its owner, "RHYTHM 2".
+	ExtraOwner []int    `json:"extra_owner"`
+	Banned     []string `json:"banned"`
 	State   string   `json:"state"`
 	Score   []int    `json:"score"`
 	Created int64    `json:"created"` // ms
@@ -209,10 +212,30 @@ func (s *Service) list(c Compat, full bool, from Geo) map[string]any {
 		out = append(out, map[string]any{
 			"code": l.Code, "name": l.Name, "host": map[string]any{"name": l.Host.Name, "tag": l.Host.Tag},
 			"country": l.HostGeo.Country, "taken": l.taken(), "settings": l.Settings, "state": l.State,
-			"xr": xr, "created": l.Created,
+			"xr": xr, "created": l.Created, "players": l.players(),
 		})
 	}
 	return map[string]any{"lobbies": out, "other_versions": others}
+}
+
+// players is who sits in the lobby, in port order, for the browser's Details
+// page (docs/xeleenet-lobby-details-plan.md): names, tags and XR only, never
+// keys or addresses. A seat a machine's other pad holds is marked `extra`,
+// with the port of the machine it plays from.
+func (l *Lobby) players() []map[string]any {
+	out := []map[string]any{{"port": 0, "name": l.Host.Name, "tag": l.Host.Tag, "xr": l.Host.XR}}
+	for _, m := range l.Members {
+		out = append(out, map[string]any{"port": m.Port, "name": m.Name, "tag": m.Tag, "xr": m.XR})
+	}
+	for i, q := range l.Extra {
+		owner := 0
+		if i < len(l.ExtraOwner) {
+			owner = l.ExtraOwner[i]
+		}
+		out = append(out, map[string]any{"port": q, "extra": true, "owner": owner})
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a]["port"].(int) < out[b]["port"].(int) })
+	return out
 }
 
 func km(a, b Geo) (float64, bool) {
@@ -243,6 +266,7 @@ type beat struct {
 	State  string
 	Roster []string
 	Extra  []int // ports other pads hold
+	Owners []int // each one's machine, by its port (missing: the host's)
 	Score  []int // nil: unchanged
 	XR     bool
 }
@@ -269,8 +293,8 @@ func (s *Service) heartbeat(l *Lobby, key string, b beat) answer {
 		}
 	}
 	l.Members = kept
-	l.Extra = []int{}
-	for _, q := range b.Extra {
+	l.Extra, l.ExtraOwner = []int{}, []int{}
+	for i, q := range b.Extra {
 		held := q < 1 || q > 3
 		for _, m := range l.Members {
 			held = held || m.Port == q
@@ -279,7 +303,12 @@ func (s *Service) heartbeat(l *Lobby, key string, b beat) answer {
 			held = held || e == q
 		}
 		if !held {
+			owner := 0
+			if i < len(b.Owners) && b.Owners[i] >= 0 && b.Owners[i] <= 3 && b.Owners[i] != q {
+				owner = b.Owners[i]
+			}
 			l.Extra = append(l.Extra, q)
+			l.ExtraOwner = append(l.ExtraOwner, owner)
 		}
 	}
 	members := []map[string]any{}

@@ -853,7 +853,7 @@ static void punch_tick(void) {
             extra |= (uint8_t)(1u << q);
         }
     }
-    pc_xn_set_roster((const uint8_t(*)[32])keys, nkeys, extra);
+    pc_xn_set_roster((const uint8_t(*)[32])keys, nkeys, extra, s_start.owners);
 }
 
 /* Host: someone has joined, every guest reaches us and every pair of guests

@@ -33,6 +33,23 @@ BLOCKED = "darnit"
 
 failures = []
 
+# The named lists' masks (src/pc/xeleenet_fighters.h, xeleenet_menu.cpp kCompetitive).
+FIGHTERS_ALL = (1 << 26) - 1
+STAGES_COMPETITIVE = sum(1 << b for b in (24, 25, 26, 4, 5, 7))
+
+
+def header_fighters_high():
+    """XN_FIGHTERS_HIGH as src/pc/xeleenet_fighters.h writes it, so the
+    service's copy is checked against the game's."""
+    import re
+    text = open(os.path.join(HERE, "..", "..", "src", "pc", "xeleenet_fighters.h")).read()
+    body = re.search(r"#define XN_FIGHTERS_HIGH\s*\\?\s*\((.*?)\)\s*\n#define", text, re.S).group(1)
+    names = {"XN_FIGHTER_ZELDA": 0x12, "XN_FIGHTER_SHEIK": 0x13}
+    mask = 0
+    for bit in re.findall(r"1u << (\w+)", body):
+        mask |= 1 << (names[bit] if bit in names else int(bit, 16))
+    return mask
+
 
 def check(cond, what):
     print(("ok    " if cond else "FAIL  ") + what)
@@ -185,6 +202,41 @@ def run(url):
     row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
     check(row and row[0]["settings"]["fighter_list"] == "all", "a game that sends none lists All")
 
+    print("-- a lobby's details: the players and the lists")
+    a.heartbeat(lobby, roster=[b.pubkey, c.pubkey, d.pubkey], xr=True)  # the host's XR rides its beats
+    row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
+    players = row[0].get("players", []) if row else []
+    check([(p["port"], p.get("name")) for p in players] == [(0, "RHYTHM"), (1, "PIXEL"), (2, "KOOPA"), (3, "WAVE")],
+          "the row lists the players in port order, the host first")
+    check(players and players[0]["tag"] == a.tag and players[0]["xr"] and not players[1]["xr"],
+          "each with its tag and XR")
+    check("key" not in str(players) and "candidates" not in str(players) and a.pubkey not in str(row),
+          "the players carry no keys or addresses")
+    st = row[0]["settings"] if row else {}
+    check(st.get("fighter_mask") == FIGHTERS_ALL and st.get("stage_mask") == STAGES_COMPETITIVE,
+          "missing masks read as the named lists'")
+    high = header_fighters_high()
+    a.settings(lobby, "Friday netplay", dict(four, fighter_list="high", fighter_mask=high))
+    row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
+    check(row and row[0]["settings"]["fighter_mask"] == high,
+          "High tiers' mask is xeleenet_fighters.h's (the service's copy agrees)")
+    marth, fd = 1 << 0x09, 1 << 25
+    a.settings(lobby, "Friday netplay", dict(four, fighter_list="custom", fighter_mask=marth,
+                                             stage_list="custom", stage_mask=fd))
+    row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
+    check(row and (row[0]["settings"]["fighter_mask"], row[0]["settings"]["stage_mask"]) == (marth, fd),
+          "custom masks are echoed back")
+    for bad, what in ((dict(fighter_list="custom", fighter_mask=0), "an empty fighter list"),
+                      (dict(fighter_list="custom", fighter_mask=1 << 26), "a fighter past the roster"),
+                      (dict(stage_list="custom", stage_mask=1 << 29), "a stage past the list"),
+                      (dict(fighter_list="custom", fighter_mask=1 << 0x12), "Zelda without Sheik"),
+                      (dict(fighter_list="low", fighter_mask=high), "Low tiers with High's mask"),
+                      (dict(stage_list="competitive", stage_mask=fd), "Competitive with another mask"),
+                      (dict(fighter_list="custom"), "a custom fighter list without its mask"),
+                      (dict(stage_list="custom"), "a custom stage list without its mask")):
+        refused(lambda: a.settings(lobby, "Friday netplay", dict(four, **bad)), "bad_settings", what)
+    a.settings(lobby, "Friday netplay", four)
+
     print("-- leaving, removing")
     b.leave(lobby)
     check(e.join(code, ["203.0.113.5:41000"])["port"] == 1, "a leaver's seat (P2) goes to the next joiner")
@@ -210,7 +262,13 @@ def run(url):
     check(sorted(m["name"] for m in hb["members"]) == ["KOOPA"], "players the host no longer reaches are dropped")
 
     print("-- seats a machine's other pads hold")
-    a.heartbeat(lobby, roster=[c.pubkey], extra=[1])
+    a.settings(lobby, "Friday netplay 2", four)  # public again, to see its row
+    a.heartbeat(lobby, roster=[c.pubkey], extra=[1], owners=[2])
+    row = [x for x in d.list(full=True)["lobbies"] if x["code"] == code]
+    players = row[0]["players"] if row else []
+    check([(p["port"], p.get("extra", False), p.get("owner")) for p in players] ==
+          [(0, False, None), (1, True, 2), (2, False, None)],
+          "the row marks the other pad's seat, with the machine it plays from")
     i = player("ITEM")
     check(i.join(code, ["203.0.113.8:41000"])["port"] == 3, "a joiner skips a port another pad holds (P2)")
     a.heartbeat(lobby, roster=[c.pubkey, i.pubkey], extra=[1])
@@ -286,6 +344,35 @@ def run_limits():
         for i in range(6):
             a.host(f"Lobby {i}", ["198.51.100.1:41000"])
         refused(lambda: a.host("Lobby 7", ["198.51.100.1:41000"]), "rate_limited", "the 7th lobby in a minute")
+    finally:
+        stop_service(proc, state)
+
+
+def run_big_list():
+    """The game reads a listing into a 64 KB buffer (xeleenet.c REPLY_CAP):
+    the longest list, 50 lobbies of 4 players with the longest names and
+    custom lists, must fit."""
+    print("-- the biggest listing")
+    proc, url, state = start_service()
+    try:
+        big = dict(CLI_COMPAT, rev="xn-big")
+        settings = dict(DEFAULT_SETTINGS, preset="custom", seats=4, pick="everyone", stage_list="custom",
+                        stage_mask=(1 << 29) - 2, fighter_list="custom", fighter_mask=(1 << 26) - 2)
+        for k in range(50):
+            h = XnClient(url, name=f"HOST NAME {k:02d}", compat=big)
+            lobby = h.host(f"Lobby name number {k:02d}", ["198.51.100.1:41000"], settings=settings, xr=True)
+            for g in range(3):
+                XnClient(url, name=f"GUEST NAME{g}{k % 10}", compat=big).join(lobby["code"], ["203.0.113.2:41000"],
+                                                                              xr=True)
+        reader = XnClient(url, name="READER", compat=big)
+        reader.sign_in()
+        c = big
+        req = urllib.request.Request(f"{url}/v1/lobbies?proto={c['proto']}&rev={c['rev']}&disc={c['disc']}&full=1")
+        req.add_header("Authorization", "Bearer " + reader.token)
+        raw = urllib.request.urlopen(req, timeout=20).read()
+        rows = __import__("json").loads(raw)["lobbies"]
+        check(len(rows) == 50 and all(len(r["players"]) == 4 for r in rows), "50 lobbies of 4 listed")
+        check(len(raw) < 65536, f"the listing fits the game's 64 KB ({len(raw)} bytes)")
     finally:
         stop_service(proc, state)
 
@@ -368,6 +455,7 @@ def main():
         finally:
             stop_service(proc, state)
         run_limits()
+        run_big_list()
         run_stun()
         run_restart()
     print(f"\n{len(failures)} failed" if failures else "\nall passed")

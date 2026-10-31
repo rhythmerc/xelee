@@ -14,7 +14,7 @@ typedef struct PcXnBackend {
     const char* (*error)(const char** reason);
     bool (*lobby)(char id[33], char code[8], int* port);
     int (*members)(PcXnMember* out, int max);
-    void (*set_roster)(const uint8_t (*keys)[32], int n, uint8_t extra);
+    void (*set_roster)(const uint8_t (*keys)[32], int n, uint8_t extra, uint8_t owners);
     void (*stop)(void);
     void (*host_options)(const char* name, bool open, const char* settings_json);
     bool (*lobby_info)(PcXnListing* out);

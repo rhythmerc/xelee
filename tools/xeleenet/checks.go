@@ -225,6 +225,46 @@ type Settings struct {
 	Format      string `json:"format"`
 	FirstTo     int    `json:"first_to"`
 	PlaceSecs   int    `json:"place_secs"`
+	// The lists themselves, for a lobby's Details page
+	// (docs/xeleenet-lobby-details-plan.md): a bit per CharacterKind, and a
+	// bit per Random Stage Switch id. Missing reads as the named list's.
+	FighterMask uint32 `json:"fighter_mask"`
+	StageMask   uint32 `json:"stage_mask"`
+}
+
+// The named lists' masks, as the game has them: src/pc/xeleenet_fighters.h
+// (XN_FIGHTERS_*) and src/pc/xeleenet_menu.cpp (kStages, kCompetitive).
+const (
+	fighterBits       = 26
+	stageBits         = 29
+	fighterZelda      = 0x12
+	fighterSheik      = 0x13
+	fightersAll       = uint32(1)<<fighterBits - 1
+	fightersHigh      = uint32(1)<<0x02 | 1<<0x09 | 1<<0x0F | 1<<0x14 | 1<<fighterZelda | 1<<fighterSheik | 1<<0x00 | 1<<0x0C | 1<<0x0E | 1<<0x0D | 1<<0x11 | 1<<0x10 | 1<<0x07 | 1<<0x16
+	fightersLow       = fightersAll &^ fightersHigh
+	stagesAll         = uint32(1)<<stageBits - 1
+	stagesCompetitive = uint32(1)<<24 | 1<<25 | 1<<26 | 1<<4 | 1<<5 | 1<<7
+)
+
+var fighterLists = map[string]uint32{"all": fightersAll, "high": fightersHigh, "low": fightersLow}
+var stageLists = map[string]uint32{"all": stagesAll, "competitive": stagesCompetitive}
+
+// mask checks a list's mask against its name: not empty, within `bits`, and
+// the named list's own mask unless the list is custom. Missing reads as the
+// named list's; a custom list must send one.
+func mask(v any, bits int, named map[string]uint32, list, what string) uint32 {
+	want, isNamed := named[list]
+	if v == nil {
+		if !isNamed {
+			fail(400, "bad_settings", "A custom "+what+" needs its mask")
+		}
+		return want
+	}
+	n, ok := integer(v)
+	if !ok || n <= 0 || n >= 1<<bits || (isNamed && uint32(n) != want) {
+		fail(400, "bad_settings", "Bad "+what+" mask")
+	}
+	return uint32(n)
 }
 
 func pick(v any, allowed []string, what string) string {
@@ -270,6 +310,11 @@ func settings(v any) Settings {
 		Format:      pick(m["format"], []string{"endless", "first_to"}, "set format"),
 		FirstTo:     intIn(firstTo, 2, 5, "set length"),
 	}
+	out.FighterMask = mask(m["fighter_mask"], fighterBits, fighterLists, out.FighterList, "fighter list")
+	if (out.FighterMask>>fighterZelda)&1 != (out.FighterMask>>fighterSheik)&1 {
+		fail(400, "bad_settings", "Zelda and Sheik come as one")
+	}
+	out.StageMask = mask(m["stage_mask"], stageBits, stageLists, out.StageList, "stage list")
 	out.PlaceSecs = intIn(m["place_secs"], 10, 60, "placement time")
 	switch out.PlaceSecs {
 	case 10, 15, 20, 30, 45, 60:

@@ -881,7 +881,8 @@ static int lan_members(PcXnMember* out, int max) {
     return n;
 }
 
-static void lan_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra) {
+static void lan_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra, uint8_t owners) {
+    (void)owners;
     if (s_lock == NULL) {
         return;
     }

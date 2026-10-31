@@ -4,6 +4,8 @@
 #include "xeleenet_backend.h"
 #include "net.h"
 #include "pc.h"
+#include "xeleenet_fighters.h"
+#include "xr_scene.h"
 #include "pc/slippi/slp_json.h"
 #include "pc/slippi/slp_user.h"
 #include <SDL3/SDL_atomic.h>
@@ -24,7 +26,13 @@ extern void pc_log_line(const char* fmt, ...);
 #define HEARTBEAT_MS 2000          /* the host's, at the CSS */
 #define HEARTBEAT_PLAYING_MS 10000 /* in a game: nobody joins until the CSS, and each beat is billed */
 #define JOIN_RETRIES 10 /* "pending" answers on Ask before joining (XN3) */
-#define REPLY_CAP 16384
+/* The longest reply is a full listing: 50 lobbies of 4 players with long
+ * names and custom lists come to about 34 KB (tools/xeleenet/test_service.py
+ * checks it fits). A reply cut short doesn't parse, and the list fails. */
+#define REPLY_CAP 65536
+/* The stage lists' masks, as xeleenet_menu.cpp's kStages has them. */
+#define XN_STAGES_ALL ((1u << 29) - 1)
+#define XN_STAGES_COMPETITIVE (1u << 24 | 1u << 25 | 1u << 26 | 1u << 4 | 1u << 5 | 1u << 7)
 
 /* Everything the thread is given at the start; read-only after. */
 static struct {
@@ -51,6 +59,7 @@ static int s_nmembers;
 static uint8_t s_roster[3][32];
 static int s_nroster;
 static uint8_t s_extra; /* ports other pads hold (docs/lan-multipad-plan.md) */
+static uint8_t s_owners; /* each port's machine, two bits a port */
 
 static char s_token[256]; /* the thread's own */
 static PcXnListing s_info;  /* the lobby we're in (s_lock) */
@@ -243,6 +252,7 @@ static int parse_members(const PcSlippiJson* list, PcXnMember* out, int max) {
         pc_slippi_json_string(pc_slippi_json_get(m, "tag"), x.tag, sizeof x.tag);
         x.port = pc_slippi_json_int(pc_slippi_json_get(m, "port"), -1);
         x.joined = pc_slippi_json_num(pc_slippi_json_get(m, "joined"), 0);
+        x.xr = pc_slippi_json_bool(pc_slippi_json_get(m, "xr"), false);
         const PcSlippiJson* cands = pc_slippi_json_get(m, "candidates");
         for (int c = 0; cands != NULL && c < cands->child_count && x.ncands < PC_XN_CANDS; c++) {
             char text[64];
@@ -282,6 +292,45 @@ static void parse_settings(const PcSlippiJson* st, PcXnListing* x) {
     str_of(st, "format", v, sizeof v);
     x->first_to = strcmp(v, "first_to") == 0;
     x->first_to_n = pc_slippi_json_int(pc_slippi_json_get(st, "first_to"), 2);
+    /* The lists' masks; without them (an older game's), the named list's,
+     * and 0 (unknown) for a custom one. */
+    const char* fl = x->fighter_list;
+    x->fighter_mask = (uint32_t)pc_slippi_json_num(pc_slippi_json_get(st, "fighter_mask"), 0);
+    if (x->fighter_mask == 0) {
+        x->fighter_mask = fl[0] == '\0' || strcmp(fl, "all") == 0 ? XN_FIGHTERS_ALL :
+                          strcmp(fl, "high") == 0                 ? XN_FIGHTERS_HIGH :
+                          strcmp(fl, "low") == 0                  ? XN_FIGHTERS_LOW :
+                                                                    0;
+    }
+    x->fighter_mask = xn_fighters_normal(x->fighter_mask);
+    const char* sl = x->stage_list;
+    x->stage_mask = (uint32_t)pc_slippi_json_num(pc_slippi_json_get(st, "stage_mask"), 0) & XN_STAGES_ALL;
+    if (x->stage_mask == 0) {
+        x->stage_mask = strcmp(sl, "all") == 0         ? XN_STAGES_ALL :
+                        strcmp(sl, "competitive") == 0 ? XN_STAGES_COMPETITIVE :
+                                                         0;
+    }
+}
+
+/* The seats a listing's row names (the service's "players"), port order. */
+static void parse_players(const PcSlippiJson* list, PcXnListing* x) {
+    x->nplayers = 0;
+    for (int i = 0; list != NULL && i < list->child_count && x->nplayers < 4; i++) {
+        const PcSlippiJson* p = pc_slippi_json_at(list, i);
+        PcXnSeat* s = &x->players[x->nplayers];
+        memset(s, 0, sizeof *s);
+        const int port = pc_slippi_json_int(pc_slippi_json_get(p, "port"), -1);
+        if (port < 0 || port > 3) {
+            continue;
+        }
+        s->port = (uint8_t)port;
+        s->extra = pc_slippi_json_bool(pc_slippi_json_get(p, "extra"), false);
+        s->owner = (uint8_t)(pc_slippi_json_int(pc_slippi_json_get(p, "owner"), 0) & 3);
+        s->xr = pc_slippi_json_bool(pc_slippi_json_get(p, "xr"), false);
+        str_of(p, "name", s->name, sizeof s->name);
+        str_of(p, "tag", s->tag, sizeof s->tag);
+        x->nplayers++;
+    }
 }
 
 bool pc_xn_listing_settings(const char* json, PcXnListing* x) {
@@ -309,6 +358,7 @@ static void parse_listing(const PcSlippiJson* row, PcXnListing* x) {
     x->playing = strcmp(v, "playing") == 0;
     x->xr = pc_slippi_json_bool(pc_slippi_json_get(row, "xr"), false);
     parse_settings(pc_slippi_json_get(row, "settings"), x);
+    parse_players(pc_slippi_json_get(row, "players"), x);
 }
 
 static void set_members(const PcSlippiJson* list) {
@@ -338,9 +388,9 @@ static void common_fields(char* out, size_t cap) {
         o += (size_t)snprintf(cands + o, sizeof cands - o, "%s\"%s\"", i ? "," : "", s_args.cands[i]);
     }
     snprintf(out, cap,
-        "\"player\":\"%s\",\"xr\":false,\"candidates\":[%s],"
+        "\"player\":\"%s\",\"xr\":%s,\"candidates\":[%s],"
         "\"compat\":{\"proto\":%d,\"rev\":\"%s\",\"disc\":\"%s\"}",
-        name, cands, PC_NET_PROTO_VERSION, rev[0] ? rev : "unknown", pc_net_disc_id());
+        name, pc_xr_presenting() ? "true" : "false", cands, PC_NET_PROTO_VERSION, rev[0] ? rev : "unknown", pc_net_disc_id());
 }
 
 static bool host(void) {
@@ -405,11 +455,12 @@ static bool host(void) {
 }
 
 static bool heartbeat(void) {
-    char body[256], path[96];
+    char body[384], path[96];
     int status = 0;
     PcSlippiJson* r;
-    size_t o = (size_t)snprintf(body, sizeof body, "{\"state\":\"%s\",\"xr\":false,\"roster\":[",
-                                SDL_GetAtomicInt(&s_playing) ? "playing" : "open");
+    size_t o = (size_t)snprintf(body, sizeof body, "{\"state\":\"%s\",\"xr\":%s,\"roster\":[",
+                                SDL_GetAtomicInt(&s_playing) ? "playing" : "open",
+                                pc_xr_presenting() ? "true" : "false");
     SDL_LockMutex(s_lock);
     for (int i = 0; i < s_nroster; i++) {
         char k[48];
@@ -420,6 +471,13 @@ static bool heartbeat(void) {
     for (int q = 1, k = 0; q < 4; q++) {
         if (s_extra & (1u << q)) {
             o += (size_t)snprintf(body + o, sizeof body - o, "%s%d", k++ ? "," : "", q);
+        }
+    }
+    /* Whose pad each one is, in the same order, for the list's names. */
+    o += (size_t)snprintf(body + o, sizeof body - o, "],\"owners\":[");
+    for (int q = 1, k = 0; q < 4; q++) {
+        if (s_extra & (1u << q)) {
+            o += (size_t)snprintf(body + o, sizeof body - o, "%s%d", k++ ? "," : "", (s_owners >> (2 * q)) & 3);
         }
     }
     SDL_UnlockMutex(s_lock);
@@ -618,12 +676,13 @@ static int svc_members(PcXnMember* out, int max) {
     return n;
 }
 
-static void svc_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra) {
+static void svc_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra, uint8_t owners) {
     if (s_lock == NULL) {
         return;
     }
     SDL_LockMutex(s_lock);
     s_extra = (uint8_t)(extra & 14u);
+    s_owners = owners;
     s_nroster = n < 3 ? n : 3;
     memcpy(s_roster, keys, (size_t)s_nroster * 32);
     SDL_UnlockMutex(s_lock);
@@ -799,8 +858,8 @@ int pc_xn_members(PcXnMember* out, int max) {
     return backend()->members(out, max);
 }
 
-void pc_xn_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra) {
-    backend()->set_roster(keys, n, extra);
+void pc_xn_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra, uint8_t owners) {
+    backend()->set_roster(keys, n, extra, owners);
 }
 
 void pc_xn_stop(void) {
@@ -809,6 +868,10 @@ void pc_xn_stop(void) {
 
 void pc_xn_set_playing(bool playing) {
     SDL_SetAtomicInt(&s_playing, playing ? 1 : 0);
+}
+
+bool pc_xn_playing(void) {
+    return SDL_GetAtomicInt(&s_playing) != 0;
 }
 
 void pc_xn_exit(void) {
