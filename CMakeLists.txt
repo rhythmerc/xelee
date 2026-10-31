@@ -114,16 +114,20 @@ if (NOT "${XELEENET_URL}" STREQUAL "")
     message(STATUS "melee: XeleeNet service ${XELEENET_URL}")
 endif ()
 
-# The version the app reports and the updater compares: the release tag CI
-# builds from (MELEE_VERSION, read at configure time), else version.cpp's.
-if (NOT "$ENV{MELEE_VERSION}" STREQUAL "")
-    set(MELEE_APP_VERSION "$ENV{MELEE_VERSION}")
-    if (NOT MELEE_APP_VERSION MATCHES "^v")
-        set(MELEE_APP_VERSION "v${MELEE_APP_VERSION}")
-    endif ()
-    set_source_files_properties(src/pc/version.cpp PROPERTIES
-        COMPILE_DEFINITIONS "MELEE_APP_VERSION=\"${MELEE_APP_VERSION}\"")
-endif ()
+# The version the app reports, the updater compares and lobbies match on:
+# written at every build by cmake/AppVersion.cmake (the release tag CI builds
+# from, MELEE_VERSION, else the newest tag and the commit), so an incremental
+# build can't keep an old one. version.cpp includes it.
+set(MELEE_APP_VERSION_H "${CMAKE_BINARY_DIR}/generated/app_version.h")
+add_custom_target(melee_app_version
+        COMMAND "${CMAKE_COMMAND}" "-DSRC=${CMAKE_SOURCE_DIR}" "-DOUT=${MELEE_APP_VERSION_H}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/AppVersion.cmake"
+        BYPRODUCTS "${MELEE_APP_VERSION_H}"
+        VERBATIM)
+set_source_files_properties(src/pc/version.cpp PROPERTIES
+        INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/generated"
+        OBJECT_DEPENDS "${MELEE_APP_VERSION_H}")
+
 # FP determinism for netplay: no fused multiply-add anywhere game logic can
 # reach (AArch64 emits fmadd by default), no platform trig (see
 # src/pc/libm/pc_trig.h). aurora_mtx is C and used by collision, so it gets
@@ -441,6 +445,7 @@ if (ANDROID)
 else ()
     add_executable(melee ${PC_SOURCES})
 endif ()
+add_dependencies(melee melee_app_version)
 
 target_include_directories(melee PRIVATE extern/monocypher extern/rapidyaml)
 
@@ -654,6 +659,7 @@ if (NOT ANDROID AND NOT IOS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_dependencies(unit_tests launcher_data_test)
 
     add_executable(version_test EXCLUDE_FROM_ALL tools/test_version.cpp src/pc/version.cpp)
+    add_dependencies(version_test melee_app_version)
     target_include_directories(version_test PRIVATE src)
     target_compile_options(version_test PRIVATE -UNDEBUG)
     add_test(NAME version COMMAND version_test)
@@ -895,6 +901,7 @@ if (NOT ANDROID AND NOT IOS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
     if (NOT WIN32)
         add_executable(updater_test EXCLUDE_FROM_ALL tools/test_updater.cpp src/pc/version.cpp)
+        add_dependencies(updater_test melee_app_version)
         target_include_directories(updater_test PRIVATE src)
         target_link_libraries(updater_test PRIVATE ${MELEE_NETWORK_LIBS} aurora::main)
         target_compile_options(updater_test PRIVATE -UNDEBUG)

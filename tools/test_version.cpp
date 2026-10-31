@@ -46,6 +46,12 @@ int main() {
     assert(v_git.build_commits == 2);
     assert(v1 < v_git);
 
+    // An untagged build (cmake/AppVersion.cmake): past its tag, before the next.
+    assert(!is_update_available("v0.2.2-beta-135-ge53c3c5e3", "v0.2.2-beta"));
+    assert(!is_update_available("v0.2.2-beta-135-ge53c3c5e3", "v0.2.1-beta"));
+    assert(is_update_available("v0.2.2-beta-135-ge53c3c5e3", "v0.2.3-beta"));
+    assert(is_update_available("v0.2.2-beta-135-ge53c3c5e3", "v0.3.0-beta"));
+
     std::cout << "PASS: SemVer parsing and update checking\n";
     return 0;
 }
