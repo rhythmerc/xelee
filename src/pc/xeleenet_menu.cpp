@@ -3108,7 +3108,14 @@ void Screen::build_overlay_host() {
     r += "<div class=\"links\">";
     for (const std::string& line : links_lines())
         r += "<div class=\"ll\">" + enc(line) + "</div>";
-    r += "</div></div><div class=\"col right\">";
+    r += "</div>";
+    // CHANGES under the links, where the left column has the room for it.
+    if (host)
+        r += "<div id=\"changes\">" + changes_box(o, h) + "</div>";
+    else
+        r += "<div id=\"changes\" class=\"ro\"><div class=\"cl none\">" + enc(tr("xeleenet.settings.host_only")) +
+             "</div></div>";
+    r += "</div><div class=\"col right\">";
     group(r, "xeleenet.settings.groups.right");
     link(r, "flist", 1, 0, "xeleenet.host.rows.fighter_list", fighter_list_label(h.fighters), [this] { go(Page::Fighters); },
          "xeleenet.host.hints.fighter_list", was(fighter_list_label(h.fighters), fighter_list_label(o.fighters)));
@@ -3135,7 +3142,6 @@ void Screen::build_overlay_host() {
                was(on_off(h.hide_code), on_off(o.hide_code)));
     }
     if (host) {
-        r += "<div id=\"changes\">" + changes_box(o, h) + "</div>";
         r += "<div class=\"obtns\"><button id=\"apply\" class=\"gold\">" + enc(tr("xeleenet.settings.apply")) +
              "</button><button id=\"cancel\" class=\"plain\">" + enc(tr("xeleenet.settings.cancel")) + "</button></div>";
         Item ap{"apply", 1, 8, true};
@@ -3146,9 +3152,6 @@ void Screen::build_overlay_host() {
         ca.act = [] { settings_done(false); };
         ca.hint = tr("xeleenet.settings.hints.cancel");
         items.push_back(std::move(ca));
-    } else {
-        r += "<div id=\"changes\" class=\"ro\"><div class=\"cl none\">" + enc(tr("xeleenet.settings.host_only")) +
-             "</div></div>";
     }
     r += "</div>";
     set_board(r);

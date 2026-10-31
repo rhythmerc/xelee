@@ -33,7 +33,8 @@
 .links { padding: 6px 14px 0; }
 .ll { font-size: 19px; color: #f0e4b8; line-height: 28px; }
 
-#changes { position: relative; margin-top: 12px; height: 118px; padding: 6px 14px; border: 1px #f0c22660;
+/* Under LINKS in the left column, with room for a few effect lines. */
+#changes { position: relative; margin-top: 18px; height: 170px; padding: 8px 14px; border: 1px #f0c22660;
            border-radius: 8px; background-color: #14110ae0; overflow: hidden; }
 #changes .ch { font-size: 14px; font-weight: bold; letter-spacing: 3px; color: #c9b77c; }
 #changes .cl { margin-top: 2px; font-size: 17px; font-weight: bold; color: #fff8e0; line-height: 22px; }
@@ -42,7 +43,7 @@
 #changes .ce.red { color: #ff9a7c; }
 #changes.ro { height: 60px; }
 
-.obtns { position: relative; margin-top: 18px; height: 58px; text-align: right; }
+.obtns { position: relative; margin-top: 26px; height: 58px; text-align: right; }
 .obtns button { display: inline-block; position: relative; margin: 0 0 0 14px; width: 220px; height: 58px; }
 button.plain { text-align: center; font-size: 24px; font-weight: 800; letter-spacing: 2px; line-height: 52px;
                color: #f0e4b8; background-color: #0c0b08; border: 3px #f0c22680; border-radius: 8px; }
