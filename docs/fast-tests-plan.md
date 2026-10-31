@@ -74,19 +74,46 @@ paced run checks the scripts didn't come to depend on speed.
    - **sss-repick:** its race keeps MELEE_NET_SIM_DELAY_MS, which is wall time, so it isn't a frame race. Check that it still races.
 4. **`xn_preview.py`:** no input, but its waits ("fade in", `--settle`) become frame waits, so a batch of pages runs uncapped.
 
-### T5. Skip drawing (trial)
+### T5. Skip drawing (done 2026-10-31)
 With 3-4 instances, drawing is most of the cost.
-- **`MELEE_DRAW_EVERY=N`:** run the HSD render pass and present only every Nth frame. Netplay's held redraws and screenshots force a draw.
-- **The risk:** some state might advance in the render pass rather than the sim: particles, effects, camera smoothing.
-- **The guards:** the netplay frame checksums and the full-state hash, plus a paced versus N=10 comparison of one recorded match (MELEE_NET_RECORD).
-- If anything in the sim reads render-pass state, T5 is dropped, and T1-T4 stand alone.
+- **Where a frame went, unpaced** (MELEE_FRAME_PROBE's once-a-second split):
+  about 400 ms of each second in the game's draw (HSD's render callbacks and
+  the GX calls), 350-650 ms at the frame boundary (waiting on Aurora's FIFO
+  and render workers), the rest sim. Aurora's render worker was each
+  instance's busiest thread; the GPU sat near 35%.
+- **The game's render pass can't be skipped.** Fighter hurtboxes depend on it
+  (HSD_JObjSetupMatrix), and the frame loop hangs off the XFB copy's
+  draw-done: skipping the render half dropped the game to 6 fps.
+- **`MELEE_DRAW_EVERY=N` (vi.c) skips in Aurora instead**
+  (`aurora_set_frame_discard`). A discarded frame's GX commands all run
+  (state, textures, EFB copies, the draw-done token); only each draw's
+  vertices are skipped, and the frame isn't presented. The game reads
+  nothing back from the GPU (no GXPeekZ/ARGB).
+- **The harness defaults unpaced runs to N=10** (net_test.py DRAW_EVERY;
+  MELEE_DRAW_EVERY in the environment overrides it, 1 draws every frame).
+  Window shots still work: the window holds a frame at most N frames old.
+- **Proof:** a 1-minute 3-player match at N=10, every peer skipping a
+  different set of frames, ends with matching checksums. Frames run at
+  1100-1800 fps against ~350; that match took 28 s against 41 s, and a lobby
+  scenario 17-19 s against 24-25 s. What's left is wall time: boot, RmlUi
+  page loads (two main-thread stalls of ~2 s each in `default`, at the Host
+  page and the lobby overlay), the service, the joins.
 
-### T6. The lock
-The machine-wide lock (`flock …/melee-game-test.lock`) stays for LAN runs, which
-see each other's mDNS. Unpaced runs are short, and no longer flaky under load,
-so service and direct runs can drop it.
-- A LAN run whose lobby code or address is unique could drop it too.
-- The guest picks its lobby by row today. Picking by code from the list would remove the last need for the lock.
+### T6. Test slots instead of the lock (done 2026-10-31)
+The machine-wide lock (`flock …/melee-game-test.lock`) was a convention for
+agents, not code. The harness now takes a **test slot** itself
+(net_test.py `claim_slot`), a flock under ~/.cache/melee_net_cache:
+- A slot moves the run's UDP ports (+200 a slot) and so its Dawn caches,
+  ~2 GB a port, kept run to run; and its window titles (`melee-net1-a`).
+  The default work dir gets the slot as a suffix. The service already takes a
+  free port.
+- `MELEE_TEST_SLOTS` (2) is how many runs go side by side. Each one more is
+  another set of caches on disk.
+- A paced run takes every slot: it needs the machine to keep time.
+- A LAN run also takes `lan.lock`: LAN lobbies are on every other LAN run's
+  list, and the guest picks by row. Service lobbies aren't announced on the
+  LAN, so service runs go beside a LAN run.
+- No outer `flock` is needed around the harnesses any more.
 
 ## Expected result
 

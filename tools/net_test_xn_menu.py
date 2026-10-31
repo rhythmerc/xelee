@@ -48,6 +48,9 @@ STEP = 0.35
 NAMES = ["RHYTHM", "PIXEL", "WAVEDASH KID", "KOOPA"]
 
 
+# How often a wait checks the logs for its event (Instance.text() reads on
+# from where it stopped, so a short poll costs little).
+POLL = 0.05
 SHOTS = True  # --no-shots: regression runs skip the pictures, and look()'s waits for them
 
 
@@ -62,7 +65,7 @@ def shot(inst, shots, name):
     if not SHOTS:
         return
     out = os.path.join(shots, f"{name}.png")
-    env = dict(os.environ, MELEE_WINDOW_TITLE=f"melee-net-{inst.name}")
+    env = dict(os.environ, MELEE_WINDOW_TITLE=nt.window_title(inst.name))
     r = subprocess.run([sys.executable, os.path.join(HERE, "devctl.py"), "shot", out], env=env,
                        capture_output=True, text=True)
     print(f"net_test_xn_menu: shot {name}" + ("" if r.returncode == 0 else f" FAILED {r.stderr}"),
@@ -243,7 +246,7 @@ def ready_scenario(insts, shots):
     nt.press((guest,), "Return", 9, 0.5)
     deadline = time.time() + 15
     while time.time() < deadline and not all(sss_loads(i) > n for i, n in zip(insts, before)):
-        time.sleep(0.5)
+        time.sleep(POLL)
     if not all(sss_loads(i) > n for i, n in zip(insts, before)):
         print("FAIL: everyone ready, but no stage select")
         return False
@@ -285,7 +288,7 @@ def multipad_scenario(insts, pad, shots):
         for i, n in zip(insts, before):
             deadline = time.time() + 40
             while time.time() < deadline and i.text().count(seated) <= n:
-                time.sleep(0.5)
+                time.sleep(POLL)
             if i.text().count(seated) <= n:
                 print(f"[{i.name}] FAIL: no session with the second pad's seat {seated})")
                 return False
@@ -310,7 +313,7 @@ def multipad_scenario(insts, pad, shots):
         for i, n in zip(insts, before):
             deadline = time.time() + 40
             while time.time() < deadline and i.text().count("(players 03") <= n:
-                time.sleep(0.5)
+                time.sleep(POLL)
             if i.text().count("(players 03") <= n:
                 print(f"[{i.name}] FAIL: the seat was never given up")
                 return False
@@ -330,7 +333,7 @@ def reloaded(insts, loads, timeout=60):
     for i, n in zip(insts, loads):
         deadline = time.time() + timeout
         while time.time() < deadline and css_loads(i) <= n:
-            time.sleep(0.3)
+            time.sleep(POLL)
         if css_loads(i) <= n:
             print(f"[{i.name}] FAIL: the CSS never reloaded")
             return False
@@ -388,7 +391,7 @@ def sss_host_b(insts, shots):
     nt.press((host,), "Z", 9, 1.0)
     deadline = time.time() + 30
     while time.time() < deadline and not all(css_loads(i) > n for i, n in zip(insts, before)):
-        time.sleep(0.5)
+        time.sleep(POLL)
     if not all(css_loads(i) > n for i, n in zip(insts, before)):
         print("FAIL: the host's B didn't take everyone back to the CSS")
         return False
@@ -604,7 +607,7 @@ def leave_guest(insts, shots):
     for i, n in zip(insts, seen):
         deadline = time.time() + 60
         while time.time() < deadline and i.text().count(full) <= n:
-            time.sleep(0.5)
+            time.sleep(POLL)
         if i.text().count(full) <= n:
             print(f"[{i.name}] FAIL: the leaver never got back in {full}")
             return False
@@ -747,7 +750,7 @@ def leave_host_alone(host, shots):
     shot(host, shots, "4b-host-alone-leaving")
     deadline = time.time() + 15
     while time.time() < deadline and menu_loads(host) == menus:
-        time.sleep(0.5)
+        time.sleep(POLL)
     if "css: P1 left the lobby" not in host.text():
         print("FAIL: the host's hold never ended")
         return False
@@ -930,7 +933,7 @@ def wait_commit(insts, before, timeout=60):
     while time.time() < deadline:
         if all(len(commits(i)) > n for i, n in zip(insts, before)):
             return True
-        time.sleep(0.5)
+        time.sleep(POLL)
     for i, n in zip(insts, before):
         if len(commits(i)) <= n:
             print(f"[{i.name}] FAIL: no new RULES commit")
@@ -1771,6 +1774,10 @@ def main():
     args = ap.parse_args()
     nt.UNPACED = not args.paced  # docs/fast-tests-plan.md T4: as fast as it runs
     nt.BOOT_MENU = True  # every instance boots into the main menu
+    nt.claim_slot(exclusive=args.paced, lan=args.net == "lan")
+    args.port = nt.slot_port(args.port)
+    if nt.SLOT and args.work == ap.get_default("work"):
+        args.work += f"-{nt.SLOT}"
     global SHOTS
     SHOTS = not args.no_shots
     if args.seconds is None:

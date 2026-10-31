@@ -213,7 +213,7 @@ def run(args):
                 r"net: disconnected", r"cannot roll back")
         last_frame, last_progress = -1, time.time()
         while time.time() < deadline and any(i.proc.poll() is None for i in insts):
-            time.sleep(1)
+            time.sleep(0.25 if nt.UNPACED else 1)
             fr_now = max([int(x) for x in nt.re.findall(r"net: frame (\d+)", "".join(i.text() for i in insts))] or [0])
             if kill_at is not None and (fr_now if nt.UNPACED else time.time()) >= kill_at[1]:
                 victim = insts[kill_at[0]]
@@ -314,6 +314,10 @@ def main():
     ap.add_argument("--work", default="/tmp/net_test_n")
     args = ap.parse_args()
     nt.UNPACED = not args.paced  # docs/fast-tests-plan.md T4: as fast as it runs
+    nt.claim_slot(exclusive=args.paced, lan=args.lan)
+    args.port = nt.slot_port(args.port)
+    if nt.SLOT and args.work == ap.get_default("work"):
+        args.work += f"-{nt.SLOT}"
     service = None
     if args.lan:
         args.xn, args.xn_url = True, "lan"  # no service: the code path stays --xn's

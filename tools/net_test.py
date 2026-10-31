@@ -29,6 +29,7 @@ and run() to sweep the link-simulator matrix.
 """
 import argparse
 import errno
+import fcntl
 import json
 import os
 import re
@@ -97,6 +98,73 @@ DRAW_EVERY = 10
 # movie and the title one instance at a time. Set before instances start.
 BOOT_MENU = False
 _mark = [0]
+
+# Test slots (docs/fast-tests-plan.md T6): runs on one machine side by side,
+# each in its own slot, instead of queueing on one machine-wide lock. A slot
+# is a flock under CACHE_ROOT; it moves the run's UDP ports (and so its
+# Dawn caches, ~2 GB a port, reused run to run) and its window titles off
+# the other slots'. MELEE_TEST_SLOTS (2) is how many: each one more is
+# another set of caches on disk.
+SLOT = 0
+SLOT_PORT_STEP = 200  # net_test_n's 42150.. and net_test_xn_menu's 42250.. stay apart
+_slot_locks = []
+
+
+def claim_slot(exclusive=False, lan=False):
+    """Take a free slot, waiting while every one is busy. `exclusive`: every
+    slot, for a paced run, which needs the machine to itself to keep time.
+    `lan`: also the LAN lock, so one LAN run at a time: their lobbies are
+    on every other's list. Held until the process exits."""
+    global SLOT
+    os.makedirs(CACHE_ROOT, exist_ok=True)
+    n = max(1, int(os.environ.get("MELEE_TEST_SLOTS", "2")))
+
+    def lock(name, block):
+        fd = os.open(os.path.join(CACHE_ROOT, name), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
+        except BlockingIOError:
+            os.close(fd)
+            return False
+        _slot_locks.append(fd)
+        return True
+
+    said = False
+    if lan:
+        if not lock("lan.lock", False):
+            print("net_test: waiting for the LAN lock (another LAN run)", flush=True)
+            said = True
+            lock("lan.lock", True)
+    if exclusive:
+        for i in range(n):
+            if not lock(f"slot-{i}.lock", False):
+                if not said:
+                    print("net_test: waiting for every test slot (a paced run)", flush=True)
+                    said = True
+                lock(f"slot-{i}.lock", True)
+        SLOT = 0
+        return SLOT
+    while True:
+        for i in range(n):
+            if lock(f"slot-{i}.lock", False):
+                SLOT = i
+                if i:
+                    print(f"net_test: in test slot {i}", flush=True)
+                return SLOT
+        if not said:
+            print("net_test: waiting for a free test slot", flush=True)
+            said = True
+        time.sleep(0.5)
+
+
+def slot_port(port):
+    """`port` moved into this run's slot."""
+    return port + SLOT_PORT_STEP * SLOT
+
+
+def window_title(name):
+    """An instance's window title (devctl.py matches it as a substring)."""
+    return f"melee-net-{name}" if SLOT == 0 else f"melee-net{SLOT}-{name}"
 
 
 def step(insts, lines, timeout=120):
@@ -205,7 +273,7 @@ class Instance:
             "MELEE_VSYNC": "0",
             "MELEE_NET_PORT": str(port),
             "MELEE_CACHE_DIR": cache,
-            "MELEE_WINDOW_TITLE": f"melee-net-{name}",
+            "MELEE_WINDOW_TITLE": window_title(name),
             "MELEE_KEY_FIFO": self.fifo,
             "MELEE_SEED": os.environ.get("MELEE_SEED_" + name.upper(), "7"),  # _A/_B: per-instance
             "MELEE_FPS": "1",  # one line per second: the rate the drive scales its holds by
@@ -267,7 +335,7 @@ class Instance:
                 return True
             if self.proc.poll() is not None:
                 return False
-            time.sleep(0.25)
+            time.sleep(0.05)
         return False
 
     def kill(self, grace=0.0):
@@ -275,7 +343,7 @@ class Instance:
          takes a few seconds, and a killed instance reports exit code -9)."""
         deadline = time.time() + grace
         while self.proc.poll() is None and time.time() < deadline:
-            time.sleep(0.25)
+            time.sleep(0.05)
         if self.proc.poll() is None:
             self.proc.send_signal(signal.SIGKILL)
             self.proc.wait()
@@ -349,7 +417,7 @@ def press_until(insts, key, frames, pattern, want=1, tries=15, each=6.0, on=None
                 return True
             if any(i.proc.poll() is not None for i in insts):
                 return False
-            time.sleep(0.25)
+            time.sleep(0.05)
     return there()
 
 
