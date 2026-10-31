@@ -9,7 +9,8 @@ M2 and J1-J3): N instances on one machine and a local lobby service.
 Player 1 walks Online Mode > XeleeNet > Host, opens the lobby from the Host
 page (H1) and waits in the CSS, which is the lobby; its code comes off its
 log. The others walk to Join, which opens the lobby browser (B1): the first
-types the code on the keypad (J1), the rest pick the lobby off the list. Each join
+types the code on the keypad (J1), the rest pick the lobby off the list (A for its
+Details, A again to join). Each join
 reloads everyone's CSS with a door more (the roster reload). Then every
 instance must agree one stage at the SSS and play a match with no DESYNC. Each screen on the way is captured into --shots (default
 <work>/shots) for the share.
@@ -106,6 +107,31 @@ def type_code(inst, code, items=None):
             nt.press((inst,), key, 7, STEP)
             cur = step(items, cur, key)
         nt.press((inst,), "X", 7, STEP)
+
+
+def open_details(inst, timeout=15):
+    """A on the highlighted row of the lobby list: the lobby's Details
+    (docs/xeleenet-lobby-details-plan.md). Its log line, or None."""
+    seen = nt.count(inst, r"xeleenet pages: details ")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        nt.press((inst,), "X", 7, 0.3)
+        # Another A only once this one has surely missed (the list may still
+        # be looking): a second on Details would join.
+        for _ in range(10):
+            if nt.count(inst, r"xeleenet pages: details ") > seen:
+                return nt.re.findall(r"xeleenet pages: details .*", inst.text())[-1]
+            time.sleep(0.3)
+    return None
+
+
+def join_off_list(inst):
+    """A on the list's row opens Details; A there joins."""
+    if open_details(inst) is None:
+        print(f"[{inst.name}] FAIL: A on the list never opened a lobby's Details")
+        return False
+    nt.press((inst,), "X", 7, 0.4)
+    return True
 
 
 def drive_css(insts, want=1):
@@ -518,7 +544,8 @@ def leave_guest(insts, shots):
     # the same lobby again (the host must not take it for the stay it left).
     full = f"(players {(1 << len(insts)) - 1:02x})"
     seen = [i.text().count(full) for i in insts]
-    nt.press((leaver,), "X", 7, 0.4)
+    if not join_off_list(leaver):
+        return False
     for i, n in zip(insts, seen):
         deadline = time.time() + 60
         while time.time() < deadline and i.text().count(full) <= n:
@@ -692,11 +719,55 @@ FIGHTERS_HIGH = sum(1 << b for b in (0x02, 0x09, 0x0F, 0x14, 0x12, 0x13, 0x00, 0
 FIGHTERS_LOW = FIGHTERS_ALL & ~FIGHTERS_HIGH
 
 
-def set_rules(ident, seats, teams=False, fighters=FIGHTERS_ALL):
+def set_rules(ident, seats, teams=False, fighters=FIGHTERS_ALL, stages=COMPETITIVE):
     with open(os.path.join(ident, "xeleenet-lobby.txt"), "w") as f:
         f.write(f"preset=3\nname=Set test\nopen=1\nseats={seats}\nteams={int(teams)}\nstock=0\nstocks=4\n"
-                f"minutes=1\nitems=-1\nff=0\nhandicap=0\ndamage=10\npause=0\nstages={COMPETITIVE}\n"
+                f"minutes=1\nitems=-1\nff=0\nhandicap=0\ndamage=10\npause=0\nstages={stages}\n"
                 f"fighters={fighters}\nfrozen=1\nhide=0\n")
+
+
+# --scenario details: the host's lobby (2 seats, Low tiers, Final Dest. only).
+FINAL_DEST = 1 << 25  # kStages' bit
+
+
+def details_first(g, shots):
+    """The first guest opens the lobby's Details off the list: it names the
+    host's lists and the host as P1. A there joins."""
+    line = open_details(g)
+    want = f"fighters={FIGHTERS_LOW:08x} stages={FINAL_DEST:08x}"
+    print(f"net_test_xn_menu: {g.name}'s {line}", flush=True)
+    if line is None or want not in line or " 1/2 " not in line or "P1=RHYTHM#" not in line or "(host)" not in line:
+        print(f"[{g.name}] FAIL: Details doesn't show the host's lobby as set ({want}, P1 the host)")
+        return False
+    time.sleep(1.0)
+    shot(g, shots, f"5b-details-{g.name}")
+    nt.press((g,), "X", 7, 0.4)
+    return True
+
+
+def details_full(g, shots):
+    """The second guest turns Show full on and opens the full lobby's Details:
+    A there joins nothing, and B goes back to the same row."""
+    nt.press((g,), "Return", 9, 1.5)  # START: Show full
+    line = open_details(g, timeout=30)
+    print(f"net_test_xn_menu: {g.name}'s {line}", flush=True)
+    if line is None or " 2/2 " not in line:
+        print(f"[{g.name}] FAIL: Show full never offered the full lobby's Details")
+        return False
+    time.sleep(1.0)
+    shot(g, shots, f"5c-details-full-{g.name}")
+    joins = nt.count(g, r"xeleenet pages: joining")
+    nt.press((g,), "X", 7, 2.0)
+    if nt.count(g, r"xeleenet pages: joining") != joins or "xeleenet pages: Details -> Joining" in g.text():
+        print(f"[{g.name}] FAIL: A on a full lobby's Details joined")
+        return False
+    nt.press((g,), "Z", 7, 1.5)
+    if "xeleenet pages: Details -> Lobbies at lb0" not in g.text():
+        print(f"[{g.name}] FAIL: B on Details didn't go back to the lobby's row")
+        return False
+    shot(g, shots, f"5d-back-on-list-{g.name}")
+    print("net_test_xn_menu: the full lobby's Details had no Join; B went back to its row", flush=True)
+    return True
 
 
 def fighters_check(insts, shots):
@@ -795,6 +866,8 @@ def run(args):
         if args.scenario in ("set", "teams", "fighters") and k == 0:
             set_rules(ident, args.players, teams=args.scenario == "teams",
                       fighters=FIGHTERS_LOW if args.scenario == "fighters" else FIGHTERS_ALL)
+        if args.scenario == "details" and k == 0:
+            set_rules(ident, 2, fighters=FIGHTERS_LOW, stages=FINAL_DEST)
         env = {
             "MELEE_XN_URL": args.url,
             "MELEE_XN_NAME": NAMES[k],
@@ -812,6 +885,7 @@ def run(args):
             os.mkfifo(fifo)
             env["MELEE_KEY_FIFO_P2"] = fifo  # the host's second pad
         insts.append(nt.Instance(name, args.exe, args.disc, args.work, ports[k], 0, env, True))
+    everyone = list(insts)  # killed at the end, whoever plays on
     ok = False
     try:
         for inst in insts:
@@ -827,7 +901,8 @@ def run(args):
         shot(host, shots, "2-xeleenet-menu")
         walk(host, [("X", 7)])
         time.sleep(1.5)
-        if (args.players > 2 or args.scenario == "multipad") and args.scenario not in ("set", "teams", "fighters"):
+        if (args.players > 2 or args.scenario == "multipad") and args.scenario not in ("set", "teams", "fighters",
+                                                                                         "details"):
             # (their rules file has the seats)
             nt.press((host,), "Right", 7, 0.6)  # Preset: 1v1 (2 seats) -> Doubles (4)
         shot(host, shots, "3-host-page")
@@ -855,7 +930,15 @@ def run(args):
                 return False
             if args.no_discovery:
                 shot(g, shots, f"5-blocked-{g.name}")
-            if (k == 0 or args.no_discovery) and lan:
+            if args.scenario == "details" and k > 0:
+                # The lobby is full: the others only look at it.
+                if not details_full(g, shots):
+                    return False
+                continue
+            if args.scenario == "details":
+                if not details_first(g, shots):
+                    return False
+            elif (k == 0 or args.no_discovery) and lan:
                 # The first guest joins by address: X opens LAN's keypad.
                 nt.press((g,), "C", 7, 1.0)
                 shot(g, shots, f"6-join-address-{g.name}")
@@ -870,8 +953,10 @@ def run(args):
                 shot(g, shots, "7-join-code-typed")
                 nt.press((g,), "Return", 9, 0.4)
             else:
-                # The others pick the lobby off the list with A.
-                nt.press((g,), "X", 7, 0.4)
+                # The others pick the lobby off the list: A for its Details,
+                # A again to join.
+                if not join_off_list(g):
+                    return False
             time.sleep(0.6)
             shot(g, shots, f"8-joining-{g.name}")
             if args.join_shots and k == 0:
@@ -884,6 +969,8 @@ def run(args):
             if not g.wait_log(r"lobby: entering CSS", 90):
                 print(f"[{g.name}] FAIL: never got into the lobby")
                 return False
+        if args.scenario == "details":
+            insts = insts[:2]  # the 2-seat lobby's players
         want = f"(players {(1 << len(insts)) - 1:02x})"
         for inst in insts:
             if not inst.wait_log(nt.re.escape(want), 90):
@@ -973,7 +1060,7 @@ def run(args):
             print(f"[{i.name}] " + "; ".join(nt.re.findall(r"xeleenet: (P\d (?:direct|through the host))", t))
                   + ("  DESYNC" if "net: DESYNC" in t else ""))
     finally:
-        for inst in insts:
+        for inst in everyone:
             inst.kill(5)
     return ok
 
@@ -986,7 +1073,7 @@ def main():
     ap.add_argument("--scenario", default="",
                     choices=("", "sss-host-b", "ready", "leave-guest", "leave-host", "sss-repick", "sss-timeout",
                              "sss-same", "css-b-hold", "leave-host-alone", "set", "teams", "multipad",
-                             "multipad-full", "fighters"),
+                             "multipad-full", "fighters", "details"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
@@ -1001,7 +1088,10 @@ def main():
                          "its team on its door's button; "
                          "multipad: the host's second pad takes a seat, gives it up, takes it again, and "
                          "plays (use --players 2); multipad-full: a 2-seat lobby refuses it; "
-                         "fighters: the host's lobby allows Low tiers only; off-list A is refused everywhere")
+                         "fighters: the host's lobby allows Low tiers only; off-list A is refused everywhere; "
+                         "details: a 2-seat lobby (Low tiers, Final Dest. only): the first guest's Details shows "
+                         "them and A joins; the next turns Show full on, and the full lobby's Details won't join "
+                         "(use --players 3)")
     ap.add_argument("--join-shots", action="store_true", help="shots every 0.35 s through the first join")
     ap.add_argument("--url", default="", help="a running service instead of a local lobby service")
     ap.add_argument("--net", choices=("service", "lan"), default="service",
