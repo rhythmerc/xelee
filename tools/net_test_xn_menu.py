@@ -398,8 +398,10 @@ def steer(inst, key, cell, tries=40):
     if nt.UNPACED and over(inst) != cell:
         # The game taps until it logs the cell, and stops on that frame: the
         # stage select's pick timer runs in frames, faster than a round trip
-        # a tap.
-        nt.step((inst,), [f"tapuntil {key} 3f 8f sss: over cell {cell} {tries * 12}f"])
+        # a tap. The gap outlasts the input delay (8 frames at sss-repick's
+        # 80 ms): a tap still in flight when the cell is logged carries the
+        # cursor past it.
+        nt.step((inst,), [f"tapuntil {key} 3f 20f sss: over cell {cell} {tries * 24}f"])
     for _ in range(tries):
         if over(inst) == cell:
             return True
@@ -473,7 +475,6 @@ def sss_picks(insts, shots, scenario):
             if not steer(i, "Up", BF):
                 return False
         nt.press((host,), "X", 7, 0.2)
-        t0 = time.time()
         # A frame of the upper grid's shape: along to Dream Land, then up.
         if not all(steer(b, key, cell) for key, cell in (("Right", FD), ("Right", DL), ("Up", PS))):
             return False
@@ -483,9 +484,12 @@ def sss_picks(insts, shots, scenario):
         if not host.wait_log(r"sss: final: ", 30):
             print("FAIL: the pick timer never ended the picking")
             return False
-        took = time.time() - t0
-        print(f"net_test_xn_menu: the timer ended the picking {took:.1f} s after the first pick", flush=True)
-        if not 13 <= took <= 19:
+        # In frames, the way the timer counts: unpaced, its 15 s go by in 2.
+        timer = nt.re.search(r"sss: the pick timer runs from frame (\d+) to (\d+)", host.text())
+        draw = nt.re.search(r"sss: final: .* the draw at frame (\d+)", host.text())
+        took = (int(draw.group(1)) - int(timer.group(1))) / 60 if timer and draw else -1
+        print(f"net_test_xn_menu: the timer ended the picking {took:.2f} s after the first pick", flush=True)
+        if not 15 <= took <= 16:
             print("FAIL: not 15 s after the first pick")
             return False
     if not all(i.wait_log(r"sss: resolved cell", 40) for i in insts):

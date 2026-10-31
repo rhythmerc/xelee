@@ -1045,6 +1045,7 @@ static void xnSss_Frame(void)
     if (me == 0 && !xn_sss.final && !xn_sss.leaving && !xn_sss.back_want) {
         if (any && xn_sss.deadline < 0) {
             xn_sss.deadline = f + XN_PICK_TIMER;
+            pc_log_line("sss: the pick timer runs from frame %d to %d", f, xn_sss.deadline);
         }
         if (xn_sss.deadline >= 0 && !xn_sss.timer_out) {
             u8 m[4] = { (u8) (xn_sss.deadline >> 24), (u8) (xn_sss.deadline >> 16),
