@@ -15,6 +15,7 @@
 #include "net_identity.h"
 #include "net_punch.h"
 #include "pc.h"
+#include "rml_pointer.hpp"
 #include "xeleenet.h"
 #include "xeleenet_fighters.h"
 
@@ -672,6 +673,7 @@ struct Screen : Rml::EventListener {
     Rml::Vector2i dims{0, 0}, placedDims{0, 0};
     float placedPresence = -1.f;
     bool pointerWas = false, pointerPressed = false;
+    pc::rml::Pointing pointing;
 
     Page page = Page::Host;
     std::vector<Item> items;
@@ -728,7 +730,8 @@ struct Screen : Rml::EventListener {
             return false;
         }
         document->AddEventListener(Rml::EventId::Click, this);
-        document->AddEventListener(Rml::EventId::Mouseover, this);
+        // Its moves, not Mouseover (rml_pointer.hpp).
+        document->AddEventListener(Rml::EventId::Mousemove, this);
         return true;
     }
 
@@ -2219,7 +2222,13 @@ struct Screen : Rml::EventListener {
         if (!shown || presence < 1.f)
             return;
         std::string id;
-        if (!id_of(event.GetTargetElement(), id))
+        const bool found = id_of(event.GetTargetElement(), id);
+        int i = -1;
+        for (size_t k = 0; found && k < items.size(); k++)
+            if (items[k].id == id)
+                i = static_cast<int>(k);
+        const bool pointed = event.GetId() == Rml::EventId::Mousemove && pointing.at(i, pointerWas);
+        if (!found)
             return;
         if (id == "full" && event.GetId() == Rml::EventId::Click && !pointerWas) {
             input(PC_XN_IN_START);
@@ -2228,17 +2237,13 @@ struct Screen : Rml::EventListener {
         // The overlay over a session's CSS: the headset's laser gives no A
         // there (xr_pointer.c), so its clicks are the overlay's own.
         const bool click_ok = !pointerWas || (overlay && pc_net_active());
-        int i = -1;
-        for (size_t k = 0; k < items.size(); k++)
-            if (items[k].id == id)
-                i = static_cast<int>(k);
         if (i < 0 || !items[i].enabled)
             return;
         if (event.GetId() == Rml::EventId::Click && click_ok) {
             cursor = i;
             cursorId = id;
             activate(i);
-        } else if (event.GetId() == Rml::EventId::Mouseover && i != cursor) {
+        } else if (pointed && i != cursor) {
             cursor = i;
             cursorId = id;
             sfx(SFX_MOVE);
@@ -3850,6 +3855,8 @@ extern "C" void pc_xn_menu_update(void) {
     s_pointer.feed(any, context != nullptr ? context->GetDimensions() : Rml::Vector2i{0, 0},
                    [] { s_screen.touched(); });
     s_screen.pointerWas = s_over.pointerWas = s_banner.pointerWas = s_pointer.was;
+    if (!s_pointer.was)
+        s_screen.pointing.reset();
 }
 
 // While the CSS's or the stage select's overlay is up, the game's frame is as

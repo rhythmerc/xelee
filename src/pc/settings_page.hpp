@@ -22,6 +22,7 @@
 #pragma once
 
 #include "menu_screen.h"
+#include "rml_pointer.hpp"
 
 #include <RmlUi/Core.h>
 
@@ -99,6 +100,7 @@ private:
     float placedPresence_ = -1.f;
     Rml::Vector2i placedDims_{0, 0};
     bool pointerWas_ = false, pointerPressed_ = false;
+    rml::Pointing pointing_;
     // The restart question: open, its cursor (0 Restart now, 1 Later), the
     // waiting changes last put off (waiting()), the answer.
     bool asking_ = false;

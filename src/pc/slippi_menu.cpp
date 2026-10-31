@@ -4,6 +4,7 @@
 
 #include "launcher.h"
 #include "pc.h"
+#include "rml_pointer.hpp"
 #include "slippi/slp_user.h"
 
 #include <RmlUi/Core.h>
@@ -107,6 +108,7 @@ struct Menu : Rml::EventListener {
     Rml::Vector2i dims{0, 0}, placedDims{0, 0};
     float placedPresence = -1.f;
     bool pointerWas = false, pointerPressed = false;
+    pc::rml::Pointing pointing;
 
     int mode = PC_SLIPPI_MENU_LOGIN;
     Page page = Page::Login;
@@ -152,7 +154,8 @@ struct Menu : Rml::EventListener {
             return false;
         }
         document->AddEventListener(Rml::EventId::Click, this);
-        document->AddEventListener(Rml::EventId::Mouseover, this);
+        // Its moves, not Mouseover (rml_pointer.hpp).
+        document->AddEventListener(Rml::EventId::Mousemove, this);
         return true;
     }
 
@@ -971,8 +974,8 @@ struct Menu : Rml::EventListener {
                 activate(id);
             }
             break;
-        case Rml::EventId::Mouseover:
-            if (i >= 0 && i != cursor && items[i].enabled) {
+        case Rml::EventId::Mousemove:
+            if (pointing.at(i, pointerWas) && i >= 0 && i != cursor && items[i].enabled) {
                 cursor = i;
                 lbAudioAx_80024030(SFX_MOVE);
                 refresh();
@@ -1005,6 +1008,7 @@ struct Menu : Rml::EventListener {
                 context->ProcessMouseButtonUp(0, 0);
             context->ProcessMouseLeave();
             pointerWas = pointerPressed = false;
+            pointing.reset();
         }
 #endif
     }

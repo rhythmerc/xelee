@@ -18,6 +18,7 @@
 #include "launcher.h"
 #include "pc.h"
 #include "rml_picklist.hpp"
+#include "rml_pointer.hpp"
 
 #include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
@@ -134,6 +135,7 @@ struct Menu : Rml::EventListener {
     float placedPresence = -1.f; // what layout() last placed, to skip a frame with nothing new
     Rml::Vector2i placedDims{0, 0};
     bool pointerWas = false, pointerPressed = false;
+    pc::rml::Pointing pointing;
     std::string hintText;
 
     bool load() {
@@ -152,7 +154,8 @@ struct Menu : Rml::EventListener {
             return false;
         }
         document->AddEventListener(Rml::EventId::Click, this);
-        document->AddEventListener(Rml::EventId::Mouseover, this);
+        // Its moves, not Mouseover (rml_pointer.hpp).
+        document->AddEventListener(Rml::EventId::Mousemove, this);
         return true;
     }
 
@@ -641,7 +644,20 @@ struct Menu : Rml::EventListener {
                 back(); // a click beside the list closes it
             }
             break;
-        case Rml::EventId::Mouseover:
+        case Rml::EventId::Mousemove: {
+            // What it's over, as one number for pointing (the list's choices
+            // after the screen's cursors).
+            int at = -1;
+            if (listFor >= 0 && list.clicked(target) >= 0)
+                at = 1000 + list.clicked(target);
+            else if (id_of(target, "slot-", index))
+                at = index;
+            else if (id_of(target, "reset", index))
+                at = kReset;
+            else if (id_of(target, "rumble", index))
+                at = kRumble;
+            if (!pointing.at(at, pointerWas))
+                break;
             if (listFor >= 0 && list.hover(target)) {
                 // the list follows the pointer
             } else if (listFor < 0 && id_of(target, "slot-", index) && index != cursor &&
@@ -660,6 +676,7 @@ struct Menu : Rml::EventListener {
                 refresh();
             }
             break;
+        }
         default:
             break;
         }
@@ -694,6 +711,7 @@ struct Menu : Rml::EventListener {
                 context->ProcessMouseButtonUp(0, 0);
             context->ProcessMouseLeave();
             pointerWas = pointerPressed = false;
+            pointing.reset();
         }
 #endif
     }

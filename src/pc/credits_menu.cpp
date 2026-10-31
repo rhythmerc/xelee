@@ -8,6 +8,7 @@
 #include "menu_screen.h"
 #include "launcher.h"
 #include "pc.h"
+#include "rml_pointer.hpp"
 
 #include <aurora/rmlui.hpp>
 #ifdef AURORA_ENABLE_OPENXR
@@ -100,6 +101,7 @@ struct State {
     float presence = 0.f, placedPresence = -1.f;
     Rml::Vector2i dims{0, 0}, placedDims{0, 0};
     bool pointerWas = false;
+    pc::rml::Pointing pointing;
 } s;
 
 std::string fmt(float v) {
@@ -212,7 +214,8 @@ bool load() {
         pc_log_line("credits: could not load credits.rml");
         return false;
     }
-    s.document->AddEventListener(Rml::EventId::Mouseover, &s_listener);
+    // Its moves, not Mouseover (rml_pointer.hpp).
+    s.document->AddEventListener(Rml::EventId::Mousemove, &s_listener);
     build();
     return true;
 }
@@ -241,12 +244,12 @@ void layout() {
 }
 
 void Listener::ProcessEvent(Rml::Event& event) {
-    if (!s.shown || s.presence < 1.f || event.GetId() != Rml::EventId::Mouseover)
+    if (!s.shown || s.presence < 1.f || event.GetId() != Rml::EventId::Mousemove)
         return;
     for (Rml::Element* e = event.GetTargetElement(); e != nullptr; e = e->GetParentNode()) {
         if (const Rml::Variant* v = e->GetAttribute("data-row")) {
             const int row = std::atoi(v->Get<Rml::String>().c_str());
-            if (row != s.cursor) {
+            if (s.pointing.at(row, s.pointerWas) && row != s.cursor) {
                 s.cursor = row;
                 lbAudioAx_80024030(SFX_MOVE);
                 refresh();
@@ -254,6 +257,7 @@ void Listener::ProcessEvent(Rml::Event& event) {
             return;
         }
     }
+    s.pointing.at(-1, s.pointerWas);
 }
 
 void show(bool show) {
@@ -312,6 +316,7 @@ void update() {
     } else if (s.pointerWas && context != nullptr) {
         context->ProcessMouseLeave();
         s.pointerWas = false;
+        s.pointing.reset();
     }
 #endif
 }

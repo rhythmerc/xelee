@@ -69,7 +69,8 @@ bool Page::load() {
         return false;
     }
     document_->AddEventListener(Rml::EventId::Click, this);
-    document_->AddEventListener(Rml::EventId::Mouseover, this);
+    // Its moves, not Mouseover (rml_pointer.hpp).
+    document_->AddEventListener(Rml::EventId::Mousemove, this);
     return true;
 }
 
@@ -439,9 +440,10 @@ void Page::ProcessEvent(Rml::Event& event) {
     Rml::Element* target = event.GetTargetElement();
     if (asking_ || restarting_) {
         const int choice = attr_of(target, "data-ask");
+        const bool pointed = event.GetId() == Rml::EventId::Mousemove && pointing_.at(choice, pointerWas_);
         if (choice < 0 || restarting_)
             return;
-        if (event.GetId() == Rml::EventId::Mouseover && choice != askCursor_) {
+        if (pointed && choice != askCursor_) {
             askCursor_ = choice;
             lbAudioAx_80024030(SFX_MOVE);
             refresh();
@@ -453,8 +455,8 @@ void Page::ProcessEvent(Rml::Event& event) {
     const int row = attr_of(target, "data-row");
     const int step = attr_of(target, "data-step");
     switch (event.GetId()) {
-    case Rml::EventId::Mouseover:
-        if (row >= 0 && row != cursor_) {
+    case Rml::EventId::Mousemove:
+        if (pointing_.at(row, pointerWas_) && row >= 0 && row != cursor_) {
             cursor_ = row;
             lbAudioAx_80024030(SFX_MOVE);
             refresh();
@@ -506,6 +508,7 @@ void Page::update() {
             context->ProcessMouseButtonUp(0, 0);
         context->ProcessMouseLeave();
         pointerWas_ = pointerPressed_ = false;
+        pointing_.reset();
     }
 #endif
 }
