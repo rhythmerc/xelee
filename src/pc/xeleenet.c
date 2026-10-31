@@ -894,14 +894,14 @@ const PcXnBackend pc_xn_service_backend = {
     svc_host_options, svc_update_settings, svc_settings_result, svc_lobby_info, svc_browse, svc_browse_poll,
 };
 
-static PcXnNet s_net = PC_XN_NET_SERVICE;
+static PcXnNet s_xn_net = PC_XN_NET_SERVICE;
 
 static const PcXnBackend* backend(void) {
-    return s_net == PC_XN_NET_LAN ? &pc_xn_lan_backend : &pc_xn_service_backend;
+    return s_xn_net == PC_XN_NET_LAN ? &pc_xn_lan_backend : &pc_xn_service_backend;
 }
 
 bool pc_xn_set_network(PcXnNet net) {
-    if (net == s_net) {
+    if (net == s_xn_net) {
         return true;
     }
     PcXnStatus st = backend()->status();
@@ -909,7 +909,7 @@ bool pc_xn_set_network(PcXnNet net) {
         return false; /* a run on the other network owns the client */
     }
     backend()->stop();
-    s_net = net;
+    s_xn_net = net;
     /* XeleeNet's pages and menus read LAN's lines where they differ. */
     pc_lang_overlay("xeleenet.", net == PC_XN_NET_LAN ? "xeleenet.lan." : NULL);
     pc_log_line("xeleenet: network %s", net == PC_XN_NET_LAN ? "LAN" : "service");
@@ -917,7 +917,7 @@ bool pc_xn_set_network(PcXnNet net) {
 }
 
 PcXnNet pc_xn_network(void) {
-    return s_net;
+    return s_xn_net;
 }
 
 bool pc_xn_start(const char* url, const PcNetIdentity* id, const char* name, const char* code,
@@ -958,7 +958,7 @@ bool pc_xn_playing(void) {
 }
 
 void pc_xn_exit(void) {
-    if (s_net == PC_XN_NET_LAN) {
+    if (s_xn_net == PC_XN_NET_LAN) {
         backend()->stop();
     }
 }
