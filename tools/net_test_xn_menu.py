@@ -72,10 +72,18 @@ def nap(seconds, insts=None):
         nt.step(live, [f"wait {max(1, int(seconds * 60))}f"])
 
 
-def walk(inst, keys):
+def walk(insts, keys):
+    """Menu hops. Unpaced: each press waits for the menu's own event (its
+    highlight moved, or the next menu or page took input: MELEE_TEST_EVENTS),
+    armed before the press so one on its first frame isn't missed; a press
+    that changes scene instead gives up after 120 frames."""
+    insts = insts if isinstance(insts, (list, tuple)) else (insts,)
     for key, frames in keys:
-        nt.press((inst,), key, frames, 0)
-        nt.settle((inst,), nt.MENU_SETTLE)
+        if nt.UNPACED:
+            nt.step(insts, [f"tapuntil {key} {frames}f 121f menu: 120f"])
+            continue
+        nt.press(insts, key, frames, 0)
+        nt.settle(insts, nt.MENU_SETTLE)
 
 
 def keypad():
@@ -154,7 +162,10 @@ def drive_css(insts, want=1):
     player's START (Ready), until the stage select has loaded `want` times."""
     settle = nt.settle
     settle(insts, nt.MENU_SETTLE)
-    for row, down in enumerate(nt.CSS_ROWS):
+    # From the second row: on XeleeNet's CSS, drawn smaller about the centre
+    # (PC_XN_CSS_ZOOM), the first row's Down lands short of the portraits and
+    # its whole sweep picked nothing, every run.
+    for row, down in enumerate(nt.CSS_ROWS[1:], start=1):
         nt.press(insts, "Left+Up", nt.CSS_PIN, 1.2)
         nt.press(insts, "Down", down, 0.8)
         nt.press(insts, "Right", nt.CSS_FIRST, 0.6)
@@ -384,6 +395,11 @@ def steer(inst, key, cell, tries=40):
     """Tap the stick toward `key` until the cursor is over `cell`. The cursor
     starts under the bottom row: straight up is Battlefield, and Final
     Destination and Dream Land follow to its right."""
+    if nt.UNPACED and over(inst) != cell:
+        # The game taps until it logs the cell, and stops on that frame: the
+        # stage select's pick timer runs in frames, faster than a round trip
+        # a tap.
+        nt.step((inst,), [f"tapuntil {key} 3f 8f sss: over cell {cell} {tries * 12}f"])
     for _ in range(tries):
         if over(inst) == cell:
             return True
@@ -1452,7 +1468,9 @@ def run(args):
             "MELEE_XN_URL": args.url,
             "MELEE_XN_NAME": NAMES[k],
             "MELEE_XN_IDENTITY": ident,
-            "MELEE_NET_EXIT_AFTER_FRAMES": str(int(args.seconds * 60) + 30000),
+            # A safety exit: some 8 minutes paced; unpaced runs at 300+ fps, so
+            # the same margin is several times the frames.
+            "MELEE_NET_EXIT_AFTER_FRAMES": str(int(args.seconds * 60) + (30000 if args.paced else 250000)),
             "MELEE_XN_TEST_HAND": "1",  # where the hands are (pick_high)
         }
         if args.block:
@@ -1472,10 +1490,10 @@ def run(args):
     RUNNING[:] = everyone
     ok = False
     try:
-        for inst in insts:
-            if not nt.to_main_menu((inst,)):
-                print(f"[{inst.name}] FAIL: never reached the main menu")
-                return False
+        # Booted into the menu, every instance at once (nt.BOOT_MENU).
+        if not nt.to_main_menu(insts):
+            print("FAIL: an instance never reached the main menu")
+            return False
         extra = insts.pop() if extra_seat else None
         host, guests = insts[0], insts[1:]
         lan = args.net == "lan"
@@ -1508,10 +1526,12 @@ def run(args):
         if args.scenario == "settings-alone":
             ok = settings_alone(host, shots)
             return ok
-        for k, g in enumerate(guests[:-1] if late else guests):
-            # Join opens the lobby browser (B1), which lists the host's lobby.
-            walk(g, to_menu + [("X", 7), ("Down", 7), ("X", 7)])
-            nap(2.5)
+        joiners = list(guests[:-1] if late else guests)
+        # Every guest walks to Join's lobby browser (B1) together; only the
+        # joins themselves go one after another.
+        walk(joiners, to_menu + [("X", 7), ("Down", 7), ("X", 7)])
+        nap(2.5)
+        for k, g in enumerate(joiners):
             shot(g, shots, f"5-lobbies-{g.name}")
             if args.no_discovery and not g.wait_log(r"xeleenet pages: LAN discovery blocked", 20):
                 print(f"[{g.name}] FAIL: the list never said discovery is blocked")
@@ -1668,7 +1688,8 @@ def run(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--players", type=int, choices=(2, 3, 4), default=3)
-    ap.add_argument("--seconds", type=float, default=40, help="of match after it loads")
+    ap.add_argument("--seconds", type=float, default=None,
+                    help="of match after it loads (40 paced, 10 unpaced: game time either way)")
     ap.add_argument("--block", default="")
     ap.add_argument("--scenario", default="",
                     choices=("", "sss-host-b", "ready", "leave-guest", "leave-host", "sss-repick", "sss-timeout",
@@ -1715,6 +1736,9 @@ def main():
     ap.add_argument("--shots", default="")
     args = ap.parse_args()
     nt.UNPACED = not args.paced  # docs/fast-tests-plan.md T4: as fast as it runs
+    nt.BOOT_MENU = True  # every instance boots into the main menu
+    if args.seconds is None:
+        args.seconds = 40.0 if args.paced else 10.0
     if args.no_discovery and args.net != "lan":
         ap.error("--no-discovery is a LAN run (--net lan)")
     service = None

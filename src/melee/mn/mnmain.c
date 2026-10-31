@@ -5,6 +5,7 @@
 #include <math.h>
 #ifdef TARGET_PC
 #include "pc/pc.h"
+#include <stdlib.h>
 #include "mnpage.h"
 #include "pc/xr_place.h"
 #include <aurora/aurora.h>
@@ -834,6 +835,36 @@ static void mn_PcPointerHover(void)
 }
 #endif
 
+#ifdef TARGET_PC
+/* MELEE_TEST_EVENTS (tools/net_test*.py): when a menu takes input again
+ * after a hop, and when its highlight moves, so a test waits for those
+ * rather than for a fixed time. Logged from the menus' own input read, once
+ * a frame. */
+static void mn_PcTestEvents(void)
+{
+    static int on = -1;
+    static int last_menu = -1, last_sel = -1;
+    static bool was_cooling = true;
+    bool cooling;
+    if (on < 0) {
+        on = getenv("MELEE_TEST_EVENTS") != NULL;
+    }
+    if (!on) {
+        return;
+    }
+    cooling = mn_804D6BC8.cooldown != 0;
+    if (!cooling && (was_cooling || mn_804A04F0.cur_menu != last_menu)) {
+        pc_log_line("menu: ready %d sel %d", mn_804A04F0.cur_menu, mn_804A04F0.hovered_selection);
+        last_menu = mn_804A04F0.cur_menu;
+        last_sel = mn_804A04F0.hovered_selection;
+    } else if (!cooling && mn_804A04F0.hovered_selection != last_sel) {
+        pc_log_line("menu: cursor %d sel %d", mn_804A04F0.cur_menu, mn_804A04F0.hovered_selection);
+        last_sel = mn_804A04F0.hovered_selection;
+    }
+    was_cooling = cooling;
+}
+#endif
+
 u32 mn_80229624(u32 slot)
 {
     u32 ret = 0;
@@ -841,6 +872,7 @@ u32 mn_80229624(u32 slot)
     u64 inputs_trigger;
 #ifdef TARGET_PC
     mn_PcPointerHover();
+    mn_PcTestEvents();
 #endif
     inputs_repeated = gm_801A36C0(slot);
     inputs_trigger = gm_GetButtonsTriggered(slot);

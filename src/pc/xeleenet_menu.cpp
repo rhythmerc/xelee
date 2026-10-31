@@ -2240,7 +2240,30 @@ struct Screen : Rml::EventListener {
         }
     }
 
+    // MELEE_TEST_EVENTS (tools/net_test*.py): a page that takes input now,
+    // and its highlight moving, for a test to wait on rather than a fixed
+    // time (the menus' own say so in mnmain.c).
+    void test_events() {
+        static const bool on = std::getenv("MELEE_TEST_EVENTS") != nullptr;
+        if (!on)
+            return;
+        const bool ready = shown && presence >= 1.f;
+        const std::string where = overlay ? "settings" : page_name(page);
+        if (ready && (!testReady || where != testPage)) {
+            pc_log_line("menu: page %s ready at %s", where.c_str(), cursorId.c_str());
+            testPage = where;
+            testCursor = cursorId;
+        } else if (ready && cursorId != testCursor) {
+            pc_log_line("menu: page %s cursor %s", where.c_str(), cursorId.c_str());
+            testCursor = cursorId;
+        }
+        testReady = ready;
+    }
+    bool testReady = false;
+    std::string testPage, testCursor;
+
     void update() {
+        test_events();
         if (page == Page::Joining && s_preview.empty()) {
             const int r = pc_xn_punch_poll();
             if (r < 0)

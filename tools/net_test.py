@@ -86,6 +86,10 @@ SCENE_FILE = {
 # the speed. A harness that has been ported sets this before its instances
 # start; the rest stay paced, with millisecond holds.
 UNPACED = False
+# Menu harnesses boot every instance straight into the main menu
+# (MELEE_BOOT_SCENE=menu), instead of pressing through the card message, the
+# movie and the title one instance at a time. Set before instances start.
+BOOT_MENU = False
 _mark = [0]
 
 
@@ -201,6 +205,12 @@ class Instance:
         })
         if UNPACED:
             e["MELEE_UNPACED"] = "1"  # as fast as it runs; the inputs are frame scripts
+        # Menus and pages log when they take input and when their highlight
+        # moves (mnmain.c, xeleenet_menu.cpp): tests wait on those.
+        e["MELEE_TEST_EVENTS"] = "1"
+        self.boot_menu = BOOT_MENU and "MELEE_BOOT_SCENE" not in env and lobby
+        if self.boot_menu:
+            e["MELEE_BOOT_SCENE"] = "menu"
         if not lobby:  # a lobby (matchmaking, XeleeNet) starts the session itself
             e["MELEE_NET"] = f"127.0.0.1:{peer_port}"
             e["MELEE_NET_PLAYER"] = "0" if name == "a" else "1"
@@ -305,7 +315,9 @@ def press_until(insts, key, frames, pattern, want=1, tries=15, each=6.0, on=None
         # frames, checked between.
         hit = re.match(r"\\\[FileCache\\\] \(\?:LOOSE \)\?(HIT: [A-Za-z0-9]+)", pattern)
         if hit is not None and all(count(i, pattern) == want - 1 for i in insts):
-            step(on or insts, [f"tapuntil {key} {frames}f {int(each * 60)}f {hit.group(1)}"],
+            # At most the retries' own budget: the game gives up then too.
+            budget = max(int(each * 60) * 2, min(3600, int(tries * each * 60)))
+            step(on or insts, [f"tapuntil {key} {frames}f {int(each * 60)}f {hit.group(1)} {budget}f"],
                  timeout=tries * each * 2)
             if there():
                 return True
@@ -500,6 +512,9 @@ def to_main_menu(insts, tries=8):
     dropped one press lands in exactly that screen, where every menu key is
     otherwise a no-op. A 7-frame tap left both instances stuck there for the
     rest of the run (/tmp/sf_scenes1)."""
+    if all(getattr(i, "boot_menu", False) and count(i, r"menu: ready") == 0 for i in insts):
+        # Booted into the menu: it only has to come up, all at once.
+        return all(i.wait_log(r"menu: ready", 90) for i in insts)
     for _ in range(tries):
         want = [count(i, SCENE_FILE["menu"]) + 1 for i in insts]
 
