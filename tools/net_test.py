@@ -177,10 +177,15 @@ def step(insts, lines, timeout=120):
         fifo_write(inst.fifo, "\n".join(list(lines) + [f"mark {mark}"]))
     rx = re.compile(rf"script: P\d mark {mark} at frame")
     deadline = time.time() + timeout
+    debug = os.environ.get("NT_DEBUG_STEPS")
     while time.time() < deadline:
         if all(rx.search(i.text()) for i in insts):
+            if debug:
+                print(f"step {mark} ok on {[i.name for i in insts]} ({lines[0]})", flush=True)
             return True
         if any(i.proc.poll() is not None for i in insts):
+            if debug:
+                print(f"step {mark}: exited {[i.name for i in insts if i.proc.poll() is not None]}", flush=True)
             return False
         time.sleep(0.05)
     late = [i.name for i in insts if not rx.search(i.text())]
@@ -217,19 +222,24 @@ def script_batch(inst, fifo, keys, stop=None, timeout=120):
 
 
 def fifo_write(path, line, tries=100):
-    """One key line to a MELEE_KEY_FIFO; the game reopens it after every writer."""
+    """One key line to a MELEE_KEY_FIFO. A Windows build (under Wine) still
+    reads it the old way, closing at each writer's end and reopening: a
+    write that lands as it closes is a broken pipe, and goes again."""
     for _ in range(tries):
         try:
             fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
-            break
         except OSError as e:
             if e.errno != errno.ENXIO:
                 raise
             time.sleep(0.1)  # reader thread not up yet
-    else:
-        raise RuntimeError(f"no reader on {path}")
-    with os.fdopen(fd, "w") as f:
-        f.write(line + "\n")
+            continue
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(line + "\n")
+            return
+        except BrokenPipeError:
+            time.sleep(0.05)  # the reader closed between our open and write
+    raise RuntimeError(f"no reader on {path}")
 
 
 def wait_port_free(port, timeout=30):
@@ -594,7 +604,9 @@ def to_main_menu(insts, tries=8):
     rest of the run (/tmp/sf_scenes1)."""
     if all(getattr(i, "boot_menu", False) and count(i, r"menu: ready") == 0 for i in insts):
         # Booted into the menu: it only has to come up, all at once.
-        return all(i.wait_log(r"menu: ready", 90) for i in insts)
+        # NT_BOOT_WAIT: longer for a slow boot (a Windows build under Proton).
+        wait = float(os.environ.get("NT_BOOT_WAIT", "90"))
+        return all(i.wait_log(r"menu: ready", wait) for i in insts)
     for _ in range(tries):
         want = [count(i, SCENE_FILE["menu"]) + 1 for i in insts]
 

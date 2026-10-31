@@ -176,7 +176,14 @@ def join_off_list(inst):
     if open_details(inst) is None:
         print(f"[{inst.name}] FAIL: A on the list never opened a lobby's Details")
         return False
-    nt.press((inst,), "X", 7, 0.4)
+    # A until the page goes to Joining: Details can still be building its
+    # portraits when it logs (half a second for a Windows build under Proton),
+    # and a press in that time is dropped.
+    joins = nt.count(inst, r"xeleenet pages: Details -> Joining")
+    if not nt.press_until((inst,), "X", 7, r"xeleenet pages: Details -> Joining", want=joins + 1,
+                          tries=5, each=2.0):
+        print(f"[{inst.name}] FAIL: A on Details never joined")
+        return False
     return True
 
 
