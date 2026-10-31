@@ -103,13 +103,21 @@ ports end and the match is voided.
 ## 3. Seats (M2)
 
 - **The punch's roster.**
-  - `XnStart.reserved[0]` becomes the owner map: 2 bits per port, giving the
-    owner's primary port.
+  - `XnStart` gains `owners`, a byte that was reserved: 2 bits per port,
+    giving the owner's primary port.
   - `begin_session` builds one link per owner, never per port.
   - `on_start` and `roster_changed` read the owner map.
-  - `XnReport.reserved` carries a guest's request: the number of local seats
-    it wants. The request is repeated until the host's next START shows the
-    seats.
+  - `XnReport.want`, a byte that was reserved, carries a guest's request:
+    - bits 0-1 hold the number of extra seats it wants;
+    - bits 2-7 hold a number it moves on every change.
+
+    The number lets the host ignore reports sent before a seat was given
+    up. The report repeats every 250 ms, as it already did.
+  - Each machine remembers which physical pad claimed each of its seats. A
+    seat keeps its pad across sessions, and a new seat takes the oldest
+    waiting claim (`pc_net_connect_links` takes the map).
+  - A claim the host hasn't filled within 6 s is dropped. That happens when
+    the lobby filled first, and the CSS then says so.
   - The host is also a machine that can add seats; it does so without a
     message.
 - **Granting a seat.**
@@ -122,21 +130,29 @@ ports end and the match is voided.
   - A full lobby refuses the request; the guest shows the local "lobby is
     full" notice.
 - **Giving a seat back.**
-  - Hold B on an extra seat sends a smaller request count. The host drops
-    that port at the next switch.
+  - Every machine sees the hold of B on the same lockstep frame and calls
+    `pc_xn_punch_seat_left(port)`:
+    - The owner lowers its request.
+    - The host marks that exact port dropped, so it isn't kept, and lowers
+      the owner's count. It ignores reports that still carry the old
+      number.
   - `gmOnline_XnLeave(port)` gains this case for a port in our
     `local_mask` other than the primary one. Today that call is a no-op for
     our own extra port, so the seat could never leave.
-- **LAN host** (xeleenet_lan.c): `taken()` counts ports; the join seating
-  skips ports held as extra seats; `LMember` gains a port mask.
-- **Go service** (tools/xeleenet):
-  - `Member` gains `Extra []int`, the extra ports the host has given that
-    member.
-  - `taken()` counts them, so the listing shows 4/4 and joins are refused.
-  - `seat()` skips them.
-  - The host's heartbeat roster carries each member's extra ports, since the
-    host is the authority and the service only mirrors it.
-  - A test is added to test_service.py.
+- **Both lobby services** learn the extra ports from the host's roster:
+  `pc_xn_set_roster(keys, n, extra)`, where `extra` is a port mask.
+  - **LAN host** (xeleenet_lan.c): the announcement's "taken" and the full
+    check count the extra ports, and join seating skips them.
+  - **Go service** (tools/xeleenet):
+    - The lobby gains `Extra []int`, taken from the heartbeat's `extra`
+      list.
+    - `taken()` counts them, so the listing shows 4/4 and joins are refused.
+    - `seat()` skips them.
+    - The host is the authority, and the service only mirrors it, so the
+      service doesn't need to know which member owns which extra port.
+  - If a joiner ever lands on a port that holds an extra seat (a race with
+    the heartbeat), the joiner wins. The extra seat moves to another free
+    port, or waits for one.
 - **Names:** `pc_xn_css_names` gives an extra port its owner's name plus the
   seat's number (RHYTHM 2), and marks every local port as ours.
 
@@ -170,14 +186,17 @@ single globals (`mnStageSel_804D6CAE` and friends).
     seat's physical controller (`local_phys`).
   - The game's cursor stays the primary seat's, so 1-seat machines are
     unchanged.
-  - Only seats that pick in the lobby's mode get a cursor.
+  - Every seat gets a cursor: in XeleeNet's stage select every port picks
+    (loser-picks isn't wired into it yet).
 - **Picks per seat.**
   - `NET_MSG_STAGE_PICK` already carries `[pick, port]`; each seat sends its
     own.
   - A and B act on that seat's pick only.
   - The remote-pick filter `buf[1] != local` becomes "not in `local_mask`".
-- **The hovered-stage name and preview** (bottom left) follow the cursor that
-  moved last.
+- **The hovered-stage name and preview** (bottom left) follow the primary
+  seat's cursor, which is the game's own. Making them follow the cursor that
+  moved last would mean writing the game's hovered cell from other cursors,
+  and the primary seat's A reads that cell. Left for later.
 - **"All picked"** already counts `pc_net_port_mask()`, so it waits for every
   seat.
 - **Pick rules.** Loser-picks and losing-team-picks work unchanged, since the
