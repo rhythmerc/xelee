@@ -290,6 +290,14 @@ void pc_log_line(const char* fmt, ...) {
     }
 }
 
+void pc_log_report(const char* text) {
+    FILE* lf = log_file();
+    if (lf != NULL) {
+        fputs(text, lf);
+        fflush(lf);
+    }
+}
+
 static void log_callback(
     AuroraLogLevel level, const char* module, const char* message, unsigned int len) {
 #if defined(__APPLE__)

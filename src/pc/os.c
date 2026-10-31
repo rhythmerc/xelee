@@ -460,6 +460,7 @@ void OSVReport(const char* msg, va_list list) {
         vsnprintf(buf, sizeof buf, msg, copy);
         va_end(copy);
         pc_script_log_seen(buf);
+        pc_log_report(buf);
     }
 #if defined(__ANDROID__)
     __android_log_vprint(ANDROID_LOG_INFO, "OSReport", msg, list);

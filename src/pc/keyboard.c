@@ -31,9 +31,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dolphin/pad.h>
-#ifndef _WIN32
 #include <errno.h>
 #include <fcntl.h>
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
 #endif
 
@@ -415,11 +417,21 @@ static void script_tick_locked(void) {
     }
 }
 
-#ifndef _WIN32
 /* The FIFO's lines, read with read() rather than stdio: this thread waits in
  * the read for good (the FIFO never reads as EOF, below), and inside fgets it
  * would hold the FILE's lock there, which exit() takes to flush every stream
- * -- the game hung at exit until the harness killed it. */
+ * -- the game hung at exit until the harness killed it. Windows meets a FIFO
+ * only under Wine (the test harness), through the CRT's own calls. */
+#ifdef _WIN32
+#define fifo_open_rw(path) _open((path), _O_RDWR | _O_BINARY)
+#define fifo_read(fd, p, n) _read((fd), (p), (unsigned)(n))
+#define fifo_close _close
+#else
+#define fifo_open_rw(path) open((path), O_RDWR)
+#define fifo_read read
+#define fifo_close close
+#endif
+
 typedef struct LineIn {
     int fd;
     size_t n;
@@ -438,7 +450,7 @@ static bool line_next(LineIn* in, char* out, int size) {
             memmove(in->buf, in->buf + len, in->n);
             return true;
         }
-        ssize_t r = read(in->fd, in->buf + in->n, sizeof in->buf - in->n);
+        long r = (long)fifo_read(in->fd, in->buf + in->n, sizeof in->buf - in->n);
         if (r > 0) {
             in->n += (size_t)r;
         } else if (r < 0 && errno == EINTR) {
@@ -448,7 +460,6 @@ static bool line_next(LineIn* in, char* out, int size) {
         }
     }
 }
-#endif
 
 static int fifo_thread(void* arg) {
     const int pad = (int)(intptr_t)arg;
@@ -456,27 +467,19 @@ static int fifo_thread(void* arg) {
     bool* held = pad == 0 ? s_fifo_key : s_pfifo_key[pad];
     char line[128];
     for (;;) {
-#ifndef _WIN32
         /* Read-write: this end then counts as a writer too, so the FIFO
          * never reads as EOF and is never reopened. Read-only, a writer
          * that opened it between EOF and the reopen had its line dropped
          * with the closing pipe -- harness threads writing one FIFO (a
          * match's workout and the main thread's waits) lost a mark that
-         * way, and the step waited out its 120 s. */
-        LineIn in = { .fd = open(path, O_RDWR) };
+         * way, and the step waited out its 120 s. The Windows build under
+         * Wine lost them the same way. */
+        LineIn in = { .fd = fifo_open_rw(path) };
         if (in.fd < 0) {
             SDL_Delay(200);
             continue;
         }
         while (line_next(&in, line, sizeof line)) {
-#else
-        FILE* f = fopen(path, "r"); /* blocks until a writer opens */
-        if (f == NULL) {
-            SDL_Delay(200);
-            continue;
-        }
-        while (fgets(line, sizeof line, f) != NULL) {
-#endif
             ScCmd cmd;
             if (script_parse(line, &cmd)) {
                 /* A frame command: into its queue, for the frame boundaries. */
@@ -527,11 +530,7 @@ static int fifo_thread(void* arg) {
             SDL_UnlockMutex(s_key_mutex);
             SDL_Delay(100);
         }
-#ifndef _WIN32
-        close(in.fd);
-#else
-        fclose(f);
-#endif
+        fifo_close(in.fd);
     }
     return 0;
 }

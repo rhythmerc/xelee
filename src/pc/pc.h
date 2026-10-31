@@ -38,6 +38,10 @@ void pc_os_yield(void);
  * interleave with aurora's own records and can be attributed to whatever
  * the engine reported around them. */
 void pc_log_line(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+/* `text` as it is, into the log file only (OSReport's lines: they went to
+ * stdout alone, which a Windows build has none of, so its melee-pc.log, and
+ * every platform's Send logs, had none of them). */
+void pc_log_report(const char* text);
 /* The file this process logs to, or NULL when MELEE_LOG_FILE is empty; and
  * the folder that keeps the last sessions' timestamped logs (Android, Linux,
  * macOS; NULL on Windows, which keeps melee-pc.log and melee-pc.1.log in the
