@@ -85,13 +85,21 @@ static bool xn_join_css;
 /* The reloaded CSS's first frame re-seeds (gmOnline_XnCssFrame). */
 static bool xn_reseed;
 /* The picks a roster reload keeps (gmOnline_XnKeepPicks): the host's, which
- * it sends to everyone. */
+ * it sends to everyone, with each door's team. */
 #define NET_MSG_XN_PICKS 0x21
-static u8 xn_pick_ckind[4], xn_pick_color[4], xn_pick_mask;
+#define XN_PICKS_LEN 13 /* the mask, then a character and costume a port, then a team a port */
+static u8 xn_pick_ckind[4], xn_pick_color[4], xn_pick_team[4], xn_pick_mask;
+static bool xn_pick_teams; /* xn_pick_team holds the doors' teams */
+/* The Lobby Settings' Apply with the host alone: its CSS reloads on its next
+ * frame (gmOnline_XnCssFrame). */
+static bool xn_apply_reload;
 static void xnPicksTake(void);
+static void xnRulesInForce(PcXnRules* r);
 static uint32_t xn_seed; /* the running session's (xnAgreeFrame, below) */
-/* The player set the doors' teams were last dealt for (XeleeNet). */
+/* The player set the doors' teams were last dealt for (XeleeNet), and
+ * whether Teams was on then. */
 static int xn_team_ports;
+static bool xn_team_on;
 static void routeAfterFailure(void);
 #endif
 static bool awaiting_rank_result;
@@ -469,21 +477,40 @@ void onEnterCss(GameModeState* state)
              * puts back. */
             xn_reseed = pc_net_active();
         }
+        const bool teams = pc_net_rules_teams(); /* the host's H1, via RULES */
+        /* A new player set deals the teams: red, blue, red, blue by port, so
+         * three play 2v1 and four 2v2 without touching it (all red, Melee's
+         * default, can't start). So does Teams coming on. From the port mask
+         * and the rules alone, so every peer deals the same, the newcomer
+         * included; teams set in the CSS last until then, through a reload
+         * the picks' message carries them through (xnPicksTake). */
+        const bool deal = ports != xn_team_ports || (teams && !xn_team_on);
         for (int i = 0; i < GM_MAX_PLAYERS; ++i) {
             PlayerInitData* p = &online_vs.start.players[i];
             bool in = i < 4 && (ports & (1 << i));
-            if (ports != xn_team_ports) {
-                /* A new player set deals the teams: red, blue, red, blue by
-                 * port, so three play 2v1 and four 2v2 without touching it
-                 * (all red, Melee's default, can't start). From the port
-                 * mask alone, so every peer deals the same, the newcomer
-                 * included; picks made in the CSS last until the next set. */
+            if (deal) {
                 p->team = i % 2;
+            } else if (i < 4 && xn_pick_teams) {
+                p->team = xn_pick_team[i];
             }
             p->slot_type = in ? Gm_PKind_Human : Gm_PKind_NA;
         }
+        if (deal && xn_team_ports != 0) {
+            pc_log_line("online: XeleeNet teams dealt for %02x%s", ports, teams ? " (Teams on)" : "");
+        } else if (teams) {
+            pc_log_line("online: XeleeNet teams kept %d%d%d%d", online_vs.start.players[0].team,
+                        online_vs.start.players[1].team, online_vs.start.players[2].team,
+                        online_vs.start.players[3].team);
+        }
         xn_team_ports = ports;
-        online_vs.start.rules.is_teams = pc_net_rules_teams(); /* the host's H1, via RULES */
+        xn_team_on = teams;
+        xn_pick_teams = false;
+        online_vs.start.rules.is_teams = teams;
+        {
+            PcXnRules r;
+            xnRulesInForce(&r);
+            pc_xn_css_rules(&r); /* the banner, Lobby Settings, "Host changed" */
+        }
         pc_xn_banner_show(true); /* C1: the lobby's name, rules and code */
     }
 #endif
@@ -530,6 +557,9 @@ void onExitCss(GameModeState* state)
     }
     if (online_kind == ONLINE_KIND_XN) {
         pc_xn_banner_show(false);
+        if (!xn_reload) {
+            pc_xn_settings_cancel(); /* Lobby Settings ends with the CSS; a reload keeps it */
+        }
     }
     if (online_kind == ONLINE_KIND_XN && xn_reload) {
         gm_SetNextGameModeStateId(state_css); /* the roster changed: the CSS again */
@@ -1626,6 +1656,35 @@ static void xnApplyRules(bool now)
     if (now) {
         pc_net_rules_take_wanted();
     }
+}
+
+/* The rules in force, as Host gives them (PcXnRules): the banner's rules
+ * line and a guest's Lobby Settings read them (pc_xn_css_rules). The host
+ * alone has no session: its own. */
+static void xnRulesInForce(PcXnRules* r)
+{
+    const GameRules* g = gmMainLib_GetGameRules();
+    const struct GamePrefs* p = gmMainLib_GetGamePrefs();
+    bool unlock = true, frozen = true;
+    if (!pc_net_active()) {
+        pc_xn_menu_rules(r);
+        return;
+    }
+    memset(r, 0, sizeof *r);
+    r->seats = pc_net_rules_seats() >= 2 ? pc_net_rules_seats() : 4;
+    r->teams = pc_net_rules_teams();
+    r->stock = g->mode == 1;
+    r->stocks = g->stock_count;
+    r->minutes = g->time_limit;
+    r->items = p->item_freq == 0xFF ? -1 : p->item_freq;
+    r->friendly_fire = g->friendly_fire != 0;
+    r->handicap = g->handicap;
+    r->damage_ratio = g->damage_ratio;
+    r->pause = g->pause != 0;
+    r->stage_mask = p->stage_mask;
+    r->fighter_mask = pc_net_fighters();
+    pc_net_rules(&unlock, &frozen);
+    r->frozen_stadium = frozen;
 }
 
 /* The handshake of the session now running, once per session (each roster

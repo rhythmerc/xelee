@@ -23,6 +23,7 @@
 #include <SDL3/SDL_timer.h>
 #include <aurora/rmlui.hpp>
 #include <dolphin/gx/GXAurora.h>
+#include <dolphin/pad.h>
 #include <dolphin/vi.h>
 #ifdef AURORA_ENABLE_OPENXR
 #include <aurora/xr.h>
@@ -42,6 +43,7 @@
 #include <vector>
 
 extern "C" void lbAudioAx_80024030(int);
+extern "C" void gmOnline_XnApplySettings(void);
 
 namespace {
 
@@ -49,6 +51,8 @@ enum { SFX_BACK = 0, SFX_CONFIRM = 1, SFX_MOVE = 2 };
 
 // The layout, in px, scaled to fit the frame's inside, as the Slippi pages'.
 constexpr float kScreenW = 1120.f, kScreenH = 660.f;
+// The Lobby Settings overlay's, scaled to fit the window over the CSS.
+constexpr float kOverlayW = 1120.f, kOverlayH = 740.f;
 
 const char* const kLeft = "\xe2\x80\xb9"; // the value arrows
 const char* const kRight = "\xe2\x80\xba";
@@ -184,6 +188,9 @@ struct HostSettings {
 };
 HostSettings s_host;
 bool s_host_loaded;
+// What the pages change: the host's own settings, or the Lobby Settings
+// overlay's draft of them while it's open.
+HostSettings* s_edit = &s_host;
 
 void host_save() {
     char path[1024];
@@ -199,15 +206,12 @@ void host_save() {
     std::fclose(f);
 }
 
-void host_load() {
-    if (s_host_loaded)
-        return;
-    s_host_loaded = true;
-    char path[1024], line[96];
-    FILE* f = pc_xn_profile_file("xeleenet-lobby.txt", path, sizeof path) ? std::fopen(path, "r") : nullptr;
+// A settings file (xeleenet-lobby.txt's lines) into h; false when it can't be read.
+bool host_read(const char* path, HostSettings& h) {
+    char line[96];
+    FILE* f = std::fopen(path, "r");
     if (f == nullptr)
-        return;
-    HostSettings& h = s_host;
+        return false;
     while (std::fgets(line, sizeof line, f) != nullptr) {
         line[std::strcspn(line, "\r\n")] = '\0';
         char* eq = std::strchr(line, '=');
@@ -256,6 +260,16 @@ void host_load() {
         h.stages = kCompetitive;
     if (h.fighters == 0)
         h.fighters = XN_FIGHTERS_ALL;
+    return true;
+}
+
+void host_load() {
+    if (s_host_loaded)
+        return;
+    s_host_loaded = true;
+    char path[1024];
+    if (pc_xn_profile_file("xeleenet-lobby.txt", path, sizeof path))
+        host_read(path, s_host);
 }
 
 void preset(int p) {
@@ -335,6 +349,77 @@ std::string settings_json() {
     return b;
 }
 
+// ---- the Lobby Settings' Apply (docs/xeleenet-settings-overlay-plan.md) ---------------
+
+// Whether two settings play the same: everything but the name, the
+// visibility and the code's hiding, which only the listing shows.
+bool plays_same(const HostSettings& a, const HostSettings& b) {
+    return a.seats == b.seats && a.teams == b.teams && a.stock == b.stock && a.stocks == b.stocks &&
+           a.minutes == b.minutes && a.items == b.items && (a.teams && a.friendly_fire) == (b.teams && b.friendly_fire) &&
+           a.handicap == b.handicap && a.damage == b.damage && a.pause == b.pause && a.stages == b.stages &&
+           a.fighters == b.fighters && a.frozen == b.frozen;
+}
+
+bool lan();
+
+// The seats before the last Apply, should the service refuse the new ones.
+int s_seats_before = 0;
+// When the last Apply that changed play went out (the "Applying" notice).
+uint64_t s_applying_at = 0;
+
+// The host's settings become `next`. The listing hears at once; a change to
+// play goes to every player's CSS on one frame (gmOnline_XnApplySettings).
+void apply_host(const HostSettings& next) {
+    const HostSettings was = s_host;
+    const bool play = !plays_same(was, next);
+    s_host = next;
+    if (play)
+        s_host.preset = kCustom; // the preset's rules no longer stand as they were
+    host_save();
+    s_seats_before = was.seats;
+    pc_xn_update_settings(lobby_name().c_str(), s_host.open || lan(), settings_json().c_str());
+    pc_log_line("xeleenet: settings applied%s %s", play ? "" : " (the listing only)", settings_json().c_str());
+    if (play) {
+        s_applying_at = SDL_GetTicks();
+        gmOnline_XnApplySettings();
+    }
+}
+
+// MELEE_XN_TEST_APPLY=<frames>:<file> (tools/net_test_xn_menu.py): once the
+// file is there, the host applies the settings in it (xeleenet-lobby.txt's
+// lines) that many CSS frames later, with no overlay. Once.
+void test_apply_frame() {
+    static int state = -1, wait = 0;
+    static std::string file;
+    if (state < 0) {
+        const char* v = std::getenv("MELEE_XN_TEST_APPLY");
+        const char* colon = v != nullptr ? std::strchr(v, ':') : nullptr;
+        state = colon != nullptr ? 0 : 3;
+        if (colon != nullptr) {
+            wait = std::atoi(v);
+            file = colon + 1;
+        }
+    }
+    if (state == 0 || state == 1) {
+        if (pc_net_active() && pc_net_local_player() != 0)
+            return; // a guest's game: the host applies
+        if (state == 0) {
+            FILE* f = std::fopen(file.c_str(), "r");
+            if (f == nullptr)
+                return;
+            std::fclose(f);
+            state = 1;
+            pc_log_line("xeleenet: test apply in %d frames (%s)", wait, file.c_str());
+        }
+        if (--wait > 0)
+            return;
+        HostSettings next = s_host;
+        if (host_read(file.c_str(), next))
+            apply_host(next);
+        state = 2;
+    }
+}
+
 // ---- sample data for MELEE_XN_PREVIEW -----------------------------------------------
 
 PcXnListing sample(const char* code, const char* name, const char* host, const char* tag, const char* country,
@@ -371,7 +456,8 @@ void view(PcXnPunchView* v) {
     }
     std::memset(v, 0, sizeof *v);
     v->phase = PC_XN_PUNCH_LOBBY;
-    v->host = s_preview == "banner" || s_preview == "lan-banner" || s_preview.rfind("css-", 0) == 0;
+    v->host = (s_preview == "banner" || s_preview == "lan-banner" || s_preview.rfind("css-", 0) == 0) &&
+              s_preview != "css-editing" && s_preview != "css-settings-guest";
     std::snprintf(v->code, sizeof v->code, "K7MQ2D");
     const char* names[3] = {"PIXEL#3MPA", "KOOPA#Z2RW", "RHYTHM#K7Q2"};
     const char* full_names[4] = {"RHYTHM#K7Q2", "WAVEDASH KID#3MPA", "PIXEL#Z2RW", "KOOPA#8HJD"};
@@ -471,6 +557,9 @@ std::string legend_key(const std::string& button, const char* label) {
     return "<div class=\"lg\"><div class=\"gl " + button + "\">" + face + "</div>" + enc(tr(label)) + "</div>";
 }
 
+void settings_done(bool apply); // the Lobby Settings overlay closes (below)
+void s_draft_set(bool host);     // and its draft (below)
+
 struct Screen : Rml::EventListener {
     Rml::ElementDocument* document = nullptr;
     bool shown = false;
@@ -508,6 +597,13 @@ struct Screen : Rml::EventListener {
     std::string lastLegend;
     int scrollTop = 0; // B1's first row in view
 
+    // The Lobby Settings overlay over the CSS (docs/xeleenet-settings-overlay-
+    // plan.md, C2): these pages again, in a document of their own, on the
+    // draft (s_edit); a guest's read-only, built from the rules in force.
+    bool overlay = false;
+    bool readOnly = false;
+    std::string lastHint;
+
     bool load() {
         if (document != nullptr)
             return true;
@@ -515,9 +611,10 @@ struct Screen : Rml::EventListener {
         if (context == nullptr)
             return false;
         load_fonts();
-        document = context->LoadDocument(std::string(pc_resources_dir()) + "xeleenet.rml");
+        const char* rml = overlay ? "xeleenet-settings.rml" : "xeleenet.rml";
+        document = context->LoadDocument(std::string(pc_resources_dir()) + rml);
         if (document == nullptr) {
-            pc_log_line("xeleenet pages: could not load xeleenet.rml");
+            pc_log_line("xeleenet pages: could not load %s", rml);
             return false;
         }
         document->AddEventListener(Rml::EventId::Click, this);
@@ -536,36 +633,54 @@ struct Screen : Rml::EventListener {
 
     // ---- H1 and its pages ----------------------------------------------------
 
-    // name, hint and note are keys.
+    // A changed row's old value, in the overlay: "was 4".
+    static std::string was_tag(const std::string& was) {
+        return was.empty() ? std::string()
+                           : "<span class=\"was\">" + enc(tr("xeleenet.settings.was", {{"value", was}})) + "</span>";
+    }
+
+    // name, hint and note are keys. `was`: the overlay's old value, when it
+    // changed; `limit`: the value can't go lower (dimmed in place). Read-only
+    // rows show their value with no arrows and take no cursor.
     void choice(std::string& r, const std::string& id, int col, int row, const char* name, const std::string& value,
-                std::function<void(int)> change, const char* hint, bool enabled = true, const char* note = nullptr) {
-        r += "<div id=\"" + id + "\" class=\"xrow" + (enabled ? "" : " off") + "\"><div class=\"n\">" + enc(tr(name)) +
+                std::function<void(int)> change, const char* hint, bool enabled = true, const char* note = nullptr,
+                const std::string& was = std::string(), bool limit = false) {
+        const bool ro = readOnly && enabled;
+        r += "<div id=\"" + id + "\" class=\"xrow" + (enabled ? "" : " off") + (ro ? " ro" : "") +
+             "\"><div class=\"n\">" + enc(tr(name)) +
              (note != nullptr ? "<span class=\"note\">" + enc(tr(note)) + "</span>" : std::string()) + "</div>";
-        r += "<div class=\"v\"><span class=\"arr\">" + std::string(kLeft) + "</span>" + enc(value) +
-             "<span class=\"arr\">" + kRight + "</span></div></div>";
-        Item it{id, col, row, enabled};
+        r += "<div class=\"v\">" + was_tag(was) + "<span class=\"arr" + (limit ? " lim" : "") + "\">" +
+             std::string(kLeft) + "</span><span class=\"val" + (limit ? " lim" : "") + "\">" + enc(value) +
+             "</span><span class=\"arr\">" + kRight + "</span></div></div>";
+        Item it{id, col, row, enabled && !ro};
         it.change = std::move(change);
         it.hint = tr(hint);
         items.push_back(std::move(it));
     }
 
     void link(std::string& r, const std::string& id, int col, int row, const char* name, const std::string& value,
-              std::function<void()> act, const char* hint) {
+              std::function<void()> act, const char* hint, const std::string& was = std::string()) {
         r += "<div id=\"" + id + "\" class=\"xrow link\"><div class=\"n\">" + enc(tr(name)) + "</div><div class=\"v\">" +
-             enc(value) + "<span class=\"go\">" + kRight + "</span></div></div>";
+             was_tag(was) + enc(value) + "<span class=\"go\">" + kRight + "</span></div></div>";
         Item it{id, col, row, true};
         it.act = std::move(act);
         it.hint = tr(hint);
         items.push_back(std::move(it));
     }
 
+    void build_overlay_host(); // after the banner's state, which it reads
+
     static void group(std::string& r, const char* name) {
         r += "<div class=\"grp\"><span>" + enc(tr(name)) + "</span></div>";
     }
 
     void build_host() {
-        HostSettings& h = s_host;
-        auto custom = [] { s_host.preset = kCustom; };
+        if (overlay) {
+            build_overlay_host();
+            return;
+        }
+        HostSettings& h = *s_edit;
+        auto custom = [] { s_edit->preset = kCustom; };
         std::string r;
         r += "<div id=\"preset\" class=\"pbar\"><div class=\"k\">" + enc(tr("xeleenet.host.preset")) +
              "</div><div class=\"pv\"><span class=\"arr\">" + kLeft + "</span>" + enc(tr(kPresetNames[h.preset])) +
@@ -575,7 +690,7 @@ struct Screen : Rml::EventListener {
         r += "</div></div>";
         {
             Item it{"preset", 0, 0, true};
-            it.change = [](int d) { preset((s_host.preset + d + kPresetCount) % kPresetCount); };
+            it.change = [](int d) { preset((s_edit->preset + d + kPresetCount) % kPresetCount); };
             it.hint = tr("xeleenet.host.hints.preset");
             items.push_back(std::move(it));
         }
@@ -587,7 +702,7 @@ struct Screen : Rml::EventListener {
         {
             Item it{"lname", 0, 1, true};
             it.act = [] {
-                ask_keyboard(Typing::Lobby, s_host.name.empty() ? lobby_name() : s_host.name,
+                ask_keyboard(Typing::Lobby, s_edit->name.empty() ? lobby_name() : s_edit->name,
                              tr("xeleenet.host.ask_name"), 20);
             };
             it.hint = tr("xeleenet.host.hints.name");
@@ -596,29 +711,29 @@ struct Screen : Rml::EventListener {
         if (!lan()) // every LAN lobby is listed
             choice(r, "vis", 0, 2, "xeleenet.host.rows.visibility",
                    tr(h.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private"),
-                   [](int) { s_host.open = !s_host.open; }, "xeleenet.host.hints.visibility");
+                   [](int) { s_edit->open = !s_edit->open; }, "xeleenet.host.hints.visibility");
         choice(r, "seats", 0, 3, "xeleenet.host.rows.seats", std::to_string(h.seats),
-               [custom](int d) { s_host.seats = 2 + (s_host.seats - 2 + d + 3) % 3, custom(); },
+               [custom](int d) { s_edit->seats = 2 + (s_edit->seats - 2 + d + 3) % 3, custom(); },
                "xeleenet.host.hints.seats");
         group(r, "xeleenet.host.groups.rules");
         choice(r, "teams", 0, 4, "xeleenet.host.rows.teams", on_off(h.teams),
-               [custom](int) { s_host.teams = !s_host.teams, custom(); }, "xeleenet.host.hints.teams");
+               [custom](int) { s_edit->teams = !s_edit->teams, custom(); }, "xeleenet.host.hints.teams");
         if (h.stock)
             choice(r, "stocks", 0, 5, "xeleenet.host.rows.stocks", std::to_string(h.stocks),
-                   [custom](int d) { s_host.stocks = step(kStocks, s_host.stocks, d), custom(); },
+                   [custom](int d) { s_edit->stocks = step(kStocks, s_edit->stocks, d), custom(); },
                    "xeleenet.host.hints.stocks");
         else
             choice(r, "stocks", 0, 5, "xeleenet.host.rows.win_by", tr("xeleenet.host.values.time"),
-                   [custom](int) { s_host.stock = true, custom(); }, "xeleenet.host.hints.win_by");
+                   [custom](int) { s_edit->stock = true, custom(); }, "xeleenet.host.hints.win_by");
         choice(r, "time", 0, 6, "xeleenet.host.rows.time", minutes_label(h.minutes),
-               [custom](int d) { s_host.minutes = step(kMinutes, s_host.minutes, d), custom(); },
+               [custom](int d) { s_edit->minutes = step(kMinutes, s_edit->minutes, d), custom(); },
                "xeleenet.host.hints.time");
         choice(r, "items", 0, 7, "xeleenet.host.rows.items", tr(kItemNames[h.items + 1]),
-               [custom](int d) { s_host.items = (s_host.items + 1 + d + 6) % 6 - 1, custom(); },
+               [custom](int d) { s_edit->items = (s_edit->items + 1 + d + 6) % 6 - 1, custom(); },
                "xeleenet.host.hints.items");
         if (h.teams)
             choice(r, "ff", 0, 8, "xeleenet.host.rows.ff", on_off(h.friendly_fire),
-                   [custom](int) { s_host.friendly_fire = !s_host.friendly_fire, custom(); },
+                   [custom](int) { s_edit->friendly_fire = !s_edit->friendly_fire, custom(); },
                    "xeleenet.host.hints.ff");
         link(r, "more", 0, 9, "xeleenet.host.rows.more", tr("xeleenet.host.values.more"), [this] { go(Page::More); },
              "xeleenet.host.hints.more");
@@ -631,7 +746,7 @@ struct Screen : Rml::EventListener {
         choice(r, "pick", 1, 3, "xeleenet.host.rows.stage_pick", tr("xeleenet.host.values.stage_pick"), [](int) {},
                "xeleenet.host.hints.stage_pick", false, "xeleenet.host.soon");
         choice(r, "frozen", 1, 4, "xeleenet.host.rows.frozen", on_off(h.frozen),
-               [custom](int) { s_host.frozen = !s_host.frozen, custom(); }, "xeleenet.host.hints.frozen");
+               [custom](int) { s_edit->frozen = !s_edit->frozen, custom(); }, "xeleenet.host.hints.frozen");
         choice(r, "place", 1, 5, "xeleenet.host.rows.placement", tr("xeleenet.host.values.placement"), [](int) {},
                "xeleenet.host.hints.placement", false, "xeleenet.host.soon");
         group(r, "xeleenet.host.groups.set");
@@ -642,7 +757,7 @@ struct Screen : Rml::EventListener {
                "xeleenet.host.soon");
         if (!lan()) // no codes on LAN
             choice(r, "hide", 1, 8, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
-                   [](int) { s_host.hide_code = !s_host.hide_code; }, "xeleenet.host.hints.hide_code");
+                   [](int) { s_edit->hide_code = !s_edit->hide_code; }, "xeleenet.host.hints.hide_code");
         r += "<button id=\"open\" class=\"gold\">" + enc(tr("xeleenet.host.open")) + "</button></div>";
         {
             Item it{"open", 1, 9, true};
@@ -654,22 +769,22 @@ struct Screen : Rml::EventListener {
     }
 
     void build_more() {
-        HostSettings& h = s_host;
-        auto custom = [] { s_host.preset = kCustom; };
+        HostSettings& h = *s_edit;
+        auto custom = [] { s_edit->preset = kCustom; };
         std::string r = "<div class=\"col single\">";
         group(r, "xeleenet.rules.group");
         choice(r, "win", 0, 0, "xeleenet.rules.rows.win_by",
                tr(h.stock ? "xeleenet.rules.values.stock" : "xeleenet.rules.values.time"),
-               [custom](int) { s_host.stock = !s_host.stock, custom(); }, "xeleenet.rules.hints.win_by");
+               [custom](int) { s_edit->stock = !s_edit->stock, custom(); }, "xeleenet.rules.hints.win_by");
         choice(r, "pause", 0, 1, "xeleenet.rules.rows.pause", on_off(h.pause),
-               [custom](int) { s_host.pause = !s_host.pause, custom(); }, "xeleenet.rules.hints.pause");
+               [custom](int) { s_edit->pause = !s_edit->pause, custom(); }, "xeleenet.rules.hints.pause");
         choice(r, "handicap", 0, 2, "xeleenet.rules.rows.handicap", tr(kHandicapNames[h.handicap]),
-               [custom](int d) { s_host.handicap = (s_host.handicap + d + 3) % 3, custom(); },
+               [custom](int d) { s_edit->handicap = (s_edit->handicap + d + 3) % 3, custom(); },
                "xeleenet.rules.hints.handicap");
         char dmg[16];
         std::snprintf(dmg, sizeof dmg, "%.1f", h.damage / 10.f);
         choice(r, "damage", 0, 3, "xeleenet.rules.rows.damage", tr("xeleenet.rules.values.damage", {{"n", dmg}}),
-               [custom](int d) { s_host.damage = 5 + (s_host.damage - 5 + d + 16) % 16, custom(); },
+               [custom](int d) { s_edit->damage = 5 + (s_edit->damage - 5 + d + 16) % 16, custom(); },
                "xeleenet.rules.hints.damage");
         r += "<button id=\"done\" class=\"gold\">" + enc(tr("xeleenet.rules.done")) + "</button></div>";
         Item it{"done", 0, 4, true};
@@ -680,7 +795,7 @@ struct Screen : Rml::EventListener {
     }
 
     void build_stages() {
-        const unsigned m = s_host.stages;
+        const unsigned m = s_edit->stages;
         std::string r = "<div class=\"chips\">";
         const char* chips[3] = {"xeleenet.stages.chips.competitive", "xeleenet.stages.chips.all",
                                 "xeleenet.stages.chips.custom"};
@@ -689,10 +804,10 @@ struct Screen : Rml::EventListener {
             const std::string id = "chip" + std::to_string(i);
             r += "<div id=\"" + id + "\" class=\"chipx" + (on[i] ? " on" : "") + (i == 2 ? " dash" : "") + "\">" +
                  enc(tr(chips[i])) + "</div>";
-            Item it{id, i, 0, i < 2};
+            Item it{id, i, 0, i < 2 && !readOnly};
             it.act = [i] {
-                s_host.stages = i == 0 ? kCompetitive : kAllStages;
-                s_host.preset = kCustom;
+                s_edit->stages = i == 0 ? kCompetitive : kAllStages;
+                s_edit->preset = kCustom;
             };
             it.hint = tr("xeleenet.stages.hint");
             items.push_back(std::move(it));
@@ -705,12 +820,12 @@ struct Screen : Rml::EventListener {
             const std::string id = "st" + std::to_string(i);
             r += "<div id=\"" + id + "\" class=\"tile" + ((m >> s.bit) & 1 ? " on" : "") + "\">" + enc(tr(s.name)) +
                  "</div>";
-            Item it{id, i % kGridAcross, 1 + i / kGridAcross, true};
+            Item it{id, i % kGridAcross, 1 + i / kGridAcross, !readOnly};
             it.act = [b = s.bit] {
-                const unsigned want = s_host.stages ^ (1u << b);
+                const unsigned want = s_edit->stages ^ (1u << b);
                 if (want != 0) // one stage at least stays on
-                    s_host.stages = want;
-                s_host.preset = kCustom;
+                    s_edit->stages = want;
+                s_edit->preset = kCustom;
             };
             it.hint = tr("xeleenet.stages.hint");
             items.push_back(std::move(it));
@@ -723,7 +838,7 @@ struct Screen : Rml::EventListener {
     // the CSS's own rows of 9, 9 and 7. A turns one on or off (one at least
     // stays on), Y keeps only it, X steps through the presets.
     void build_fighters() {
-        const unsigned m = s_host.fighters;
+        const unsigned m = s_edit->fighters;
         std::string r = "<div class=\"chips\">";
         const char* chips[4] = {"xeleenet.fighters.chips.all", "xeleenet.fighters.chips.high",
                                 "xeleenet.fighters.chips.low", "xeleenet.fighters.chips.custom"};
@@ -733,11 +848,11 @@ struct Screen : Rml::EventListener {
             const std::string id = "chip" + std::to_string(i);
             r += "<div id=\"" + id + "\" class=\"chipx" + (on[i] ? " on" : "") + (i == 3 ? " dash" : "") + "\">" +
                  enc(tr(chips[i])) + "</div>";
-            Item it{id, i, 0, i < 3};
+            Item it{id, i, 0, i < 3 && !readOnly};
             if (i < 3)
                 it.act = [set = sets[i]] {
-                    s_host.fighters = set;
-                    s_host.preset = kCustom;
+                    s_edit->fighters = set;
+                    s_edit->preset = kCustom;
                 };
             it.hint = tr("xeleenet.fighters.hint");
             items.push_back(std::move(it));
@@ -752,13 +867,13 @@ struct Screen : Rml::EventListener {
             const unsigned bit = 1u << xn_fighter_order[i];
             const std::string id = "fi" + std::to_string(i);
             r += "<div id=\"" + id + "\" class=\"ftile" + (m & bit ? " on" : "") + "\">" + enc(fighter_name(i)) +
-                 "</div>";
-            Item it{id, col, 1 + row, true};
+                 (overlay ? held_chips(xn_fighter_order[i]) : std::string()) + "</div>";
+            Item it{id, col, 1 + row, !readOnly};
             it.act = [bit] {
-                const unsigned want = xn_fighters_normal(s_host.fighters ^ bit);
+                const unsigned want = xn_fighters_normal(s_edit->fighters ^ bit);
                 if (want != 0) // one fighter at least stays on
-                    s_host.fighters = want;
-                s_host.preset = kCustom;
+                    s_edit->fighters = want;
+                s_edit->preset = kCustom;
             };
             it.hint = tr(xn_fighter_order[i] == XN_FIGHTER_ZELDA ? "xeleenet.fighters.hint_zelda"
                          : xn_fighter_order[i] == 0x0E           ? "xeleenet.fighters.hint_ics"
@@ -767,16 +882,23 @@ struct Screen : Rml::EventListener {
             items.push_back(std::move(it));
         }
         r += "</div></div>";
+        if (overlay)
+            r += "<div id=\"fheld\">" + enc(held_off_note()) + "</div>";
         set_board(r);
     }
 
+    // C2b: a chip in the player's colour on each fighter someone holds, and
+    // the line under the grid for a held one that's off the draft's list.
+    std::string held_chips(int ckind) const;
+    std::string held_off_note() const;
+
     // Y on the fighter page: only the highlighted fighter.
     bool fighters_only_this() {
-        if (page != Page::Fighters || items.empty() || items[cursor].id.rfind("fi", 0) != 0)
+        if (readOnly || page != Page::Fighters || items.empty() || items[cursor].id.rfind("fi", 0) != 0)
             return false;
         const int entry = std::atoi(items[cursor].id.c_str() + 2);
-        s_host.fighters = xn_fighters_normal(1u << xn_fighter_order[entry]);
-        s_host.preset = kCustom;
+        s_edit->fighters = xn_fighters_normal(1u << xn_fighter_order[entry]);
+        s_edit->preset = kCustom;
         return true;
     }
 
@@ -1221,6 +1343,8 @@ struct Screen : Rml::EventListener {
         const Item* at = items.empty() ? nullptr : &items[cursor];
         const std::string id = at != nullptr ? at->id : "";
         std::string r;
+        if (overlay)
+            return "<div class=\"keys\">" + overlay_legend(at) + "</div>";
         switch (page) {
         case Page::Host:
             r += at != nullptr && at->change
@@ -1279,7 +1403,36 @@ struct Screen : Rml::EventListener {
         return "<div class=\"keys\">" + r + "</div>";
     }
 
+    // The overlay's: what the stick, A, START and B do on this page.
+    std::string overlay_legend(const Item* at) const {
+        const bool on = at != nullptr && at->enabled;
+        std::string r;
+        if (readOnly) {
+            if (on && at->act)
+                r += key("a", "xeleenet.legend.view");
+            return r + key("b", page == Page::Host ? "xeleenet.legend.close" : "xeleenet.legend.back");
+        }
+        if (on && at->change)
+            r += key("stick", "xeleenet.legend.change");
+        else if (on && at->id == "apply")
+            r += key("a", "xeleenet.legend.apply");
+        else if (on && at->id == "cancel")
+            r += key("a", "xeleenet.legend.cancel");
+        else if (on)
+            r += key("a", page == Page::Host ? "xeleenet.legend.select" : "xeleenet.legend.toggle");
+        if (page == Page::Fighters && at != nullptr && at->id.rfind("fi", 0) == 0)
+            r += key("y", "xeleenet.legend.only_this");
+        if (page == Page::Fighters)
+            r += key("x", "xeleenet.legend.fighter_sets");
+        else if (page == Page::Stages)
+            r += key("x", "xeleenet.legend.stage_sets");
+        r += key("start", "xeleenet.legend.apply");
+        return r + key("b", page == Page::Host ? "xeleenet.legend.cancel" : "xeleenet.legend.back");
+    }
+
     void update_legend() {
+        if (overlay)
+            update_hint();
         const std::string r = legend();
         if (r == lastLegend)
             return;
@@ -1289,6 +1442,17 @@ struct Screen : Rml::EventListener {
     }
 
     // ---- the board ------------------------------------------------------------
+
+    // The overlay's own hint line (the pages use Melee's hint box).
+    void update_hint() {
+        const char* h = hint();
+        const std::string t = h != nullptr ? h : "";
+        if (t == lastHint)
+            return;
+        lastHint = t;
+        if (auto* e = document->GetElementById("ohint"))
+            e->SetInnerRML(enc(t));
+    }
 
     void set_board(const std::string& r) {
         if (r == last) {
@@ -1307,9 +1471,27 @@ struct Screen : Rml::EventListener {
         update_legend();
     }
 
+    // The overlay's title: LOBBY SETTINGS, the page it's on, and a guest's
+    // READ ONLY.
+    std::string lastTitle;
+    void overlay_title() {
+        std::string t = "<span class=\"tt\">" + enc(tr("xeleenet.settings.title")) + "</span>";
+        if (page != Page::Host)
+            t += "<span class=\"ts\">" + enc(std::string(kDot) + title()) + "</span>";
+        if (readOnly)
+            t += "<span class=\"badge\">" + enc(tr("xeleenet.settings.read_only")) + "</span>";
+        if (t != lastTitle) {
+            lastTitle = t;
+            if (auto* e = document->GetElementById("otitle"))
+                e->SetInnerRML(t);
+        }
+    }
+
     void build() {
         if (document == nullptr)
             return;
+        if (overlay)
+            overlay_title();
         items.clear();
         switch (page) {
         case Page::Host: build_host(); break;
@@ -1433,6 +1615,12 @@ struct Screen : Rml::EventListener {
         sfx(SFX_BACK);
         switch (page) {
         case Page::Host:
+            if (overlay) {
+                settings_done(false); // B: cancel, nothing changes
+                break;
+            }
+            s_result = PC_XN_MENU_LEAVE;
+            break;
         case Page::Lobbies:
             s_result = PC_XN_MENU_LEAVE;
             break;
@@ -1480,7 +1668,10 @@ struct Screen : Rml::EventListener {
             back();
             break;
         case PC_XN_IN_START:
-            if (page == Page::Host || page == Page::More || page == Page::Stages || page == Page::Fighters) {
+            if (overlay) {
+                if (!readOnly)
+                    settings_done(true); // START: apply, from any of its pages
+            } else if (page == Page::Host || page == Page::More || page == Page::Stages || page == Page::Fighters) {
                 open_lobby();
                 refresh();
             } else if (page == Page::Code) {
@@ -1507,18 +1698,18 @@ struct Screen : Rml::EventListener {
                     sfx(SFX_BACK);
                     refresh();
                 }
-            } else if (page == Page::Stages) {
-                s_host.stages = s_host.stages == kCompetitive ? kAllStages : kCompetitive;
-                s_host.preset = kCustom;
+            } else if (page == Page::Stages && !readOnly) {
+                s_edit->stages = s_edit->stages == kCompetitive ? kAllStages : kCompetitive;
+                s_edit->preset = kCustom;
                 sfx(SFX_MOVE);
                 refresh();
-            } else if (page == Page::Fighters) {
+            } else if (page == Page::Fighters && !readOnly) {
                 // All, High tiers, Low tiers, round again (a custom list goes to All).
-                const unsigned f = s_host.fighters;
-                s_host.fighters = f == XN_FIGHTERS_ALL  ? XN_FIGHTERS_HIGH
+                const unsigned f = s_edit->fighters;
+                s_edit->fighters = f == XN_FIGHTERS_ALL  ? XN_FIGHTERS_HIGH
                                   : f == XN_FIGHTERS_HIGH ? XN_FIGHTERS_LOW
                                                           : XN_FIGHTERS_ALL;
-                s_host.preset = kCustom;
+                s_edit->preset = kCustom;
                 sfx(SFX_MOVE);
                 refresh();
             }
@@ -1541,6 +1732,12 @@ struct Screen : Rml::EventListener {
     const char* hint() {
         if (!shown)
             return nullptr;
+        if (overlay) {
+            hintText = items.empty() || !items[cursor].enabled ? std::string() : items[cursor].hint;
+            if (readOnly && page == Page::Host)
+                hintText = tr("xeleenet.settings.hints.read_only");
+            return hintText.c_str();
+        }
         if (page == Page::Joining) {
             PcXnPunchView v;
             view(&v);
@@ -1592,6 +1789,7 @@ struct Screen : Rml::EventListener {
     }
 
     // The screen scaled into the frame's inside, with the page's fade and rise.
+    // The overlay's: centred over the whole (dimmed) CSS.
     void layout() {
         auto* context = aurora::rmlui::get_context();
         auto* screen = document->GetElementById("screen");
@@ -1603,6 +1801,17 @@ struct Screen : Rml::EventListener {
             return;
         placedDims = d;
         placedPresence = presence;
+        if (overlay) {
+            const float p = std::clamp(presence, 0.f, 1.f);
+            const float scale = std::min(0.94f * d.x / kOverlayW, 0.94f * d.y / kOverlayH);
+            screen->SetProperty("transform", "scale(" + fmt(scale) + ")");
+            screen->SetProperty("left", fmt((d.x - kOverlayW * scale) / 2) + "px");
+            screen->SetProperty("top", fmt((d.y - kOverlayH * scale) / 2 + (1.f - p) * 10.f * scale) + "px");
+            screen->SetProperty("opacity", fmt(p));
+            if (auto* dim = document->GetElementById("dim"))
+                dim->SetProperty("opacity", fmt(p));
+            return;
+        }
         const float x0 = 0.123f * d.x, y0 = 0.170f * d.y;
         const float w = 0.755f * d.x, h = 0.672f * d.y;
         const float p = std::clamp(presence, 0.f, 1.f);
@@ -1635,13 +1844,16 @@ struct Screen : Rml::EventListener {
             input(PC_XN_IN_START);
             return;
         }
+        // The overlay over a session's CSS: the headset's laser gives no A
+        // there (xr_pointer.c), so its clicks are the overlay's own.
+        const bool click_ok = !pointerWas || (overlay && pc_net_active());
         int i = -1;
         for (size_t k = 0; k < items.size(); k++)
             if (items[k].id == id)
                 i = static_cast<int>(k);
         if (i < 0 || !items[i].enabled)
             return;
-        if (event.GetId() == Rml::EventId::Click && !pointerWas) {
+        if (event.GetId() == Rml::EventId::Click && click_ok) {
             cursor = i;
             cursorId = id;
             activate(i);
@@ -1672,29 +1884,43 @@ struct Screen : Rml::EventListener {
             return;
         build();
         layout();
+        if (overlay)
+            update_hint();
+    }
+};
+
+// The headset's laser as the RmlUi context's mouse, once a frame while any
+// XeleeNet document is up (the pages, the CSS's banner and Lobby Settings,
+// the stage select's): its press is a click. Whether it's on is told to
+// those that care (`was`), and a press starts a page's idle clock again.
+struct Pointer {
+    bool was = false, pressed = false;
+    void feed(bool any, Rml::Vector2i dims, const std::function<void()>& touched) {
 #ifdef AURORA_ENABLE_OPENXR
         float px = 0.f, py = 0.f;
         bool down = false;
         auto* context = aurora::rmlui::get_context();
-        if (context != nullptr && aurora_xr_screen_pointer(&px, &py, &down)) {
+        if (any && context != nullptr && aurora_xr_screen_pointer(&px, &py, &down)) {
             context->ProcessMouseMove(static_cast<int>(px * dims.x), static_cast<int>(py * dims.y), 0);
-            if (down && !pointerPressed) {
+            if (down && !pressed) {
                 context->ProcessMouseButtonDown(0, 0);
                 touched();
-            }
-            else if (!down && pointerPressed)
+            } else if (!down && pressed)
                 context->ProcessMouseButtonUp(0, 0);
-            pointerPressed = down;
-            pointerWas = true;
-        } else if (pointerWas && context != nullptr) {
-            if (pointerPressed)
+            pressed = down;
+            was = true;
+        } else if (was && context != nullptr) {
+            if (pressed)
                 context->ProcessMouseButtonUp(0, 0);
             context->ProcessMouseLeave();
-            pointerWas = pointerPressed = false;
+            was = pressed = false;
         }
+#else
+        (void)any, (void)dims, (void)touched;
 #endif
     }
 };
+Pointer s_pointer;
 
 // ---- C1: the lobby's banner in the CSS --------------------------------------------
 
@@ -1721,6 +1947,120 @@ uint64_t s_seat_new_at = 0;
 unsigned s_prev_local = 0, s_prev_others = 0, s_prev_claimed = 0;
 constexpr uint64_t kSeatNoteMs = 4000;
 constexpr uint64_t kOffListNoteMs = 2000; // A on an off-list portrait
+// F3: each port whose pick a reload dropped (off the new fighter list), the
+// fighter, until it picks again; -1 none.
+std::array<int, 4> s_dropped_ckind = {-1, -1, -1, -1};
+uint64_t s_dropped_at = 0;
+constexpr uint64_t kDroppedNoticeMs = 8000;
+
+// The lobby's rules in force, as the CSS was last entered with them
+// (pc_xn_css_rules), and the set before: C4's "Host changed" notice and the
+// banner's bright value. Forgotten whenever the XeleeNet pages come up.
+bool s_rules_known = false;
+HostSettings s_rules_now, s_rules_prev;
+uint64_t s_rules_changed_at = 0;
+std::string s_rules_changed; // the notice's text
+constexpr uint64_t kChangedNoticeMs = 6000, kLitMs = 4000;
+// C3, on a guest's game: the host has Lobby Settings open (REL_XN_EDITING).
+bool s_host_editing = false;
+// A settings session on its way (the switch named, then its handshake), until
+// the CSS reloads with it: "Applying the host's settings".
+bool s_applying = false;
+// The service refused the last Apply's seats: its line, for a while.
+std::string s_refused;
+uint64_t s_refused_at = 0;
+constexpr uint64_t kRefusedMs = 6000;
+
+bool settings_up();
+void settings_open(bool host);
+void settings_pad(unsigned buttons, int stick_x, int stick_y);
+// The overlay's draft: what the host changes, or what a guest reads.
+HostSettings s_draft;
+void s_draft_set(bool host) {
+    s_draft = host || !s_rules_known ? s_host : s_rules_now;
+    if (!host) {
+        PcXnListing info{};
+        if (pc_xn_lobby_info(&info) && info.name[0])
+            s_draft.name = info.name;
+    }
+    s_edit = &s_draft;
+}
+
+// The rules RULES put in force (gmonlinemode.c's PcXnRules) as the Host
+// page's settings, for a guest's read-only overlay and the diffs.
+HostSettings from_rules(const PcXnRules& r) {
+    HostSettings h = s_host;
+    h.seats = r.seats, h.teams = r.teams, h.stock = r.stock, h.stocks = r.stocks, h.minutes = r.minutes;
+    h.items = r.items, h.friendly_fire = r.friendly_fire, h.handicap = r.handicap, h.damage = r.damage_ratio;
+    h.pause = r.pause, h.stages = r.stage_mask, h.fighters = r.fighter_mask, h.frozen = r.frozen_stadium;
+    return h;
+}
+
+// What changed from a to b, a line each ("Stocks 4 → 3"); `listing` adds
+// the rows only the lobby list shows.
+std::vector<std::string> rule_changes(const HostSettings& a, const HostSettings& b, bool listing) {
+    std::vector<std::string> out;
+    const auto add = [&](const char* row, const std::string& from, const std::string& to) {
+        if (from != to)
+            out.push_back(tr("xeleenet.settings.change", {{"row", tr(row)}, {"from", from}, {"to", to}}));
+    };
+    const auto dmg = [](int d) {
+        char b[16];
+        std::snprintf(b, sizeof b, "%.1f", d / 10.f);
+        return tr("xeleenet.rules.values.damage", {{"n", b}});
+    };
+    add("xeleenet.host.rows.teams", on_off(a.teams), on_off(b.teams));
+    if (a.stock != b.stock)
+        add("xeleenet.rules.rows.win_by", tr(a.stock ? "xeleenet.rules.values.stock" : "xeleenet.rules.values.time"),
+            tr(b.stock ? "xeleenet.rules.values.stock" : "xeleenet.rules.values.time"));
+    else if (b.stock)
+        add("xeleenet.host.rows.stocks", std::to_string(a.stocks), std::to_string(b.stocks));
+    add("xeleenet.host.rows.time", minutes_label(a.minutes), minutes_label(b.minutes));
+    add("xeleenet.host.rows.items", tr(kItemNames[a.items + 1]), tr(kItemNames[b.items + 1]));
+    add("xeleenet.host.rows.ff", on_off(a.teams && a.friendly_fire), on_off(b.teams && b.friendly_fire));
+    add("xeleenet.rules.rows.handicap", tr(kHandicapNames[a.handicap]), tr(kHandicapNames[b.handicap]));
+    add("xeleenet.rules.rows.damage", dmg(a.damage), dmg(b.damage));
+    add("xeleenet.rules.rows.pause", on_off(a.pause), on_off(b.pause));
+    add("xeleenet.host.rows.fighter_list", fighter_list_label(a.fighters), fighter_list_label(b.fighters));
+    add("xeleenet.host.rows.stage_list", stage_list_label(a.stages), stage_list_label(b.stages));
+    add("xeleenet.host.rows.frozen", on_off(a.frozen), on_off(b.frozen));
+    add("xeleenet.host.rows.seats", std::to_string(a.seats), std::to_string(b.seats));
+    if (listing && !lan()) {
+        add("xeleenet.host.rows.visibility", tr(a.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private"),
+            tr(b.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private"));
+        add("xeleenet.host.rows.hide_code", on_off(a.hide_code), on_off(b.hide_code));
+    }
+    return out;
+}
+
+// A fighter's name by CharacterKind (Sheik as Zelda / Sheik's entry).
+std::string fighter_name_of(int ckind) {
+    const int k = ckind == XN_FIGHTER_SHEIK ? XN_FIGHTER_ZELDA : ckind;
+    for (int i = 0; i < XN_FIGHTER_ENTRIES; i++)
+        if (xn_fighter_order[i] == k)
+            return fighter_name(i);
+    return "";
+}
+
+// The name port q's player goes by on the doors, "" when nobody plays it.
+std::string port_name(int q) {
+    PcXnPunchView v;
+    view(&v);
+    for (int i = 0; i < v.nplayers; i++)
+        if (v.players[i].port == q) {
+            const std::string n = v.players[i].name;
+            const size_t hash = n.find('#');
+            return hash == std::string::npos ? n : n.substr(0, hash);
+        }
+    return "";
+}
+
+// The CSS's doors: the fighter port q holds (a CharacterKind), -1 for none.
+int held_by(int q) {
+    if (q < 0 || q > 3 || !(s_css.humans & s_css.picked & (1u << q)) || s_css.ckind[q] >= 0x1A)
+        return -1;
+    return s_css.ckind[q];
+}
 
 void seat_note(const std::string& kind, const std::string& text) {
     s_seat_note_kind = kind;
@@ -1778,10 +2118,46 @@ void seat_changes(const PcXnPunchView& v, int seats) {
 constexpr float kDoorX0 = 0.0668f, kDoorPitch = 0.2194f, kDoorW = 0.2080f, kDoorY0 = 0.536f, kDoorH = 0.4005f;
 constexpr float css_zoom(float f) { return 0.5f + (f - 0.5f) * PC_XN_CSS_ZOOM; }
 
-struct Banner {
+// The banner's rules line, its parts lit (bright) where `lit` has their bit:
+// 1 the mode, 2 stocks or time, 4 the time limit, 8 items, 16 the fighters.
+std::string rules_line_rml(const HostSettings& h, unsigned lit) {
+    const auto part = [&](unsigned bit, const std::string& text) {
+        return (lit & bit) ? "<span class=\"lit\">" + enc(text) + "</span>" : enc(text);
+    };
+    std::string r = part(1, tr(h.teams        ? "xeleenet.rules_line.doubles"
+                               : h.seats == 2 ? "xeleenet.rules_line.1v1"
+                                              : "xeleenet.rules_line.ffa"));
+    r += enc(kDot) + part(2, h.stock ? tr("xeleenet.rules_line.stocks", {{"n", h.stocks}}) : tr("xeleenet.rules_line.time"));
+    r += enc(kDot) + part(4, minutes_label(h.minutes));
+    if (h.items >= 0)
+        r += enc(kDot) + part(8, tr("xeleenet.rules_line.items"));
+    const std::string f = fighter_list_short(fighter_list_id(h.fighters));
+    if (!f.empty() || (lit & 16))
+        r += enc(kDot) + part(16, f.empty() ? fighter_list_label(h.fighters) : f);
+    return r;
+}
+
+// Which of the rules line's parts differ between two sets (rules_line_rml).
+unsigned rules_line_diff(const HostSettings& a, const HostSettings& b) {
+    unsigned m = 0;
+    if (a.teams != b.teams || (a.seats == 2) != (b.seats == 2))
+        m |= 1;
+    if (a.stock != b.stock || (b.stock && a.stocks != b.stocks))
+        m |= 2;
+    if (a.minutes != b.minutes)
+        m |= 4;
+    if ((a.items >= 0) != (b.items >= 0))
+        m |= 8;
+    if (a.fighters != b.fighters)
+        m |= 16;
+    return m;
+}
+
+struct Banner : Rml::EventListener {
     Rml::ElementDocument* document = nullptr;
     bool shown = false;
     std::string last, lastDoors;
+    bool pointerWas = false;
 
     void show(bool on) {
         if (on && document == nullptr) {
@@ -1794,6 +2170,7 @@ struct Banner {
                 pc_log_line("xeleenet: could not load xeleenet-banner.rml");
                 return;
             }
+            document->AddEventListener(Rml::EventId::Click, this);
         }
         if (document == nullptr || on == shown)
             return;
@@ -1803,6 +2180,23 @@ struct Banner {
             document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
         else
             document->Hide();
+    }
+
+    // A click on the bar (a mouse, or the headset's laser in a session, where
+    // it gives no A) opens Lobby Settings, as A on it does: the host's to
+    // change, a guest's to read. Not while Ready or counting down.
+    void ProcessEvent(Rml::Event& event) override {
+        if (!shown || event.GetId() != Rml::EventId::Click || settings_up() || (pointerWas && !pc_net_active()))
+            return;
+        bool on_bar = false;
+        for (Rml::Element* e = event.GetTargetElement(); e != nullptr && !on_bar; e = e->GetParentNode())
+            on_bar = e->GetId() == "bar";
+        const int me = pc_net_active() ? pc_net_local_player() : 0;
+        const bool css = s_css_at != 0 && SDL_GetTicks() - s_css_at < 500;
+        if (!on_bar || !css || me < 0 || me > 3 || (s_css.ready & (1u << me)) || s_css.countdown > 0)
+            return;
+        pc_log_line("xeleenet: the banner clicked");
+        settings_open(me == 0);
     }
 
     void update() {
@@ -1825,13 +2219,23 @@ struct Banner {
         const bool known = pc_xn_lobby_info(&info);
         const bool host = v.host;
         const std::string name = host ? lobby_name() : known ? std::string(info.name) : tr("xeleenet.banner.lobby");
-        const std::string rules =
-            host ? rules_line(s_host.teams, s_host.seats, s_host.stock, s_host.stocks, s_host.minutes,
-                              kItemIds[s_host.items + 1])
-                 : known ? rules_line(info.teams, info.seats, info.stock, info.stocks, info.time_min, info.items) : "";
-        // The fighter list, when it isn't All.
-        const std::string fighters = fighter_list_short(host ? fighter_list_id(s_host.fighters) : known ? info.fighter_list : "");
-        const std::string rules_all = fighters.empty() || rules.empty() ? rules : rules + kDot + fighters;
+        // The rules in force (RULES, every player's the same), the parts a
+        // change just moved lit for a few seconds; before any, the host's own
+        // or a guest's listing.
+        std::string rules_all;
+        if (s_rules_known) {
+            const bool lit = s_rules_changed_at != 0 && SDL_GetTicks() - s_rules_changed_at < kLitMs;
+            rules_all = rules_line_rml(s_rules_now, lit ? rules_line_diff(s_rules_prev, s_rules_now) : 0u);
+        } else {
+            const std::string rules =
+                host ? rules_line(s_host.teams, s_host.seats, s_host.stock, s_host.stocks, s_host.minutes,
+                                  kItemIds[s_host.items + 1])
+                     : known ? rules_line(info.teams, info.seats, info.stock, info.stocks, info.time_min, info.items) : "";
+            // The fighter list, when it isn't All.
+            const std::string fighters =
+                fighter_list_short(host ? fighter_list_id(s_host.fighters) : known ? info.fighter_list : "");
+            rules_all = enc(fighters.empty() || rules.empty() ? rules : rules + kDot + fighters);
+        }
         std::string code = v.code[0] ? std::string(v.code, 3) + " " + std::string(v.code + 3, 3) : "";
         char addr[64];
         if (lan()) // the host's address, for Join by address, where the code sits
@@ -1877,6 +2281,9 @@ struct Banner {
             const float left = s_css.countdown_total > 0 ? float(s_css.countdown) / s_css.countdown_total : 0.f;
             notice = "<div class=\"notice gold\">" + enc(tr("xeleenet.css.countdown", {{"n", secs}})) +
                      "<div class=\"drain\" style=\"width: " + fmt(100.f * left) + "%;\"></div></div>";
+        } else if (const int lost = css ? dropped_mine() : -1; lost >= 0) {
+            notice = "<div class=\"notice red\">" +
+                     enc(tr("xeleenet.css.dropped", {{"name", fighter_name_of(s_dropped_ckind[lost])}})) + "</div>";
         } else if (css && s_css.waiting != 0) {
             std::string who;
             for (int i = 0; i < v.nplayers; i++)
@@ -1886,6 +2293,14 @@ struct Banner {
             notice = "<div class=\"notice warn\">" +
                      enc(tr("xeleenet.css.waiting_on", {{"name", hash == std::string::npos ? who : who.substr(0, hash)}})) +
                      "</div>";
+        } else if (!s_refused.empty() && SDL_GetTicks() - s_refused_at < kRefusedMs) {
+            notice = "<div class=\"notice warn\">" + enc(tr("xeleenet.css.refused", {{"why", s_refused}})) + "</div>";
+        } else if (s_applying) {
+            notice = "<div class=\"notice info\">" + enc(tr("xeleenet.css.applying")) + "</div>";
+        } else if (s_rules_changed_at != 0 && SDL_GetTicks() - s_rules_changed_at < kChangedNoticeMs) {
+            notice = "<div class=\"notice info\">" + enc(s_rules_changed) + "</div>";
+        } else if (s_host_editing && !host) {
+            notice = "<div class=\"notice info\">" + enc(tr("xeleenet.css.editing")) + "</div>";
         } else if (s_seat_note_at != 0 && SDL_GetTicks() - s_seat_note_at < kSeatNoteMs) {
             notice = "<div class=\"notice " + s_seat_note_kind + "\">" + enc(s_seat_note) + "</div>";
         } else if (s_left_at != 0 && SDL_GetTicks() - s_left_at < kLeftNoticeMs) {
@@ -1893,8 +2308,9 @@ struct Banner {
         }
         const std::string r =
             "<div class=\"brand\"><span>" + enc(tr("xeleenet.banner.brand")) +
-            "</span></div><div class=\"pill\"><div class=\"names\"><div class=\"bn\">" + enc(name) +
-            "</div><div class=\"br\">" + enc(rules_all) + "</div></div>" + count +
+            "</span></div><div class=\"pill" + std::string(css && s_css.hot ? " hot" : "") +
+            "\"><div class=\"names\"><div class=\"bn\">" + enc(name) + "</div><div class=\"br\">" + rules_all +
+            "</div></div>" + count +
             (code.empty() ? "" : "<div class=\"code\">" + enc(tr("xeleenet.banner.code", {{"code", code}})) + "</div>") +
             "</div><div class=\"nslot\">" + notice + "</div>";
         if (r != last) {
@@ -1903,6 +2319,29 @@ struct Banner {
             bar->SetClass("lan", lan()); // a shorter brand
         }
         update_doors(d, css);
+    }
+
+    // F3: a port whose pick a reload dropped and that hasn't picked again.
+    static bool dropped_open(int q) {
+        if (q < 0 || q > 3 || s_dropped_ckind[q] < 0)
+            return false;
+        if (s_css_at <= s_dropped_at)
+            return true; // the reloaded CSS hasn't said who picked yet
+        if ((s_css.picked & (1u << q)) || !(s_css.humans & (1u << q))) {
+            s_dropped_ckind[q] = -1; // picked again (or gone)
+            return false;
+        }
+        return true;
+    }
+
+    // One of ours of those, for the red notice (for a while), else -1.
+    static int dropped_mine() {
+        if (s_dropped_at == 0 || SDL_GetTicks() - s_dropped_at > kDroppedNoticeMs)
+            return -1;
+        for (int q = 0; q < 4; q++)
+            if ((s_css.local & (1u << q)) && dropped_open(q))
+                return q;
+        return -1;
     }
 
     // Each door's tag, and the legend above the doors, in window pixels (laid
@@ -1973,6 +2412,16 @@ struct Banner {
                     tag += "<div class=\"dash\"></div><div class=\"tag warn\" style=\"bottom: " + fmt(0.1f * w) +
                           "px; font-size: " + fmt(11.f * k) + "px; height: " + fmt(22.f * k) + "px; line-height: " +
                           fmt(20.f * k) + "px;\">" + enc(tr("xeleenet.css.tag_waiting")) + "</div>";
+                } else if (i == 0 && s_host_editing && !(s_css.local & bit)) {
+                    // C3: the host has Lobby Settings open.
+                    tag += "<div class=\"tag info\" style=\"bottom: " + fmt(0.1f * w) + "px; font-size: " + fmt(11.f * k) +
+                           "px; height: " + fmt(22.f * k) + "px; line-height: " + fmt(20.f * k) + "px;\">" +
+                           enc(tr("xeleenet.css.tag_editing")) + "</div>";
+                } else if (dropped_open(i)) {
+                    // F3: their fighter came off the list; they pick again.
+                    tag += "<div class=\"tag warn\" style=\"bottom: " + fmt(0.1f * w) + "px; font-size: " + fmt(11.f * k) +
+                           "px; height: " + fmt(22.f * k) + "px; line-height: " + fmt(20.f * k) + "px;\">" +
+                           enc(tr("xeleenet.css.tag_choosing")) + "</div>";
                 } else if (s_css.picked & bit) {
                     // Off the foot as far as off the sides (10% of the card's width).
                     tag += "<div class=\"tag\" style=\"bottom: " + fmt(0.1f * w) + "px; font-size: " + fmt(11.f * k) +
@@ -1992,7 +2441,8 @@ struct Banner {
             else if (s_css.ready & mine)
                 keys = legend_key("b", "xeleenet.legend.not_ready") + legend_key("b", "xeleenet.legend.hold_leave");
             else
-                keys = legend_key("start", "xeleenet.legend.ready") + legend_key("b", "xeleenet.legend.hold_leave");
+                keys = legend_key("start", "xeleenet.legend.ready") + legend_key("z", "xeleenet.legend.settings") +
+                       legend_key("b", "xeleenet.legend.hold_leave");
             // The ring around this player's hand while they hold B.
             if (s_css.hold > 0 && s_css.hold_total > 0 && s_css.hand_ok) {
                 constexpr int kDots = 24;
@@ -2136,6 +2586,288 @@ std::string short_name(const std::string& n) {
 }
 
 void register_sss_textures();
+
+// ---- Lobby Settings: the overlay over the CSS (docs/xeleenet-settings-overlay-plan.md)
+
+Screen s_over;
+uint64_t s_over_at = 0; // when it opened, for its fade
+
+bool settings_up() { return s_over.shown; }
+
+// The fewest seats the lobby can go down to: the ports in use, our pads
+// waiting for one, and those still linking.
+int settings_seats_min() {
+    PcXnPunchView v;
+    view(&v);
+    int claims[2];
+    const int n = v.nplayers + pc_xn_punch_claims(claims);
+    return std::clamp(n, 2, 4);
+}
+
+// LINKS: which pairs of guests go through the host's game ("All direct").
+std::vector<std::string> links_lines() {
+    PcXnPunchView v;
+    view(&v);
+    std::vector<std::string> out;
+    for (int a = 1; a < 4; a++)
+        for (int b = a + 1; b < 4; b++) {
+            const int da = pc_xn_punch_direct(a);
+            if (da < 0 || pc_xn_punch_direct(b) < 0 || (da & (1 << b)))
+                continue;
+            out.push_back(tr(v.host ? "xeleenet.settings.links.via_you" : "xeleenet.settings.links.via_host",
+                             {{"a", port_name(a)}, {"b", port_name(b)}}));
+        }
+    if (out.empty())
+        out.push_back(tr(v.nplayers > 1 ? "xeleenet.settings.links.direct" : "xeleenet.settings.links.alone"));
+    return out;
+}
+
+// What Apply would do: the changes, then what they do to the players.
+std::string changes_box(const HostSettings& was, const HostSettings& now) {
+    const std::vector<std::string> lines = rule_changes(was, now, true);
+    std::string r = "<div class=\"ch\">" + enc(tr("xeleenet.settings.changes")) + "</div>";
+    if (lines.empty())
+        return r + "<div class=\"cl none\">" + enc(tr("xeleenet.settings.effects.none")) + "</div>";
+    std::string list;
+    for (size_t i = 0; i < lines.size(); i++)
+        list += (i ? "; " : "") + lines[i];
+    r += "<div class=\"cl\">" + enc(list) + "</div>";
+    if (plays_same(was, now))
+        return r + "<div class=\"ce\">" + enc(tr("xeleenet.settings.effects.listing")) + "</div>";
+    for (int q = 0; q < 4; q++) {
+        const int ck = held_by(q);
+        if (ck >= 0 && ((was.fighters >> ck) & 1) && !((now.fighters >> ck) & 1))
+            r += "<div class=\"ce red\">" +
+                 enc(tr("xeleenet.settings.effects.off_list", {{"name", port_name(q)}, {"fighter", fighter_name_of(ck)}})) +
+                 "</div>";
+    }
+    if (now.teams && !was.teams)
+        r += "<div class=\"ce\">" + enc(tr("xeleenet.settings.effects.teams")) + "</div>";
+    return r + "<div class=\"ce\">" + enc(tr("xeleenet.settings.effects.next_game")) + "</div>";
+}
+
+// C2: the Host page's rows in two columns, minus the preset and the name; a
+// changed row shows its old value; CHANGES, then APPLY and CANCEL.
+void Screen::build_overlay_host() {
+    HostSettings& h = *s_edit;
+    const HostSettings& o = s_host; // what's in force (or on its way), the host's
+    const bool host = !readOnly;
+    const auto was = [&](const std::string& now, const std::string& before) { return host && now != before ? before : ""; };
+    std::string r = "<div class=\"col left\">";
+    group(r, "xeleenet.host.groups.rules");
+    choice(r, "teams", 0, 0, "xeleenet.host.rows.teams", on_off(h.teams), [](int) { s_edit->teams = !s_edit->teams; },
+           "xeleenet.host.hints.teams", true, nullptr, was(on_off(h.teams), on_off(o.teams)));
+    if (h.stock)
+        choice(r, "stocks", 0, 1, "xeleenet.host.rows.stocks", std::to_string(h.stocks),
+               [](int d) { s_edit->stocks = step(kStocks, s_edit->stocks, d); }, "xeleenet.host.hints.stocks", true,
+               nullptr, o.stock ? was(std::to_string(h.stocks), std::to_string(o.stocks)) : tr("xeleenet.host.values.time"));
+    else
+        choice(r, "stocks", 0, 1, "xeleenet.host.rows.win_by", tr("xeleenet.host.values.time"),
+               [](int) { s_edit->stock = true; }, "xeleenet.host.hints.win_by", true, nullptr,
+               o.stock ? tr("xeleenet.rules.values.stock") : "");
+    choice(r, "time", 0, 2, "xeleenet.host.rows.time", minutes_label(h.minutes),
+           [](int d) { s_edit->minutes = step(kMinutes, s_edit->minutes, d); }, "xeleenet.host.hints.time", true, nullptr,
+           was(minutes_label(h.minutes), minutes_label(o.minutes)));
+    choice(r, "items", 0, 3, "xeleenet.host.rows.items", tr(kItemNames[h.items + 1]),
+           [](int d) { s_edit->items = (s_edit->items + 1 + d + 6) % 6 - 1; }, "xeleenet.host.hints.items", true, nullptr,
+           was(tr(kItemNames[h.items + 1]), tr(kItemNames[o.items + 1])));
+    if (h.teams)
+        choice(r, "ff", 0, 4, "xeleenet.host.rows.ff", on_off(h.friendly_fire),
+               [](int) { s_edit->friendly_fire = !s_edit->friendly_fire; }, "xeleenet.host.hints.ff", true, nullptr,
+               was(on_off(h.friendly_fire), on_off(o.teams && o.friendly_fire)));
+    const bool more_changed = h.stock != o.stock || h.pause != o.pause || h.handicap != o.handicap || h.damage != o.damage;
+    link(r, "more", 0, 5, "xeleenet.host.rows.more", tr("xeleenet.host.values.more"), [this] { go(Page::More); },
+         "xeleenet.host.hints.more", host && more_changed ? tr("xeleenet.settings.changed") : "");
+    choice(r, "place", 0, 6, "xeleenet.host.rows.placement", tr("xeleenet.host.values.placement"), [](int) {},
+           "xeleenet.host.hints.placement", false, "xeleenet.host.soon");
+    group(r, "xeleenet.settings.groups.links");
+    r += "<div class=\"links\">";
+    for (const std::string& line : links_lines())
+        r += "<div class=\"ll\">" + enc(line) + "</div>";
+    r += "</div></div><div class=\"col right\">";
+    group(r, "xeleenet.settings.groups.right");
+    link(r, "flist", 1, 0, "xeleenet.host.rows.fighter_list", fighter_list_label(h.fighters), [this] { go(Page::Fighters); },
+         "xeleenet.host.hints.fighter_list", was(fighter_list_label(h.fighters), fighter_list_label(o.fighters)));
+    link(r, "slist", 1, 1, "xeleenet.host.rows.stage_list", stage_list_label(h.stages), [this] { go(Page::Stages); },
+         "xeleenet.host.hints.stage_list", was(stage_list_label(h.stages), stage_list_label(o.stages)));
+    choice(r, "pick", 1, 2, "xeleenet.host.rows.stage_pick", tr("xeleenet.host.values.stage_pick"), [](int) {},
+           "xeleenet.host.hints.stage_pick", false, "xeleenet.host.soon");
+    choice(r, "frozen", 1, 3, "xeleenet.host.rows.frozen", on_off(h.frozen), [](int) { s_edit->frozen = !s_edit->frozen; },
+           "xeleenet.host.hints.frozen", true, nullptr, was(on_off(h.frozen), on_off(o.frozen)));
+    choice(r, "format", 1, 4, "xeleenet.host.rows.format", tr("xeleenet.host.values.format"), [](int) {},
+           "xeleenet.host.hints.format", false, "xeleenet.host.soon");
+    const int least = settings_seats_min();
+    choice(r, "seats", 1, 5, "xeleenet.host.rows.seats", std::to_string(h.seats),
+           [least](int d) { s_edit->seats = std::clamp(s_edit->seats + d, least, 4); },
+           h.seats <= least && host ? "xeleenet.settings.hints.seats_limit" : "xeleenet.host.hints.seats", true, nullptr,
+           was(std::to_string(h.seats), std::to_string(o.seats)), host && h.seats <= least);
+    if (!lan() && host) { // the listing's own: a guest has no say, and LAN lists every lobby
+        choice(r, "vis", 1, 6, "xeleenet.host.rows.visibility",
+               tr(h.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private"),
+               [](int) { s_edit->open = !s_edit->open; }, "xeleenet.host.hints.visibility", true, nullptr,
+               h.open != o.open ? tr(o.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private") : "");
+        choice(r, "hide", 1, 7, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
+               [](int) { s_edit->hide_code = !s_edit->hide_code; }, "xeleenet.host.hints.hide_code", true, nullptr,
+               was(on_off(h.hide_code), on_off(o.hide_code)));
+    }
+    if (host) {
+        r += "<div id=\"changes\">" + changes_box(o, h) + "</div>";
+        r += "<div class=\"obtns\"><button id=\"apply\" class=\"gold\">" + enc(tr("xeleenet.settings.apply")) +
+             "</button><button id=\"cancel\" class=\"plain\">" + enc(tr("xeleenet.settings.cancel")) + "</button></div>";
+        Item ap{"apply", 1, 8, true};
+        ap.act = [] { settings_done(true); };
+        ap.hint = tr("xeleenet.settings.hints.apply");
+        items.push_back(std::move(ap));
+        Item ca{"cancel", 1, 9, true};
+        ca.act = [] { settings_done(false); };
+        ca.hint = tr("xeleenet.settings.hints.cancel");
+        items.push_back(std::move(ca));
+    } else {
+        r += "<div id=\"changes\" class=\"ro\"><div class=\"cl none\">" + enc(tr("xeleenet.settings.host_only")) +
+             "</div></div>";
+    }
+    r += "</div>";
+    set_board(r);
+}
+
+std::string Screen::held_chips(int ckind) const {
+    std::string r;
+    int n = 0;
+    for (int q = 0; q < 4; q++) {
+        const int ck = held_by(q);
+        if (ck < 0 || (ck == XN_FIGHTER_SHEIK ? XN_FIGHTER_ZELDA : ck) != ckind)
+            continue;
+        r += "<div class=\"held\" style=\"right: " + std::to_string(4 + 30 * n++) + "px; background-color: " +
+             kPortColor[q] + ";\">P" + std::to_string(q + 1) + "</div>";
+    }
+    return r;
+}
+
+std::string Screen::held_off_note() const {
+    if (items.empty() || items[cursor].id.rfind("fi", 0) != 0)
+        return "";
+    const int ckind = xn_fighter_order[std::atoi(items[cursor].id.c_str() + 2)];
+    if ((s_edit->fighters >> ckind) & 1)
+        return "";
+    for (int q = 0; q < 4; q++) {
+        const int ck = held_by(q);
+        if (ck >= 0 && (ck == XN_FIGHTER_SHEIK ? XN_FIGHTER_ZELDA : ck) == ckind)
+            return tr("xeleenet.settings.held_off",
+                      {{"fighter", fighter_name_of(ckind)}, {"name", port_name(q)}, {"p", q + 1}});
+    }
+    return "";
+}
+
+// The port this machine's overlay rests in a session (its primary), -1 none:
+// taken up again should a session start while it's open, and let go when
+// it closes, whether a session still runs or not.
+int s_hold_port = -1;
+void settings_hold(bool on) {
+    const int want = on && pc_net_active() ? pc_net_local_player() : -1;
+    if (want == s_hold_port)
+        return;
+    if (s_hold_port >= 0)
+        pc_net_hold_local(s_hold_port, false);
+    if (want >= 0)
+        pc_net_hold_local(want, true);
+    s_hold_port = want;
+}
+
+// C3: the host tells the guests it has Lobby Settings open, or closed it.
+void editing_send(bool on) {
+    if (!pc_net_active() || pc_net_local_player() != 0)
+        return;
+    const uint8_t b = on ? 1 : 0;
+    pc_net_send_reliable(PC_NET_MSG_XN_EDITING, &b, 1);
+}
+
+void settings_open(bool host) {
+    if (s_over.shown)
+        return;
+    s_over.overlay = true;
+    s_draft_set(host);
+    s_over.readOnly = !host;
+    s_over.page = Page::Host;
+    s_over.cursorId.clear();
+    s_over.cursor = 0;
+    s_over.show(true);
+    s_over_at = SDL_GetTicks();
+    settings_hold(true);
+    editing_send(true);
+    sfx(SFX_CONFIRM);
+    pc_log_line("xeleenet: Lobby Settings open (%s)", host ? "host" : "read-only");
+}
+
+void settings_done(bool apply) {
+    if (!s_over.shown)
+        return;
+    const bool changed = !plays_same(s_draft, s_host) || s_draft.open != s_host.open || s_draft.hide_code != s_host.hide_code;
+    if (apply && !s_over.readOnly && changed) {
+        pc_log_line("xeleenet: Lobby Settings applied: %s", [] {
+            std::string t;
+            for (const std::string& c : rule_changes(s_host, s_draft, true))
+                t += (t.empty() ? "" : "; ") + c;
+            return t;
+        }().c_str());
+        apply_host(s_draft);
+    } else {
+        pc_log_line("xeleenet: Lobby Settings closed%s", apply ? " (nothing changed)" : "");
+    }
+    if (!apply)
+        sfx(SFX_BACK);
+    s_over.show(false);
+    s_edit = &s_host;
+    settings_hold(false);
+    editing_send(false);
+}
+
+// The overlay's pad, read off the physical pad once a CSS frame (the port
+// itself rests): presses and the stick's direction, with a repeat, as the
+// menus' input.
+void settings_pad(unsigned buttons, int stick_x, int stick_y) {
+    static unsigned last;
+    static int dir_last = -1, held = 0;
+    static uint64_t opened = 0;
+    int dir = -1;
+    const int ax = std::abs(stick_x), ay = std::abs(stick_y);
+    if ((buttons & PAD_BUTTON_UP) || (stick_y > 50 && ay >= ax))
+        dir = PC_SCREEN_UP;
+    else if ((buttons & PAD_BUTTON_DOWN) || (stick_y < -50 && ay >= ax))
+        dir = PC_SCREEN_DOWN;
+    else if ((buttons & PAD_BUTTON_LEFT) || stick_x < -50)
+        dir = PC_SCREEN_LEFT;
+    else if ((buttons & PAD_BUTTON_RIGHT) || stick_x > 50)
+        dir = PC_SCREEN_RIGHT;
+    if (opened != s_over_at) {
+        // Its first frame: what's held already (the Z or the A that opened
+        // it) is no press.
+        opened = s_over_at;
+        last = buttons;
+        dir_last = dir;
+        held = 0;
+        return;
+    }
+    if (dir != dir_last) {
+        held = 0;
+        if (dir >= 0)
+            s_over.input(dir);
+    } else if (dir >= 0 && ++held >= 20 && (held - 20) % 5 == 0) {
+        s_over.input(dir);
+    }
+    dir_last = dir;
+    const unsigned press = buttons & ~last;
+    last = buttons;
+    if (press & PAD_BUTTON_START)
+        s_over.input(PC_XN_IN_START);
+    else if (press & PAD_BUTTON_A)
+        s_over.input(PC_SCREEN_CONFIRM);
+    else if (press & PAD_BUTTON_B)
+        s_over.input(PC_SCREEN_BACK);
+    if (press & PAD_BUTTON_X)
+        s_over.input(PC_XN_IN_X);
+    else if (press & PAD_BUTTON_Y)
+        s_over.input(PC_XN_IN_Y);
+}
 
 struct SssOverlay {
     Rml::ElementDocument* document = nullptr;
@@ -2424,6 +3156,65 @@ void reload_styles() {
     s_f5_was = down;
 }
 
+// The lobby's answer to the last Apply: refused seats (fewer than the
+// players in it, a joiner having come meanwhile) go back, with its reason.
+void settings_answer() {
+    char why[160] = "";
+    if (pc_xn_settings_result(why, sizeof why) >= 0)
+        return;
+    s_refused = why[0] != '\0' ? why : tr("xeleenet.css.refused_seats");
+    s_refused_at = SDL_GetTicks();
+    pc_log_line("xeleenet: the lobby refused the new settings: %s", s_refused.c_str());
+    if (s_seats_before >= 2 && s_seats_before != s_host.seats) {
+        HostSettings back = s_host;
+        back.seats = s_seats_before;
+        apply_host(back);
+    }
+}
+
+// tools/xn_preview.py's Lobby Settings states, once the banner is up:
+// css-settings (the host, Stocks and the fighter list changed),
+// css-settings-fighters (its fighter page, on a held fighter that's off),
+// css-settings-guest (read-only), css-settings-seats (at the seats' limit),
+// css-changed (C4), css-offlist (F3) and css-editing (C3, a guest's).
+void preview_settings() {
+    static bool done;
+    if (done || SDL_GetTicks() < 7000)
+        return;
+    done = true;
+    const std::string pv = s_preview;
+    PcXnRules r{};
+    pc_xn_menu_rules(&r);
+    if (pv.rfind("css-settings", 0) == 0) {
+        s_rules_now = s_host;
+        s_rules_known = true;
+        s_draft_set(pv != "css-settings-guest");
+        settings_open(pv != "css-settings-guest");
+        if (pv == "css-settings" || pv == "css-settings-fighters") {
+            s_draft.stocks = 3;
+            s_draft.fighters = XN_FIGHTERS_LOW;
+        }
+        if (pv == "css-settings-seats")
+            s_draft.seats = 3;
+        if (pv == "css-settings-fighters") {
+            s_over.go(Page::Fighters, "fi10"); // Fox
+        } else {
+            s_over.cursorId = pv == "css-settings-seats" ? "seats" : "stocks";
+            s_over.refresh();
+        }
+    } else if (pv == "css-changed") {
+        s_rules_now = s_host;
+        s_rules_known = true;
+        r.stocks = 3;
+        r.fighter_mask = XN_FIGHTERS_LOW;
+        pc_xn_css_rules(&r);
+    } else if (pv == "css-offlist") {
+        pc_xn_css_dropped(2, 0x02); // our Fox (we're P3 in these)
+    } else if (pv == "css-editing") {
+        s_host_editing = true;
+    }
+}
+
 } // namespace
 
 extern "C" void pc_xn_menu_note(const char* key) { s_note = key != nullptr ? key : ""; }
@@ -2445,6 +3236,11 @@ extern "C" void pc_xn_menu_begin(int what) {
     s_active = true;
     s_screen.hostNote = s_note.empty() ? std::string() : tr(s_note.c_str());
     s_note.clear();
+    // A lobby's state ends with it: the next one's CSS starts afresh.
+    settings_done(false);
+    s_rules_known = s_host_editing = s_applying = false;
+    s_rules_changed_at = 0;
+    s_dropped_ckind = {-1, -1, -1, -1};
     // The player's name comes first: asked for when there is none, or when
     // Name was picked.
     if (s_preview.empty() && (what == PC_XN_MENU_NAME || pc_xn_name()[0] == '\0'))
@@ -2576,15 +3372,31 @@ extern "C" void pc_xn_menu_update(void) {
             }
         }
         s_banner.update();
+        if (css_preview && s_banner.shown)
+            preview_settings();
     }
+    // Lobby Settings: its fade, its board, and what's on its way.
+    if (s_over.shown) {
+        s_over.presence = std::min(1.f, float(SDL_GetTicks() - s_over_at) / 150.f);
+        s_over.update();
+    }
+    if (pc_xn_punch_switch_pending() == PC_XN_SWITCH_SETTINGS)
+        s_applying = true;
+    settings_answer();
     s_sss.update();
+    // The headset's laser, for whichever of them is up.
+    auto* context = aurora::rmlui::get_context();
+    const bool any = s_screen.shown || s_banner.shown || s_over.shown || s_sss.shown;
+    s_pointer.feed(any, context != nullptr ? context->GetDimensions() : Rml::Vector2i{0, 0},
+                   [] { s_screen.touched(); });
+    s_screen.pointerWas = s_over.pointerWas = s_banner.pointerWas = s_pointer.was;
 }
 
 // While the CSS's or the stage select's overlay is up, the game's frame is as
 // tall as the picture it's shown as (vi.c), so the overlay drawn inside it
 // (aurora_rmlui_draw_here, under the hands and cursors) isn't resampled down
 // to the render scale's EFB.
-extern "C" bool pc_xn_overlay_full_size(void) { return s_banner.shown || s_sss.shown; }
+extern "C" bool pc_xn_overlay_full_size(void) { return s_banner.shown || s_sss.shown || s_over.shown; }
 
 extern "C" void pc_xn_banner_show(bool show) {
     if (show && s_left_reload && SDL_GetTicks() - s_left_at < kLeftReloadMs)
@@ -2595,12 +3407,15 @@ extern "C" void pc_xn_banner_show(bool show) {
         s_seat_note_at = s_seat_new_at = SDL_GetTicks();
     if (show)
         s_left_reload = false;
+    if (show && s_over.shown)
+        editing_send(true); // through a reload: the guests heard nothing yet this CSS
     s_banner.show(show);
 }
 
 extern "C" void pc_xn_css_frame(const PcXnCssState* state) {
     s_css = *state;
     s_css_at = SDL_GetTicks();
+    test_apply_frame();
     // tools/xn_preview.py's CSS states: three players, as the wireframe's R1-R3
     // and L1 (P1 holding B), with the real hand.
     const auto sample = [](uint8_t humans, uint8_t ready, uint8_t picked, uint8_t waiting, int countdown, int hold) {
@@ -2622,6 +3437,14 @@ extern "C" void pc_xn_css_frame(const PcXnCssState* state) {
     } else if (const int full = preview_full_seats()) {
         const uint8_t all = uint8_t((1u << full) - 1);
         sample(all, 0x2, all, 0, -1, 0);
+    } else if (s_preview.rfind("css-settings", 0) == 0 || s_preview == "css-changed" || s_preview == "css-offlist" ||
+               s_preview == "css-editing") {
+        // Three players: P1 Luigi, P2 Fox, P3 (us) Pichu, or still choosing
+        // once our Fox came off the list.
+        const bool lost = s_preview == "css-offlist";
+        sample(0x7, 0, lost ? 0x3 : 0x7, 0, -1, 0);
+        s_css.ckind[0] = 0x07, s_css.ckind[1] = 0x02, s_css.ckind[2] = lost ? 0xFF : 0x18, s_css.ckind[3] = 0xFF;
+        s_css.local = 0x4;
     }
 }
 
@@ -2661,6 +3484,54 @@ extern "C" void pc_xn_css_off_list(int port, int ckind) {
         if (xn_fighter_order[i] == ckind)
             seat_note("warn", tr("xeleenet.css.off_list", {{"name", fighter_name(i)}}));
     s_seat_note_at = SDL_GetTicks() - (kSeatNoteMs - kOffListNoteMs); // a shorter note
+}
+
+extern "C" void pc_xn_settings_open(bool host) { settings_open(host); }
+
+extern "C" bool pc_xn_settings_up(void) { return settings_up(); }
+
+extern "C" void pc_xn_settings_cancel(void) { settings_done(false); }
+
+extern "C" void pc_xn_settings_pad(unsigned buttons, int stick_x, int stick_y) {
+    if (!settings_up())
+        return;
+    settings_hold(true); // a session that started meanwhile
+    settings_pad(buttons, stick_x, stick_y);
+}
+
+extern "C" void pc_xn_editing_receive(const void* payload, int len) {
+    if (len < 1 || (pc_net_active() && pc_net_local_player() == 0))
+        return;
+    s_host_editing = static_cast<const uint8_t*>(payload)[0] != 0;
+    pc_log_line("xeleenet: the host %s Lobby Settings", s_host_editing ? "opened" : "closed");
+}
+
+extern "C" void pc_xn_css_rules(const PcXnRules* r) {
+    const HostSettings now = from_rules(*r);
+    // C4: what the host changed, for everyone, once the CSS has it.
+    if (s_rules_known) {
+        const std::vector<std::string> lines = rule_changes(s_rules_now, now, false);
+        if (!lines.empty()) {
+            s_rules_prev = s_rules_now;
+            s_rules_changed_at = SDL_GetTicks();
+            s_rules_changed = lines.size() == 1
+                                  ? tr("xeleenet.css.changed", {{"what", lines[0]}})
+                                  : tr("xeleenet.css.changed_more", {{"what", lines[0]}, {"n", lines.size() - 1}});
+            pc_log_line("xeleenet: the CSS has new rules: %s%s", lines[0].c_str(), lines.size() > 1 ? " (and more)" : "");
+        }
+    }
+    s_rules_now = now;
+    s_rules_known = true;
+    s_applying = false;
+    s_applying_at = 0;
+    s_host_editing = false; // the host says so again if it still is (pc_xn_banner_show)
+}
+
+extern "C" void pc_xn_css_dropped(int port, int ckind) {
+    if (port < 0 || port > 3)
+        return;
+    s_dropped_ckind[port] = ckind;
+    s_dropped_at = SDL_GetTicks();
 }
 
 extern "C" void pc_xn_css_seat_full(int phys) {

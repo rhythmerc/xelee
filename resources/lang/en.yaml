@@ -430,6 +430,44 @@ xeleenet:
     ready: Ready
     not_ready: Not ready
     hold_leave: "Hold: leave lobby"    # the CSS: B held for a second
+    settings: Lobby settings         # the CSS: Z opens them
+    apply: Apply                     # Lobby Settings
+    close: Close
+    view: View                       # a guest's Lobby Settings: A on a link
+
+  # Lobby Settings over the CSS (docs/xeleenet-settings-overlay-plan.md):
+  # the Host page's rows, the host's to change and a guest's to read.
+  settings:
+    title: LOBBY SETTINGS
+    read_only: READ ONLY             # a guest's, by the title
+    was: "was {value}"               # a changed row's old value
+    changed: changed                 # More rules, when one of its rows did
+    change: "{row} {from} › {to}"    # a line in CHANGES, and in "Host changed" (the menu font has no →)
+    changes: CHANGES
+    apply: APPLY
+    cancel: CANCEL
+    host_only: Only the host can change these.
+    groups:
+      links: LINKS
+      right: FIGHTERS · STAGES · SET · LOBBY
+    # Which players' games talk through the host's, for a connection that feels off.
+    links:
+      direct: All direct
+      alone: Nobody else is here yet
+      via_you: "{a} and {b}: via you"
+      via_host: "{a} and {b}: via the host"
+    effects:
+      none: Nothing changed yet.
+      listing: Only the lobby list changes. Nobody's Ready is cleared.
+      off_list: "{name}'s {fighter} is off the new list: {name} picks again"
+      teams: "Teams on: teams are dealt again"
+      next_game: Applies to the next game. Everyone's Ready is cleared.
+    held_off: "{fighter} is off · {name} (P{p}) holds it and would pick again"
+    hints:
+      apply: Every player's CSS takes the changes at once.
+      cancel: Close without changing anything.
+      seats_limit: That's everyone in the lobby. Remove someone first.
+      read_only: The host's settings. Only the host can change them.
 
   # The lobby's banner over the CSS: its name, rules and code.
   # The stage select's overlay: the lobby's stage list, top right.
@@ -472,6 +510,16 @@ xeleenet:
     spare_title: CONTROLLER {n}
     spare_line: Press START to play here
     spare_adding: adding a player…
+    # Lobby Settings, as the CSS shows it.
+    applying: "Applying the host's settings…"
+    editing: Host is changing settings
+    tag_editing: "editing…"          # the host's door, on the guests' CSS
+    tag_choosing: "choosing…"        # a door whose fighter came off the list
+    dropped: "{name} is off the new list · pick again"
+    changed: "Host changed: {what}"
+    changed_more: "Host changed: {what}, and {n} more"
+    refused: "Seats not changed: {why}"
+    refused_seats: There are more players in the lobby than that.
 
   banner:
     brand: XeleeNet

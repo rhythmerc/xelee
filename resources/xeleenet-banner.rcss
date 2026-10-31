@@ -20,6 +20,10 @@ div, span { display: block; }
 .bn { font-size: 24px; font-weight: 800; color: #ffffff; }
 .br { font-size: 15px; color: #c9b77c; }
 .seats { position: absolute; right: 250px; top: 14px; font-size: 24px; font-weight: 800; color: #fff8e0; }
+/* C1: this player's hand over the banner, where A opens Lobby Settings. */
+.pill.hot { border-color: #fff4c4; background-color: #241a08f0; box-shadow: #ffb020e0 0px 0px 16px 3px; }
+/* C4: what the host just changed, bright in the rules line for a few seconds. */
+.br .lit { display: inline; font-weight: 800; color: #ffe066; }
 .code { position: absolute; right: 18px; top: 11px; height: 36px; padding: 0 16px; font-size: 19px; font-weight: 800;
         letter-spacing: 2px; line-height: 32px; color: #ffe066; border: 2px #f0c226; border-radius: 18px; }
 
@@ -46,6 +50,7 @@ div, span { display: block; }
           color: #1a1406; background-color: #f0c226; }
 .tag { position: absolute; left: 10%; right: 10%; text-align: center; font-weight: 800; color: #d6d3cb;
        border: 1px #aeaba399; border-radius: 11px; background-color: #0b0b10d8; }
+.tag.info { color: #e9e3cf; border-color: #aeaba3; background-color: #0b0b10e6; }
 .tag.warn { color: #ffe066; border-color: #f0c226; background-color: #2a1f08; }
 .ctag { position: absolute; padding: 0 7px; font-weight: 800; color: #f0e4b8; border: 1px #f0c226b0;
         border-radius: 9px; background-color: #0b0b10e6; }

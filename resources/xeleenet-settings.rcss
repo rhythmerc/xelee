@@ -1,0 +1,54 @@
+/* Lobby Settings over XeleeNet's CSS (src/pc/xeleenet_menu.cpp, the
+ * wireframes' C2 and C2b): the Host page's rows in their own frame, over the
+ * dimmed CSS. Laid out in px on a 1120x740 screen the code scales to the
+ * window, on top of the pages' line work (slippi-setup.rcss, xeleenet.rcss).
+ * F5 in the game reloads this file. */
+
+#dim { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #000000b8; }
+#screen { width: 1120px; height: 740px; }
+#frame { position: absolute; left: 0; top: 0; width: 1120px; height: 740px; border: 3px #f0c226c0;
+         border-radius: 14px; background-color: #0b0a07f2; }
+#otitle { position: absolute; left: 30px; top: 16px; width: 1060px; height: 40px; }
+#otitle .tt { display: inline; font-size: 26px; font-weight: 800; letter-spacing: 3px; color: #ffffff; }
+#otitle .ts { display: inline; font-size: 22px; font-weight: bold; color: #c9b77c; }
+#otitle .badge { display: inline-block; margin-left: 16px; vertical-align: 4px; }
+#board { top: 62px; height: 590px; }
+#ohint { position: absolute; left: 40px; top: 652px; width: 1040px; height: 28px; text-align: center; font-size: 19px;
+         color: #c9b77c; }
+#legend { top: 684px; }
+
+/* The Host page's columns, with no preset bar above them. */
+#board .col { top: 0; }
+.xrow .was { margin-right: 10px; font-size: 15px; font-weight: bold; color: #8d8468; }
+.xrow.link .was { margin-right: 10px; }
+/* A guest's rows: the values, no arrows. */
+.xrow.ro .arr { color: #00000000; }
+/* Seats at the players in the lobby: the value dimmed, and its left arrow. */
+.xrow .val.lim { color: #8d8468; }
+.xrow .arr.lim { color: #4a4536; }
+
+.links { padding: 6px 14px 0; }
+.ll { font-size: 19px; color: #f0e4b8; line-height: 28px; }
+
+#changes { position: relative; margin-top: 12px; height: 128px; padding: 8px 14px; border: 1px #f0c22660;
+           border-radius: 8px; background-color: #14110ae0; overflow: hidden; }
+#changes .ch { font-size: 14px; font-weight: bold; letter-spacing: 3px; color: #c9b77c; }
+#changes .cl { margin-top: 4px; font-size: 17px; font-weight: bold; color: #fff8e0; line-height: 23px; }
+#changes .cl.none { font-weight: normal; color: #8d8468; }
+#changes .ce { margin-top: 2px; font-size: 15px; color: #c9b77c; line-height: 20px; }
+#changes .ce.red { color: #ff9a7c; }
+#changes.ro { height: 60px; }
+
+.obtns { position: relative; margin-top: 12px; height: 58px; text-align: right; }
+.obtns button { display: inline-block; position: relative; margin: 0 0 0 14px; width: 220px; height: 58px; }
+button.plain { text-align: center; font-size: 24px; font-weight: 800; letter-spacing: 2px; line-height: 52px;
+               color: #f0e4b8; background-color: #0c0b08; border: 3px #f0c22680; border-radius: 8px; }
+button.plain.cursor { border-color: #fff4c4; color: #ffffff; box-shadow: #ffb020c0 0px 0px 14px 3px; }
+
+/* C2b: who holds a fighter, as a chip in their colour on its tile, and the
+ * line under the grid for a held one that's off the list. */
+.ftile { position: relative; }
+.held { position: absolute; top: 4px; width: 26px; height: 18px; border-radius: 5px; font-size: 11px;
+        font-weight: 900; line-height: 18px; text-align: center; color: #ffffff; }
+#fheld { position: absolute; left: 40px; top: 380px; width: 1040px; text-align: center; font-size: 19px;
+         font-weight: bold; color: #ff9a7c; }

@@ -3164,8 +3164,9 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                 if (mnCharSel_804D6CB0->match_type != 2
 #ifdef TARGET_PC
                     /* The rules bar opens the rules menu, which an online match
-                     * (fixed rules) has no use for. */
-                    && !cssOnline(&unused_local)
+                     * (fixed rules) has no use for. XeleeNet's banner stands
+                     * over it: its rules are the host's (Lobby Settings). */
+                    && !cssOnline(&unused_local) && !gmOnline_XnFlow()
 #endif
                     ) {
                     f32 cx3 = cursor->xC;
@@ -3189,7 +3190,13 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                     }
                 }
 
-                if (cursor->xC < -25.5f && cursor->x10 > 22.0f) {
+                if (cursor->xC < -25.5f && cursor->x10 > 22.0f
+#ifdef TARGET_PC
+                    /* The rules bar's Teams: under XeleeNet's banner, and the
+                     * host's to set (Lobby Settings), not any hand's. */
+                    && !gmOnline_XnFlow()
+#endif
+                ) {
                     switch ((s32) mnCharSel_804D6CB0->match_type) {
                     case VS_MELEE:
                     case VS_CAMERA:
@@ -5781,7 +5788,9 @@ static bool cssXnHandOnScreen(int i, float* x, float* y)
  * (the C-stick) as the doors do. */
 static void cssXnOverlayRender(HSD_GObj* gobj, int pass)
 {
-    if (HSD_GetCurrentRenderPass() == HSD_RP_SCREEN) {
+    /* Lobby Settings up: the documents go over the finished frame instead,
+     * over the hands and tokens too. */
+    if (HSD_GetCurrentRenderPass() == HSD_RP_SCREEN && !pc_xn_settings_up()) {
         mn_PcMenuCamOverlayDraw(css_xn_cobj);
     }
 }
@@ -5809,7 +5818,7 @@ static void cssXnKeepPicks(void)
             mask |= 1 << i;
         }
     }
-    gmOnline_XnKeepPicks(ckind, color, mask);
+    gmOnline_XnKeepPicks(ckind, color, team, mask);
 }
 
 static void cssXnReadyReset(void)
@@ -5874,6 +5883,46 @@ static void cssXnSparePads(PcXnCssState* st)
     }
 }
 
+/* The top strip, where XeleeNet's banner stands: A there opens Lobby
+ * Settings (with Melee's rules bar's zones shut under it). */
+static bool cssXnOverBanner(int i)
+{
+    return mnCharSel_804A0BC0[i] != NULL && mnCharSel_804A0BC0[i]->x10 > 22.0F;
+}
+
+/* Lobby Settings (docs/xeleenet-settings-overlay-plan.md, O3): while it's up
+ * this machine's own port rests and the overlay reads its pad. In a session
+ * the netplay engine sends that port neutral (pc_net_hold_local) and the
+ * overlay reads the physical pad; alone, the pad is taken out here, before
+ * anything reads it, and stays out until it's at rest again. */
+static void cssXnSettingsPad(int me)
+{
+    static bool resting;
+    HSD_PadStatus* p0 = &HSD_PadCopyStatus[0];
+    if (pc_xn_settings_up()) {
+        PADStatus phys;
+        if (!pc_net_active()) {
+            pc_xn_settings_pad(p0->button, p0->stickX, p0->stickY);
+        } else if (pc_net_phys_pad(pc_net_port_phys(me), &phys)) {
+            pc_xn_settings_pad(phys.button, phys.stickX, phys.stickY);
+        }
+    }
+    if (pc_net_active()) {
+        resting = false;
+        return;
+    }
+    if (pc_xn_settings_up()) {
+        resting = true;
+    } else if (resting && p0->button == 0 && abs(p0->stickX) < 23 && abs(p0->stickY) < 23) {
+        resting = false;
+    }
+    if (resting) {
+        const s8 err = p0->err;
+        memset(p0, 0, sizeof *p0);
+        p0->err = err;
+    }
+}
+
 /* Before the procs read the pads (Scene_OnFrame): START and a Ready player's
  * B are taken out of the pads, so the CSS never starts on START and a B that
  * takes Ready back doesn't also un-pick. Held B is taken out too: Melee's own
@@ -5883,6 +5932,8 @@ static bool cssXnReadyFrame(void)
 {
     u8 humans = 0, picked = 0;
     int i, leaver = -1;
+    const int me = pc_net_active() ? pc_net_local_player() : 0;
+    cssXnSettingsPad(me);
     for (i = 0; i < 4 && i < (s32) mnCharSel_804D6CF5; i++) {
         HSD_PadStatus* pad = &HSD_PadCopyStatus[i];
         const u8 bit = 1 << i;
@@ -5937,6 +5988,16 @@ static bool cssXnReadyFrame(void)
         if ((pad->trigger & HSD_PAD_A) && mnCharSel_804A0BC0[i] != NULL) {
             pc_log_line("css: P%d A at %.1f %.1f", i + 1, mnCharSel_804A0BC0[i]->xC, mnCharSel_804A0BC0[i]->x10);
         }
+        /* Z, or A on the banner, opens Lobby Settings: this machine's own
+         * port's, on this machine only (the host's to change, a guest's to
+         * read), never while Ready or counting down. Nothing in the CSS
+         * changes: every player sees the press, one opens the overlay. */
+        if (i == me && !pc_xn_settings_up() && !(css_xn_ready & bit) && css_xn_count < 0 &&
+            ((pad->trigger & HSD_PAD_Z) || ((pad->trigger & HSD_PAD_A) && cssXnOverBanner(i))))
+        {
+            pc_log_line("css: P%d opens Lobby Settings (%s)", i + 1, (pad->trigger & HSD_PAD_Z) ? "Z" : "the banner");
+            pc_xn_settings_open(i == 0);
+        }
         if (pad->trigger & HSD_PAD_START) {
             pad->trigger &= ~HSD_PAD_START;
             if (css_xn_ready & bit) {
@@ -5956,6 +6017,12 @@ static bool cssXnReadyFrame(void)
                             mnCharSel_803F0DFC.doors[i].p_kind);
             }
         }
+    }
+    /* A START inside the input delay readied the player whose overlay is up:
+     * it closes as a cancel. */
+    if (pc_xn_settings_up() && me >= 0 && me < 4 && (css_xn_ready & (1 << me))) {
+        pc_log_line("css: P%d is Ready; Lobby Settings closes", me + 1);
+        pc_xn_settings_cancel();
     }
     /* mnCharSel_804D6CF7: Melee's READY TO FIGHT test (fn_80262F44), last
      * frame's: everyone picked and the teams valid. */
@@ -5994,6 +6061,15 @@ static bool cssXnReadyFrame(void)
             st.countdown = css_xn_count;
             st.countdown_total = CSS_XN_COUNTDOWN;
             st.seats = css_xn_seats;
+            {
+                int k;
+                for (k = 0; k < 4; k++) {
+                    const int ck = mnCharSel_804D6CB0->vs.start.players[k].ckind;
+                    st.ckind[k] = (picked & (1 << k)) && ck >= 0 && ck < ChKind_Max ? (u8) ck : 0xFF;
+                }
+                st.hot = me >= 0 && me < 4 && (humans & (1 << me)) && !(css_xn_ready & (1 << me)) &&
+                         cssXnOverBanner(me);
+            }
             {
                 /* Only the one holding sees their hold: the ring and the
                  * notice. This machine's seats are all ours: the one held
