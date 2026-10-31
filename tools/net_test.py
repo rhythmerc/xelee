@@ -108,6 +108,12 @@ def step(insts, lines, timeout=120):
     return False
 
 
+def hold(inst, key, frames):
+    """Hold `key` for `frames` frames, without waiting: unpaced a frame line,
+    paced the milliseconds those frames take on this machine."""
+    inst.key(f"{key} {frames}f" if UNPACED else f"{key} {int(frames * frame_ms(inst))}")
+
+
 def script_batch(inst, fifo, keys, stop=None, timeout=120):
     """Unpaced: a batch of (key, ms) holds as frame lines on one FIFO (a pad
     of `inst`'s), each followed by the old 150 ms gap, then wait for the
@@ -217,8 +223,18 @@ class Instance:
         fifo_write(self.fifo, line)
 
     def text(self):
+        """The log so far. Read on from where the last call stopped: unpaced
+        runs poll often, and the logs grow to megabytes."""
+        if not hasattr(self, "_text"):
+            self._text, self._read = "", 0
         with open(self.log_path, "rb") as f:
-            return f.read().decode("utf-8", "replace")
+            f.seek(self._read)
+            more = f.read()
+        # Up to the last whole line: a line half written is read whole next time.
+        cut = more.rfind(b"\n") + 1
+        self._read += cut
+        self._text += more[:cut].decode("utf-8", "replace")
+        return self._text
 
     def wait_log(self, pattern, timeout):
         """True once `pattern` (regex) appears in the log; False on timeout/exit."""
@@ -283,7 +299,16 @@ def press_until(insts, key, frames, pattern, want=1, tries=15, each=6.0, on=None
         return all(count(i, pattern) >= want for i in insts)
 
     if UNPACED:
-        # The retries in frames: a tap, then `each` seconds' worth of frames.
+        # A scene's archive, one more time: the game taps until it loads and
+        # stops on that frame (tapuntil). Other patterns, or more than one
+        # load to come: retries in frames, a tap and then `each` seconds of
+        # frames, checked between.
+        hit = re.match(r"\\\[FileCache\\\] \(\?:LOOSE \)\?(HIT: [A-Za-z0-9]+)", pattern)
+        if hit is not None and all(count(i, pattern) == want - 1 for i in insts):
+            step(on or insts, [f"tapuntil {key} {frames}f {int(each * 60)}f {hit.group(1)}"],
+                 timeout=tries * each * 2)
+            if there():
+                return True
         for _ in range(tries):
             if there():
                 return True
