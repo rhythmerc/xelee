@@ -61,10 +61,10 @@ type Lobby struct {
 	// (0 the host's): the list names the seat after its owner, "RHYTHM 2".
 	ExtraOwner []int    `json:"extra_owner"`
 	Banned     []string `json:"banned"`
-	State   string   `json:"state"`
-	Score   []int    `json:"score"`
-	Created int64    `json:"created"` // ms
-	Beat    int64    `json:"beat"`    // ms, the last heartbeat
+	State      string   `json:"state"`
+	Score      []int    `json:"score"`
+	Created    int64    `json:"created"` // ms
+	Beat       int64    `json:"beat"`    // ms, the last heartbeat
 
 	pending map[string]*pending // joiner key -> request
 	closed  bool
