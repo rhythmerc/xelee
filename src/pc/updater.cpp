@@ -378,11 +378,11 @@ std::string select_best_asset(const std::vector<Asset>& assets, std::string& out
         const std::string linux_arch = architecture == "arm64" ? "aarch64" : arch;
         names = {"Xelee-" + linux_arch + ".AppImage", "xelee-linux-" + linux_arch + ".tar.gz"};
     } else if (platform == "Windows" || platform == "macOS") {
-        names = {"Melee-" + std::string(platform) + "-" + arch + ".zip"};
+        names = {"Xelee-" + std::string(platform) + "-" + arch + ".zip"};
     } else if (platform == "Quest") {
         names = {"Xelee-Quest-" + arch + ".apk"};
     } else if (platform == "Android") {
-        names = {"Melee-Android-" + arch + ".apk"};
+        names = {"Xelee-Android-" + arch + ".apk"};
     } else if (platform == "iOS") {
         names = {"Melee-iOS-" + arch + ".ipa"};
     }

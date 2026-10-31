@@ -69,8 +69,8 @@ codesign --verify --deep --strict "${APP}"
 
 echo "=== Generating zip ==="
 mkdir -p "${DIST_DIR}"
-rm -f "${DIST_DIR}/Melee-macOS-${ARCH}.zip"
-ditto -c -k --keepParent "${APP}" "${DIST_DIR}/Melee-macOS-${ARCH}.zip"
+rm -f "${DIST_DIR}/Xelee-macOS-${ARCH}.zip"
+ditto -c -k --keepParent "${APP}" "${DIST_DIR}/Xelee-macOS-${ARCH}.zip"
 
 echo "=== Packaging Complete ==="
 ls -lh "${DIST_DIR}"

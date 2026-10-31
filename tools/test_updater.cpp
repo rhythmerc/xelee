@@ -31,12 +31,12 @@ int main(int argc, char**) {
 #endif
     const std::vector<Asset> releases{
         {"Xelee-aarch64.AppImage", "linux-arm", 10},
-        {"Melee-Windows-arm64.zip", "windows-arm", 20},
-        {"Melee-macOS-arm64.zip", "mac-arm", 30},
+        {"Xelee-Windows-arm64.zip", "windows-arm", 20},
+        {"Xelee-macOS-arm64.zip", "mac-arm", 30},
         {"Xelee-x86_64.AppImage", "linux-x86", 40},
-        {"Melee-Windows-x86_64.zip", "windows-x86", 50},
-        {"Melee-macOS-x86_64.zip", "mac-x86", 60},
-        {"Melee-Android-arm64.apk", "android", 70},
+        {"Xelee-Windows-x86_64.zip", "windows-x86", 50},
+        {"Xelee-macOS-x86_64.zip", "mac-x86", 60},
+        {"Xelee-Android-arm64.apk", "android", 70},
         {"Melee-iOS-arm64.ipa", "ios", 80},
         {"Xelee-Quest-arm64.apk", "quest", 100},
         {"xelee-linux-x86_64.tar.gz", "tar", 90},

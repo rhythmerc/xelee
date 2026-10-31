@@ -122,9 +122,9 @@ The release artifacts are produced by the same scripts CI runs
 
 ```sh
 tools/package_linux.sh      # dist/Xelee-<arch>.AppImage + xelee-linux-<arch>.tar.gz
-tools/package_windows.sh    # dist/Melee-Windows-<arch>.zip
-tools/package_macos.sh      # dist/Melee-macOS-<arch>.zip (Melee.app)
-tools/build_android.sh      # dist/Melee-Android-arm64.apk (signed release)
+tools/package_windows.sh    # dist/Xelee-Windows-<arch>.zip
+tools/package_macos.sh      # dist/Xelee-macOS-<arch>.zip (Melee.app)
+tools/build_android.sh      # dist/Xelee-Android-arm64.apk (signed release)
 tools/build_ios.sh          # dist/Melee-iOS-arm64.ipa
 ```
 
@@ -177,7 +177,7 @@ A signed release build needs `MELEE_KEYSTORE_BASE64`, `MELEE_KEYSTORE_PASSWORD`,
 intent extra, e.g.
 
 ```sh
-adb install -r dist/Melee-Android-arm64.apk
+adb install -r dist/Xelee-Android-arm64.apk
 adb shell am start -n dev.melee.game/dev.melee.MeleeActivity \
     --es disc /sdcard/Android/data/dev.melee.game/files/melee.ciso
 ```

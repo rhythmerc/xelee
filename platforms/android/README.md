@@ -18,7 +18,7 @@ This directory contains the Android application wrapper for Super Smash Bros. Me
    tools/build_android.sh
    ```
    This builds the native library, stages assets, and produces a signed
-   release APK at `dist/Melee-Android-arm64.apk`.
+   release APK at `dist/Xelee-Android-arm64.apk`.
 
    Signing key resolution, in order:
    - `MELEE_KEYSTORE_BASE64` (what CI sets from repository secrets), or
@@ -34,5 +34,5 @@ This directory contains the Android application wrapper for Super Smash Bros. Me
 
 4. **Running on Device**:
    ```bash
-   adb install -r dist/Melee-Android-arm64.apk
+   adb install -r dist/Xelee-Android-arm64.apk
    ```

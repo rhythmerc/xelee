@@ -1,4 +1,4 @@
-Xelee for Meta Quest 3 / 3S, Steam Deck and Linux PCs. You need your own Super Smash Bros. Melee NTSC-U 1.02 disc image.
+Xelee for Meta Quest 3 / 3S, Android phones and tablets, Windows PCs, Steam Deck and Linux PCs. You need your own Super Smash Bros. Melee NTSC-U 1.02 disc image.
 
 ## Changelog
 
@@ -29,6 +29,14 @@ A Roomtone update: lighter on the headset, far less shader stutter (Classic and 
 4. Xelee is in your library under **Unknown Sources**.
 
 **With a PC:** enable developer mode, then sideload `Xelee-Quest-arm64.apk` with SideQuest or `adb install Xelee-Quest-arm64.apk`.
+
+### Android phones and tablets
+
+Download `Xelee-Android-arm64.apk` on the device, open it, and allow installs from your browser or Files app when asked. It needs a 64-bit (arm64) device with Vulkan. `Xelee-Quest-arm64.apk` is for the headset only.
+
+### Windows
+
+Download `Xelee-Windows-x86_64.zip`, extract it, and run `melee.exe`. Keep the DLLs and the `resources` folder next to it.
 
 ### Steam Deck
 

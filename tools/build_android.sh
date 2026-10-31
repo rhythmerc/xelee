@@ -11,7 +11,7 @@ ANDROID_DIR="${ROOT_DIR}/platforms/android"
 MELEE_XR="${MELEE_XR:-0}"
 XR_CMAKE_ARGS=()
 XR_GRADLE_ARGS=()
-APK_NAME=Melee-Android-arm64.apk
+APK_NAME=Xelee-Android-arm64.apk
 DEFAULT_BUILD_DIR="${ROOT_DIR}/build/android-arm64"
 if [[ "${MELEE_XR}" == 1 ]]; then
     # The XR build renders into OpenXR's swapchain images on Dawn's own device,

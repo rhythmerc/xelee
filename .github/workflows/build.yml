@@ -1,198 +1,42 @@
 name: Build
 
-# melee-pc's desktop, phone and iOS builds, inherited from upstream: kept,
-# but run only by hand (Actions > Build > Run workflow). Xelee builds and
-# releases only the Quest APK (quest.yml).
+# Xelee's builds: the Meta Quest mixed-reality APK, the flat Android APK, the
+# Windows x86-64 zip and the Linux x86-64 AppImage (Steam Deck and desktop).
+# A push to main builds them and keeps them as artifacts; a v* tag on main
+# also publishes them as a GitHub release, which the launchers' updater
+# installs from (src/pc/updater.cpp select_best_asset: Xelee-Quest-arm64.apk,
+# Xelee-Android-arm64.apk, Xelee-Windows-x86_64.zip, Xelee-x86_64.AppImage).
+#
+# The Quest and phone APKs are separate builds: the Quest one is a Meta
+# hybrid app (head tracking required, its own manifest overlay), renders
+# through Dawn built from the melee-xr fork, and ships a pipeline cache
+# recorded on a Quest 3.
 on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
   workflow_dispatch:
 
-# Build jobs are read-only; only the release job needs to write.
 permissions:
   contents: read
 
-# Where Send logs uploads, compiled into every build (CMakeLists.txt).
-env:
-  XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
-  # The XeleeNet lobby service compiled in (src/pc/net_punch.c); a repository
-  # variable, so a test service can be swapped without a commit.
-  XELEENET_URL: ${{ vars.XELEENET_URL }}
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
-  lint:
-    name: Lint & Style Verification
+  quest:
+    name: Quest APK
     runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Install verification dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang-format python3
-
-      - name: Verify code style and formatting
-        run: python3 tools/check_style.py
-
-      - name: Verify game syntax
-        run: python3 tools/compile_check.py
-
-  tests:
-    name: Unit tests (${{ matrix.build_type }})
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        build_type: [Debug, RelWithDebInfo]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Install test dependencies
-        run: |
-          sudo apt-get update
-          # No packaging tools here: the test targets only link aurora::dvd,
-          # aurora::main, OpenSSL and curl. aurora still builds SDL3 from
-          # source (not in Ubuntu 24.04), so its X11/Wayland/audio deps are
-          # needed to configure and link.
-          sudo apt-get install -y --no-install-recommends \
-            build-essential ninja-build cmake pkg-config python3 \
-            libssl-dev libcurl4-openssl-dev \
-            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
-            libxfixes-dev libxss-dev libxkbcommon-dev libxtst-dev \
-            libwayland-dev wayland-protocols libdecor-0-dev \
-            libasound2-dev libpulse-dev libdbus-1-dev libudev-dev \
-            libgl1-mesa-dev libegl1-mesa-dev libgbm-dev \
-            libusb-1.0-0-dev
-
-      - name: Configure
-        # Same dependency providers as tools/package_linux.sh: prebuilt Dawn
-        # and nod keep this job from building Rust/Dawn from source just to
-        # link aurora::main.
-        run: |
-          cmake -B build-tests-${{ matrix.build_type }} -G Ninja \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            -DAURORA_SDL3_PROVIDER=vendor \
-            -DAURORA_DAWN_PROVIDER=package \
-            -DAURORA_NOD_PROVIDER=package
-
-      - name: Build unit tests
-        # Only the unit_tests target: the game and launcher stay unbuilt.
-        run: ninja -C build-tests-${{ matrix.build_type }} unit_tests
-
-      - name: Run unit tests
-        # The python-driven tests (tools/net_test_support.py) look for the
-        # build in ./build unless told otherwise, and this job builds into
-        # build-tests-<type>.
-        env:
-          MELEE_TEST_BUILD: ${{ github.workspace }}/build-tests-${{ matrix.build_type }}
-        run: ctest --test-dir build-tests-${{ matrix.build_type }} -L melee --output-on-failure
-
-  linux:
-    name: Linux (${{ matrix.arch }})
-    strategy:
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            arch: x86_64
-          - runner: ubuntu-24.04-arm
-            arch: aarch64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          # SDL3 is not in Ubuntu 24.04, so aurora builds it from source
-          # (AURORA_SDL3_PROVIDER=vendor); these are its X11/Wayland/audio deps.
-          sudo apt-get install -y --no-install-recommends \
-            build-essential ninja-build cmake pkg-config \
-            libssl-dev libcurl4-openssl-dev zip file desktop-file-utils \
-            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
-            libxfixes-dev libxss-dev libxkbcommon-dev libxtst-dev \
-            libwayland-dev wayland-protocols libdecor-0-dev \
-            libasound2-dev libpulse-dev libdbus-1-dev libudev-dev \
-            libgl1-mesa-dev libegl1-mesa-dev libgbm-dev \
-            libusb-1.0-0-dev
-
-      - name: Build and package
-        run: tools/package_linux.sh
-
-      # Runs in this job, not in `tests`: every smoke case runs the real
-      # binary, and this is the only Linux job that builds one.
-      - name: Smoke test (disc-free subset)
-        run: python3 tools/smoke_test.py --no-disc
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux-${{ matrix.arch }}
-          path: |
-            dist/Xelee-${{ matrix.arch }}.AppImage
-            dist/xelee-linux-${{ matrix.arch }}.tar.gz
-          if-no-files-found: error
-
-  windows:
-    name: Windows (${{ matrix.arch }})
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            toolchain: mingw-w64
-          - arch: arm64
-            toolchain: llvm-mingw
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            ninja-build cmake zip cabextract curl
-
-      - name: Install MinGW-w64 toolchain (x86_64)
-        if: matrix.arch == 'x86_64'
-        run: |
-          sudo apt-get install -y --no-install-recommends mingw-w64
-          # aurora's C++20 code needs std::thread, which only the POSIX
-          # threading model provides; Ubuntu defaults some links to win32.
-          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
-          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
-
-      - name: Install LLVM-MinGW and GCC AArch64 (ARM64)
-        if: matrix.arch == 'arm64'
-        run: |
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
-          LLVM_MINGW_URL="https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-ubuntu-22.04-x86_64.tar.xz"
-          sudo mkdir -p /opt/llvm-mingw
-          curl -sSL "${LLVM_MINGW_URL}" | sudo tar -xJ -C /opt/llvm-mingw --strip-components=1
-          echo "/opt/llvm-mingw/bin" >> $GITHUB_PATH
-
-      - name: Build and package
-        env:
-          TARGET_ARCH: ${{ matrix.arch }}
-        run: tools/package_windows.sh
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-${{ matrix.arch }}
-          path: dist/Melee-Windows-${{ matrix.arch }}.zip
-          if-no-files-found: error
-
-  android:
-    name: Android (arm64-v8a)
-    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 3G
+      # Dawn and the other C/C++ targets; the decomp keeps its own launcher
+      # (tools/gcc_launcher.py, the aarch64 GCC).
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -210,76 +54,80 @@ jobs:
           # not implement, so tools/gcc_launcher.py routes melee_game through
           # this cross compiler with the NDK sysroot.
           sudo apt-get install -y --no-install-recommends \
-            ninja-build cmake gcc-aarch64-linux-gnu
+            ninja-build cmake ccache gcc-aarch64-linux-gnu
           # nod has no Android prebuilt, so aurora builds it from Rust source.
           rustup target add aarch64-linux-android
-          # aurora uses std::jthread/std::stop_token, which the runner's
-          # newest NDK libc++ does not expose. r26 is the version this port
-          # is developed against.
-          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install 'ndk;26.3.11579264' > /dev/null
+          # r26 for the game (newer NDK libc++ has no std::jthread), r29 for
+          # Dawn, which tools/build_android.sh picks up by itself.
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install \
+            'ndk;26.3.11579264' 'ndk;29.0.14206865' > /dev/null
+
+      - name: Dawn's pinned commit
+        id: dawn
+        run: echo "ref=$(sed -n 's/.*MELEE_DAWN_REF:-\([0-9a-f]*\)}.*/\1/p' tools/build_android.sh)" >> "$GITHUB_OUTPUT"
+
+      # Dawn from source (the melee-xr fork) with its dependencies: fetched
+      # once per pinned commit.
+      - uses: actions/cache@v4
+        with:
+          path: build/dawn-src
+          key: dawn-src-${{ steps.dawn.outputs.ref }}
+
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: quest-ccache-${{ steps.dawn.outputs.ref }}-${{ github.sha }}
+          restore-keys: quest-ccache-${{ steps.dawn.outputs.ref }}-
 
       - name: Build APK
         env:
-          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.2.2' }}
+          MELEE_XR: '1'
+          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           MELEE_KEYSTORE_BASE64: ${{ secrets.MELEE_KEYSTORE_BASE64 }}
           MELEE_KEYSTORE_PASSWORD: ${{ secrets.MELEE_KEYSTORE_PASSWORD }}
           MELEE_KEY_ALIAS: ${{ secrets.MELEE_KEY_ALIAS }}
           MELEE_KEY_PASSWORD: ${{ secrets.MELEE_KEY_PASSWORD }}
+          # Slippi's in-app login, compiled in (CMakeLists.txt).
+          MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
+          MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
+          # Where Send logs uploads (CMakeLists.txt, tools/log-drop).
+          XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
+          # The XeleeNet lobby service (CMakeLists.txt, tools/xeleenet).
+          XELEENET_URL: ${{ vars.XELEENET_URL }}
         run: |
+          # A release without them would say "Online login is not configured".
+          if [[ "${GITHUB_REF_TYPE}" == tag && ( -z "${MELEE_SLIPPI_FIREBASE_KEY}" || -z "${MELEE_SLIPPI_GRAPHQL_ENDPOINT}" ) ]]; then
+            echo "::error::MELEE_SLIPPI_FIREBASE_KEY and MELEE_SLIPPI_GRAPHQL_ENDPOINT secrets are required for a release"
+            exit 1
+          fi
+          # Without it Send logs still saves the bundle as a file.
+          if [[ "${GITHUB_REF_TYPE}" == tag && -z "${XELEE_LOGS_URL}" ]]; then
+            echo "::warning::no XELEE_LOGS_URL secret: this release's Send logs saves files only"
+          fi
+          if [[ "${GITHUB_REF_TYPE}" == tag && -z "${XELEENET_URL}" ]]; then
+            echo "::warning::no XELEENET_URL variable: this release has no XeleeNet service"
+          fi
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/26.3.11579264"
+          export MELEE_XR_NDK_HOME="${ANDROID_HOME}/ndk/29.0.14206865"
+          ccache --zero-stats
           tools/build_android.sh
+          ccache --show-stats
 
       - uses: actions/upload-artifact@v4
         with:
-          name: android-arm64
-          path: dist/Melee-Android-arm64.apk
+          name: xelee-quest
+          path: dist/Xelee-Quest-arm64.apk
           if-no-files-found: error
 
-  macos:
-    name: macOS (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: macos-26
-          - arch: x86_64
-            runner: macos-15-intel
-    runs-on: ${{ matrix.runner }}
-    # macos-15-intel is on GitHub's deprecation path: the Intel build must not
-    # block a release.
-    continue-on-error: ${{ matrix.arch == 'x86_64' }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Install build dependencies
-        run: |
-          xcodebuild -version
-          # Apple clang builds the C++; the decomp's C needs GCC for
-          # scalar_storage_order, so tools/gcc_launcher.py routes melee_game
-          # through Homebrew's gcc. SDL3 is built from AURORA_SDL3_REF and
-          # bundled into the .app with the other dylibs by package_macos.sh.
-          brew install gcc cmake ninja zstd libpng freetype
-
-      - name: Verify native rollback snapshot restore
-        run: python3 tools/test_snapshot_platforms.py SnapshotPlatforms.test_native_mac_restore
-
-      - name: Build and package
-        env:
-          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.2.2' }}
-        run: tools/package_macos.sh
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-${{ matrix.arch }}
-          path: dist/Melee-macOS-${{ matrix.arch }}.zip
-          if-no-files-found: error
-
-  ios:
-    name: iOS (arm64, IPA)
+  linux:
+    name: Linux AppImage
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -288,39 +136,202 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
+          # build.yml's linux job, plus ccache. SDL3 is not in Ubuntu 24.04,
+          # so aurora builds it from source (AURORA_SDL3_PROVIDER=vendor);
+          # these are its X11/Wayland/audio deps.
           sudo apt-get install -y --no-install-recommends \
-            build-essential ninja-build cmake gcc-aarch64-linux-gnu \
-            clang-19 lld-19 llvm-19 zip python3 || \
-          sudo apt-get install -y --no-install-recommends \
-            build-essential ninja-build cmake gcc-aarch64-linux-gnu \
-            clang lld llvm zip python3
-          sudo apt-get install -y --no-install-recommends gcc-14-aarch64-linux-gnu || true
-          for tool in clang clang++ ld.lld ld64.lld llvm-ar llvm-ranlib llvm-strip llvm-otool llvm-install-name-tool; do
-            if command -v "${tool}-19" >/dev/null 2>&1; then
-              sudo ln -sf "$(command -v "${tool}-19")" "/usr/local/bin/${tool}"
-            fi
-          done
-          sudo ln -sf "$(command -v llvm-install-name-tool || which llvm-install-name-tool)" /usr/local/bin/install_name_tool || true
-          sudo ln -sf "$(command -v llvm-otool || which llvm-otool)" /usr/local/bin/otool || true
+            build-essential ninja-build cmake pkg-config ccache \
+            libssl-dev libcurl4-openssl-dev zip file desktop-file-utils \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxfixes-dev libxss-dev libxkbcommon-dev libxtst-dev \
+            libwayland-dev wayland-protocols libdecor-0-dev \
+            libasound2-dev libpulse-dev libdbus-1-dev libudev-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libgbm-dev \
+            libusb-1.0-0-dev
 
-      - name: Checkout iOS SDK
-        run: |
-          mkdir -p /tmp/sdks
-          git clone --depth=1 --filter=blob:none --sparse https://github.com/theos/sdks.git /tmp/sdks
-          cd /tmp/sdks
-          git sparse-checkout set iPhoneOS16.5.sdk
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: linux-ccache-${{ github.sha }}
+          restore-keys: linux-ccache-
 
-      - name: Setup Rust for iOS
-        run: |
-          rustup target add aarch64-apple-ios
-
-      - name: Build and package iOS IPA
+      - name: Build AppImage
         env:
-          IOS_SDK_PATH: /tmp/sdks/iPhoneOS16.5.sdk
-        run: tools/build_ios.sh
+          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
+          MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
+          XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
+          XELEENET_URL: ${{ vars.XELEENET_URL }}
+        run: |
+          # The quest job checks the secrets a release needs.
+          ccache --zero-stats
+          tools/package_linux.sh
+          ccache --show-stats
+
+      - name: Smoke test (disc-free subset)
+        run: python3 tools/smoke_test.py --no-disc
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ios-arm64
-          path: dist/Melee-iOS-arm64.ipa
+          name: xelee-linux
+          path: |
+            dist/Xelee-x86_64.AppImage
+            dist/xelee-linux-x86_64.tar.gz
           if-no-files-found: error
+
+  android:
+    name: Android APK (phones and tablets)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # As the quest job: the aarch64 GCC for the decomp, Rust for nod.
+          # No Dawn from source here: the flat build uses Aurora's packaged one.
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cmake ccache gcc-aarch64-linux-gnu
+          rustup target add aarch64-linux-android
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install 'ndk;26.3.11579264' > /dev/null
+
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: android-ccache-${{ github.sha }}
+          restore-keys: android-ccache-
+
+      - name: Build APK
+        env:
+          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          MELEE_KEYSTORE_BASE64: ${{ secrets.MELEE_KEYSTORE_BASE64 }}
+          MELEE_KEYSTORE_PASSWORD: ${{ secrets.MELEE_KEYSTORE_PASSWORD }}
+          MELEE_KEY_ALIAS: ${{ secrets.MELEE_KEY_ALIAS }}
+          MELEE_KEY_PASSWORD: ${{ secrets.MELEE_KEY_PASSWORD }}
+          MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
+          MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
+          XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
+          XELEENET_URL: ${{ vars.XELEENET_URL }}
+        run: |
+          # The quest job checks the secrets a release needs.
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/26.3.11579264"
+          ccache --zero-stats
+          tools/build_android.sh
+          ccache --show-stats
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xelee-android
+          path: dist/Xelee-Android-arm64.apk
+          if-no-files-found: error
+
+  windows:
+    name: Windows x86-64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          # Cross-built with MinGW-w64 (tools/package_windows.sh).
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cmake ccache zip cabextract curl mingw-w64
+          # aurora's C++20 code needs std::thread, which only the POSIX
+          # threading model provides; Ubuntu defaults some links to win32.
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: windows-ccache-${{ github.sha }}
+          restore-keys: windows-ccache-
+
+      - name: Build and package
+        env:
+          TARGET_ARCH: x86_64
+          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
+          MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
+          XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
+          XELEENET_URL: ${{ vars.XELEENET_URL }}
+        run: |
+          ccache --zero-stats
+          tools/package_windows.sh
+          ccache --show-stats
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xelee-windows
+          path: dist/Xelee-Windows-x86_64.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [quest, linux, android, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: xelee-quest
+          path: artifacts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: xelee-linux
+          path: artifacts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: xelee-android
+          path: artifacts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: xelee-windows
+          path: artifacts
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A tag containing a hyphen (v0.1.0-beta) is a prerelease.
+          prerelease=""
+          [[ "${GITHUB_REF_NAME}" == *-* ]] && prerelease="--prerelease"
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Xelee ${GITHUB_REF_NAME}" \
+            --notes-file .github/QUEST_RELEASE_NOTES.md \
+            --generate-notes \
+            ${prerelease} \
+            artifacts/Xelee-Quest-arm64.apk \
+            artifacts/Xelee-Android-arm64.apk \
+            artifacts/Xelee-Windows-x86_64.zip \
+            artifacts/Xelee-x86_64.AppImage \
+            artifacts/xelee-linux-x86_64.tar.gz
