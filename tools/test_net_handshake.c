@@ -302,7 +302,7 @@ int main(void) {
     Side host, guest;
 
     /* every check below depends on these sizes being the wire ones */
-    assert(sizeof(Rules) == 16 + sizeof(GameRules) + 22 && sizeof(Ready) == 28);
+    assert(sizeof(Rules) == 16 + sizeof(GameRules) + 28 && sizeof(Ready) == 28);
 
     s_game.mode = 1;
     s_game.time_limit = 8;
@@ -590,7 +590,7 @@ int main(void) {
             assert(s_logn == 1);
         }
         /* rules_restore at disconnect puts the host's own masks back */
-        rules_restore();
+        rules_restore(false);
         assert(!s_unlock_saved && s_unlock_live == 0x0003000100000000ull);
         assert(log_count("net: unlock state restored") == 1);
         printf("ok 13: READY with a differing unlock state refused, restore undoes the force\n");
@@ -614,7 +614,7 @@ int main(void) {
         assert(pc_net_guest_wait_match(&seed_out, &sf));
         assert(net.hs == HS_DONE && seed_out == 1234 && sf == 300 + HS_LEAD_FRAMES);
         assert(s_out_type == REL_READY && s_out_len == (int)sizeof(Ready) && s_hs_tx.len == 0);
-        rules_restore();
+        rules_restore(false);
 
         net.tick_frame = 300;
         load_fresh(sess_c, 0);
@@ -625,7 +625,7 @@ int main(void) {
         s_now += (uint64_t)HS_TIMEOUT_MS * 1000000ull + 1;
         assert(!pc_net_host_match(55, &sf) && net.hs == HS_FAILED);
         s_send_full = false;
-        rules_restore();
+        rules_restore(false);
         assert(s_hs_tx.len == 0);
         printf("ok 14: a refused RULES/READY is retried, never a completed handshake\n");
     }
@@ -673,7 +673,7 @@ int main(void) {
             wire_rules(&ru);
             assert(ru.seed == 4321 && ru.start_frame == 300 + HS_LEAD_FRAMES);
         }
-        rules_restore();
+        rules_restore(false);
         net.direct = false;
         printf("ok 15: a direct session hosts on player 1 and waits for the game's own rules\n");
     }
@@ -727,7 +727,7 @@ int main(void) {
         handshake_msg(0, REL_RULES, fresh, sizeof fresh);
         assert(net.hs == HS_DONE && net.seed == 55 && net.start_frame == 300 + 2 * HS_LEAD_FRAMES);
         memcpy(k, s_out, sizeof k);
-        rules_restore();
+        rules_restore(false);
 
         /* and its READY names that frame, which the host agrees to */
         side_load(&host);
@@ -749,7 +749,7 @@ int main(void) {
             k, sess_e, 0x4444444444444444ull, hn, unlock_hash_now(), 300 + HS_LEAD_FRAMES);
         handshake_msg(0, REL_READY, k, sizeof k);
         assert(net.hs == HS_DONE && net.start_frame == 300 + HS_LEAD_FRAMES);
-        rules_restore();
+        rules_restore(false);
         printf("ok 16: a stale RULES is re-issued for a later frame, READY names the one taken\n");
     }
 

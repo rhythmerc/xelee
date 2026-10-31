@@ -92,6 +92,12 @@ void pc_log_line(const char* fmt, ...) {
     s_resend_logs += strstr(fmt, "resend #") != NULL;
 }
 
+/* XeleeNet's "Lobby Settings open" notice (xeleenet_menu.cpp). */
+void pc_xn_editing_receive(const void* payload, int len) {
+    (void)payload;
+    (void)len;
+}
+
 static uint8_t out_seq(void) {
     assert(s_out[0] == 'R');
     return s_out[offsetof(Rel, seq)];

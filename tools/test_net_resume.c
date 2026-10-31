@@ -120,6 +120,23 @@ void pc_log_line(const char* fmt, ...) {
     s_log_n += (size_t)snprintf(s_log + s_log_n, sizeof s_log - s_log_n, "%s\n", line);
 }
 
+/* The held-frame redraw (vi.c), frame scripts (keyboard.c) and the pad
+ * alarm's hold (os.c): none of them run in this harness. */
+bool pc_held_frame_due(void) {
+    return false;
+}
+void pc_present_held_frame(bool new_tick) {
+    (void)new_tick;
+}
+void gm_RenderHeld(void) {}
+void pc_keyboard_sim_frame(void) {}
+bool pc_keyboard_scripted(void) {
+    return false;
+}
+void pc_os_hold_alarms(int on) {
+    (void)on;
+}
+
 uint64_t pc_sim_period_ns(void) {
     return 16666667ull;
 }
@@ -308,7 +325,7 @@ bool pc_xn_punch_from_env(void) {
 }
 
 /* net_handshake.c / net_sync.c */
-void rules_restore(void) {}
+void rules_restore(bool keep) { (void)keep; }
 void handshake_direct(void) {}
 void adv_note(int peer, int remote_adv, int local_adv) {
     (void)peer;
@@ -494,6 +511,7 @@ static void use_ports(int local, int remote) {
     remote_ports_set((uint8_t)(1u << remote));
     net.npeers = 1;
     net.peer_port[0] = s_peer[0].port = remote;
+    s_peer[0].ports = (uint8_t)(1u << remote); /* a one-pad machine: its own port alone */
 }
 
 /* The remote port's contiguous mark (the rollback loop reads the lowest of
@@ -551,7 +569,7 @@ static void setup(void) {
     s_peer[0].last_rx_ns = s_now;
     s_rc_window_ms = RECONNECT_MS;
     for (int32_t f = 0; f <= WROTE; f++) {
-        s_local_ring[f & (RING - 1)].button = (uint16_t)(0x1000 + f);
+        s_local_ring[net.local][f & (RING - 1)].button = (uint16_t)(0x1000 + f);
     }
     s_resume_sends = 0;
     s_rel_fail = 0;
@@ -1467,7 +1485,7 @@ static void case_pad_codec(void) {
     }
     n = pads_encode(in, REDUNDANCY, buf);
     assert(n == REDUNDANCY * (sizeof(WirePad) + 1));
-    assert(offsetof(Packet, pads) + n == PACKET_WIRE_MAX);
+    assert(offsetof(Packet, pads) + (1 + MAX_XPORTS) * n == PACKET_WIRE_MAX); /* every port's pads */
     assert(pads_decode(buf, (int)n, REDUNDANCY, out) && memcmp(in, out, sizeof in) == 0);
     assert(pads_encode(in, 0, buf) == 0 && pads_decode(buf, 0, 0, out));
     printf("ok: pad codec round trips, a held pad costs one byte\n");

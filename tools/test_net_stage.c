@@ -12,6 +12,9 @@ uint32_t pc_net_seed(void) {
 int pc_net_local_player(void) {
     return 0;
 }
+int pc_net_port_mask(void) {
+    return 3; /* a 1v1: P1 and P2 */
+}
 bool gm_80164330(s32 stage) {
     return enabled == -1 || stage == enabled;
 }

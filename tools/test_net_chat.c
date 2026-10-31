@@ -10,6 +10,10 @@ static uint8_t last_id;
 Uint64 SDL_GetTicks(void) {
     return now;
 }
+void pc_log_line(const char* fmt, ...) {
+    (void)fmt;
+}
+
 bool pc_net_active(void) {
     return active;
 }
