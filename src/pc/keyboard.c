@@ -16,7 +16,7 @@
  *
  * The FIFOs also take frame scripts (docs/fast-tests-plan.md T2): a line that
  * counts in frames ("X+Down 7f", "tap X 3f", "wait 30f", "until <text> [600f]",
- * "tapuntil Return 9f 60f <text>", "mark <id>") is queued and run on the game thread at each frame boundary,
+ * "tapuntil Return 9f 60f <text> [3600f]", "mark <id>") is queued and run on the game thread at each frame boundary,
  * so its presses start and end on exact frames however fast the game runs.
  */
 #ifdef AURORA_ENABLE_OPENXR
@@ -33,6 +33,7 @@
 #include <dolphin/pad.h>
 
 #include "pc/pc.h"
+#include "pc/net.h"
 #include "pc/touch.h"
 #include "pc/xr_pointer.h"
 
@@ -122,6 +123,7 @@ typedef struct ScCmd {
     ScKind kind;
     int frames; /* a hold's, a tap's (held, then as long released), a wait's; an until's cap, 0 none */
     int every;  /* a tapuntil's: a tap starts this often until its text is seen */
+    int cap;    /* a tapuntil's: frames before it gives up */
     SDL_Scancode keys[8];
     int nkeys;
     char text[120]; /* an until's text, a mark's id */
@@ -136,7 +138,10 @@ typedef struct Script {
     int phase; /* a tap: 0 held, 1 released */
 } Script;
 static Script s_script[4];
-static unsigned s_script_frame; /* boundaries seen, for the log */
+static unsigned s_script_frame; /* frames stepped, for the log */
+/* Netplay sampled the pad (pc_keyboard_sim_frame) since the last frame
+ * boundary: the boundary leaves the scripts to it. Game thread. */
+static bool s_sim_sampled;
 /* An until's text, which pc_script_log_seen matches against every log line. */
 static SDL_Mutex* s_until_mutex;
 static atomic_bool s_until_ready;
@@ -219,6 +224,13 @@ static bool script_parse(const char* in, ScCmd* c) {
         }
         *text++ = '\0';
         c->every = script_frames(every);
+        /* An optional last "Nf": the cap, no part of the text. */
+        c->cap = SC_TAPUNTIL_CAP;
+        char* tail_sp = strrchr(text, ' ');
+        if (tail_sp != NULL && script_frames(tail_sp + 1) > 0) {
+            c->cap = script_frames(tail_sp + 1);
+            *tail_sp = '\0';
+        }
         snprintf(c->text, sizeof c->text, "%s", text);
         c->nkeys = script_keys(keys, c->keys);
         return c->nkeys > 0 && c->frames > 0 && c->every > c->frames && c->text[0] != '\0';
@@ -301,7 +313,7 @@ static void script_tick_locked(void) {
                         pc_log_line("script: P%d until \"%s\" from frame %u", pad + 1, s->cur.text, s_script_frame);
                     }
                     if (s->cur.kind == SC_TAPUNTIL) {
-                        s->left = SC_TAPUNTIL_CAP;
+                        s->left = s->cur.cap;
                         s->phase = 0; /* frames into the current tap's cycle */
                         script_keys_set(pad, &s->cur, true);
                         if (pad == 0) {
@@ -378,11 +390,13 @@ static void script_tick_locked(void) {
                 if (--s->left <= 0) {
                     script_until_hit(pad, true);
                     script_keys_set(pad, &s->cur, false);
-                    pc_log_line("script: P%d timeout at \"%s\" after %d frames; the rest of its script is dropped",
-                        pad + 1, s->cur.text, SC_TAPUNTIL_CAP);
+                    /* Unlike an until, it goes on: whoever wrote it checks
+                     * whether the text came, and a mark after it still
+                     * tells them the tapping is over. */
+                    pc_log_line("script: P%d gave up tapping for \"%s\" after %d frames", pad + 1, s->cur.text,
+                        s->cur.cap);
                     s->running = false;
-                    s->n = 0;
-                    break;
+                    continue;
                 }
                 /* Held for `frames`, released until `every`, again. */
                 s->phase = (s->phase + 1) % s->cur.every;
@@ -564,7 +578,10 @@ static void trace_locked(const PADStatus* st) {
 
 /* Merge the three sources - polled SDL keyboard state (focus-gated), fifo keys
  * and the latch - into port 0's virtual pad. Call with s_key_mutex held. */
-static void publish_locked(void) {
+/* `script_tick`: run the frame scripts' boundary first. `consume_latch`:
+ * this is the frame boundary's publish, which hands a press shorter than a
+ * frame to exactly one read and clears it. */
+static void publish_locked(bool script_tick, bool consume_latch) {
     if (!s_fifo_started) {
         static const char* const names[4] = {
             "MELEE_KEY_FIFO", "MELEE_KEY_FIFO_P2", "MELEE_KEY_FIFO_P3", "MELEE_KEY_FIFO_P4"};
@@ -583,7 +600,7 @@ static void publish_locked(void) {
             }
         }
     }
-    if (atomic_load_explicit(&s_until_ready, memory_order_relaxed)) {
+    if (script_tick && atomic_load_explicit(&s_until_ready, memory_order_relaxed)) {
         script_tick_locked();
     }
     publish_pad_fifos_locked();
@@ -634,7 +651,9 @@ static void publish_locked(void) {
         st.substickY = axis(SDL_SCANCODE_K, SDL_SCANCODE_I);
         st.triggerLeft = (s_key[SDL_SCANCODE_Q] || s_key_latched[SDL_SCANCODE_Q]) ? 255 : 0;
         st.triggerRight = (s_key[SDL_SCANCODE_E] || s_key_latched[SDL_SCANCODE_E]) ? 255 : 0;
-        memset(s_key_latched, 0, sizeof(s_key_latched));
+        if (consume_latch) {
+            memset(s_key_latched, 0, sizeof(s_key_latched));
+        }
         any_active = true;
         if (pc_pad_engaged(&st))
             engaged |= 1u << PC_PAD_DEVICE_KEYS;
@@ -758,6 +777,27 @@ void pc_keyboard_apply(void) {
             }
         }
     }
-    publish_locked();
+    /* Where netplay simulates, the scripts step where it samples the pad
+     * (pc_keyboard_sim_frame): a frame presented there is not always one
+     * simulated, and a hold must last its frames of the simulation. Any
+     * other frame (offline, or a scene netplay doesn't tick, such as the
+     * results) steps here. */
+    const bool sampled = s_sim_sampled;
+    s_sim_sampled = false;
+    publish_locked(!(pc_net_active() && sampled), true);
+    unlock_keys();
+}
+
+bool pc_keyboard_scripted(void) {
+    return atomic_load_explicit(&s_until_ready, memory_order_relaxed);
+}
+
+void pc_keyboard_sim_frame(void) {
+    if (!atomic_load_explicit(&s_until_ready, memory_order_relaxed)) {
+        return; /* no frame scripts: the boundary's publish stands */
+    }
+    lock_keys();
+    s_sim_sampled = true;
+    publish_locked(true, false);
     unlock_keys();
 }

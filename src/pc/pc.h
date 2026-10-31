@@ -52,6 +52,13 @@ void pc_keyboard_apply(void);
 /* Every log line, for the key FIFOs' frame scripts ("until <text>",
  * keyboard.c): pc_log_line and OSReport pass theirs on. Any thread. */
 void pc_script_log_seen(const char* line);
+/* Netplay is about to sample the pads for a fresh simulated frame
+ * (net.c capture_local_sample): the key FIFOs' frame scripts step here, so a
+ * hold lasts its frames of the simulation, not of what is presented. */
+void pc_keyboard_sim_frame(void);
+/* Frame scripts are on (the test FIFOs): every simulated frame takes its own
+ * sample, the extra ones time sync adds too, so a hold is exact. */
+bool pc_keyboard_scripted(void);
 void pc_touch_apply(void);
 
 /* GameCube adapter (WUP-028) read directly for raw 8-bit values

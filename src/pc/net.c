@@ -4878,6 +4878,7 @@ void pc_net_hold_local(int port, bool on) {
 static void capture_local_sample(bool fresh) {
     if (fresh) {
         PADStatus pads[4];
+        pc_keyboard_sim_frame(); /* frame scripts step with the simulation */
         PADRead(pads);
         memcpy(s_phys_last, pads, sizeof s_phys_last);
         for (int q = 0; q < PORTS; q++) {
@@ -4912,7 +4913,10 @@ static void fresh_tick(PADStatus* head, bool raw) {
         if (timing_debug < 0)
             timing_debug = getenv("MELEE_NET_DEBUG") != NULL;
         uint64_t sampled_at = timing_debug && raw ? SDL_GetTicksNS() : 0;
-        capture_local_sample(raw);
+        /* A frame script (tests only) steps with every simulated frame, so
+         * every one samples: a hold then lasts exactly its frames, however
+         * many ticks a present runs unpaced. */
+        capture_local_sample(raw || pc_keyboard_scripted());
         /* One slot per tick; a delay change (delay_auto) leaves a gap to fill
          * with the same sample, or already-sent frames that must not move. */
         int64_t target_w = (int64_t)net.frame + net.delay;
