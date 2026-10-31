@@ -808,6 +808,12 @@ def details_full(g, shots):
     A there joins nothing, and B goes back to the same row."""
     nt.press((g,), "Return", 9, 1.5)  # START: Show full
     line = open_details(g, timeout=30)
+    if line is not None and " 2/2 " not in line:
+        # Details opened on the list's row, which can be a fetch old; its own
+        # fetch brings the lobby's newest (logged again when it differs).
+        code = line.split()[3]
+        if g.wait_log(rf"xeleenet pages: details {code} 2/2 ", 15):
+            line = nt.re.findall(rf"xeleenet pages: details {code} 2/2 .*", g.text())[-1]
     print(f"net_test_xn_menu: {g.name}'s {line}", flush=True)
     if line is None or " 2/2 " not in line:
         print(f"[{g.name}] FAIL: Show full never offered the full lobby's Details")
@@ -1572,7 +1578,12 @@ def run(args):
             if args.no_discovery:
                 shot(g, shots, f"5-blocked-{g.name}")
             if args.scenario == "details" and k > 0:
-                # The lobby is full: the others only look at it.
+                # The lobby is full: the others only look at it, once the
+                # first guest is in (the live service is round trips away:
+                # its count can lag the press that joined).
+                if not host.wait_log(r"xeleenet: session \d+ up as P1 with 1 others", 60):
+                    print("FAIL: the first guest never joined the host")
+                    return False
                 if not details_full(g, shots):
                     return False
                 continue

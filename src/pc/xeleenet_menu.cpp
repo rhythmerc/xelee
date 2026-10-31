@@ -1105,7 +1105,13 @@ struct Screen : Rml::EventListener {
                 if (hide && s_hidden_code == out[i].code)
                     continue;
                 if (page == Page::Details && std::strcmp(out[i].code, details.code) == 0) {
+                    // Opened on the list's row, which can be a fetch old:
+                    // say so when the lobby's newest differs (tests wait on it).
+                    const bool changed = out[i].taken != details.taken || out[i].nplayers != details.nplayers ||
+                                         out[i].playing != details.playing;
                     details = out[i];
+                    if (changed)
+                        log_details();
                     detailsRow = static_cast<int>(rows.size());
                     found = true;
                 }
