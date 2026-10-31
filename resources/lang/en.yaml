@@ -313,12 +313,43 @@ xeleenet:
     time: Time
     first_to: First to {n}
     endless: Endless
+    # The line's end: the fighter and stage lists, when they aren't All and
+    # Competitive ("Low tiers" and "High tiers" are rules_line's).
+    summary:
+      only: "{name} only"            # one fighter, or one stage
+      fighters: "{n} fighters"
+      all_stages: All stages
+      stages: Custom ({n})
     others:
       one: "{n} more lobby is on another Xelee version. Update to see it."
       other: "{n} more lobbies are on another Xelee version. Update to see them."
     hints:
-      row: Join a public lobby, or enter a friend's code.
+      row: See this lobby's fighters, stages and players before you join.
       empty: Go back to Host to open one, or press Y to enter a code.
+
+  # A lobby's Details, A on its row (docs/xeleenet-lobby-details-plan.md).
+  details:
+    title: Lobby
+    seats: "{n} of {m} seats"
+    closed_badge: CLOSED
+    players: PLAYERS
+    stages: STAGES
+    fighters: FIGHTERS
+    open_seat: Open seat
+    pad_seat: "{name} {n}"           # another pad of that player's machine, as the CSS names it
+    other_pad: Another controller    # ...when the player isn't known
+    off_label: "Off:"                # before the stages that are off, dimmed
+    "off": "Off: {names}"            # under the fighters: the shorter side
+    only: "Only: {names}"
+    every_fighter: Every fighter
+    every_stage: Every stage
+    hints:
+      open:
+        one: "{n} seat open. You'd be P{p}."
+        other: "{n} seats open. You'd be P{p}."
+      full: Full. It shows because Show full is on.
+      in_game: In a game. Join, and you're seated when they're back on the CSS.
+      closed: This lobby closed.
 
   # Join > Enter code (J1).
   code:
@@ -419,6 +450,7 @@ xeleenet:
     fighter_sets: All / high / low
     only_this: Only this one
     join: Join
+    details: Details                 # A on a lobby's row
     enter_code: Enter code
     join_address: Join by address    # LAN's list
     refresh: Refresh
@@ -506,9 +538,11 @@ xeleenet:
         title: This network won't let Xelee look for lobbies
         line: This network blocks local discovery. Ask the lobby's host for the address on their lobby banner.
       hints:
-        row: Join a lobby on this network.
         empty: Go back to Host to open one, or press X to join by address.
         blocked: "X: join by the host's address."
+    details:
+      hints:
+        closed: This lobby isn't on this network any more.
     # Join by address (J2): XeleeNet's code keypad, digits and a dot.
     code:
       title: Join

@@ -79,6 +79,9 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
 .lrow .lw { position: absolute; left: 22px; top: 10px; width: 600px; }
 .lrow .ln { font-size: 27px; font-weight: 800; color: #ffffff; }
 .lrow .ls { margin-top: 4px; font-size: 17px; color: #8d8468; }
+.lrow .lsum { display: inline; color: #e7d7a8; }   /* the lists, when not the defaults */
+/* Hidden, in .ls's font: the code measures a row's line on it (fits_row). */
+#lsm { position: absolute; left: 0; top: 0; visibility: hidden; font-size: 17px; }
 .lrow .lm { position: absolute; left: 650px; top: 28px; width: 120px; font-size: 17px; font-weight: bold;
             letter-spacing: 2px; color: #c9b77c; }
 .lrow .lb { position: absolute; left: 780px; top: 24px; width: 110px; }
@@ -95,6 +98,54 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
 #sbar { position: absolute; left: 1100px; top: 60px; width: 6px; height: 468px; border-radius: 3px; background-color: #f0c22630; }
 #sbar .thumb { position: absolute; left: 0; width: 6px; border-radius: 3px; background-color: #f0c226; }
 .foot { position: absolute; left: 0; width: 1120px; top: 562px; text-align: center; font-size: 18px; color: #8d8468; }
+
+/* ---- Details: a lobby before joining it (docs/xeleenet-lobby-details-plan.md) ----
+ * Lines of words hold at 23 px or more (the wireframe's 12 units); headings
+ * and tags keep their small caps. */
+
+#dtop { position: absolute; left: 28px; top: 0; width: 1064px; height: 92px; padding: 0 20px;
+        border: 2px #f0c22660; border-radius: 9px; background-color: #0c0b08e0; }
+#dtop.cursor { border: 3px #fff4c4; background-color: #1d180af0; box-shadow: #ffb020e0 0px 0px 16px 3px; padding: 0 19px; }
+#dtop .dl1 { position: absolute; left: 20px; top: 6px; width: 1020px; height: 48px; }
+#dtop .dn { display: inline-block; font-size: 38px; font-weight: 800; color: #ffffff; }
+#dtop .badge { margin-left: 16px; vertical-align: middle; }
+#dtop .badge.gone { color: #ff8a5c; background-color: #00000000; border: 2px #ff8a5c; line-height: 24px; }
+#dtop .dplace { position: absolute; right: 0; top: 10px; font-size: 23px; font-weight: bold; color: #fff8e0; }
+#dtop .dpl { display: inline; margin-right: 22px; font-weight: normal; color: #8d8468; }
+#dtop .dl2 { position: absolute; left: 20px; top: 56px; width: 1020px; font-size: 24px; color: #c9b77c; }
+
+.col.dleft { left: 28px; top: 102px; width: 412px; }
+.col.dright { left: 470px; top: 102px; width: 622px; }
+.dleft .grp, .dright .grp { position: relative; }
+.grp .gv { position: absolute; right: 0; top: 3px; font-size: 23px; font-weight: bold; color: #e7d7a8; }
+
+.dseat { position: relative; height: 46px; }
+.dseat .pc { position: absolute; left: 2px; top: 9px; width: 7px; height: 28px; border-radius: 3px; }
+.dseat .pn { position: absolute; left: 20px; top: 0; font-size: 19px; font-weight: 800; line-height: 46px; color: #d6d3cb; }
+.dseat .nm { position: absolute; left: 62px; top: 0; font-size: 25px; font-weight: bold; line-height: 46px; color: #fff8e0; }
+.dseat .tags { position: absolute; right: 0; top: 9px; }
+.dseat .tags .badge { margin-left: 8px; }
+.dseat.open { height: 38px; margin: 4px 0; border: 2px #c9b77c60; border-radius: 6px; }
+.dseat.open .pn { left: 18px; line-height: 34px; color: #8d8468; }
+.dseat.open .nm { left: 60px; line-height: 34px; font-weight: normal; color: #c9b77c; }
+
+.dchips { margin-top: 8px; }
+.dchip { display: inline-block; height: 36px; margin: 0 8px 8px 0; padding: 0 10px; font-size: 23px; line-height: 32px;
+         color: #fff8e0; border: 2px #f0c226c0; border-radius: 5px; background-color: #2a2008e0; }
+.dchip.dim { color: #8d8468; border-color: #f0c22640; background-color: #0c0b08c0; }
+.dchip.lbl { padding: 0 4px 0 0; color: #c9b77c; border-color: #00000000; background-color: #00000000; }
+.dline { margin-top: 4px; font-size: 23px; color: #e7d7a8; }
+
+/* The fighters: the CSS's rows of 9, 9 and 7 in miniature. */
+#dgrid { margin-top: 10px; }
+.drow { height: 58px; }
+.drow.short { padding-left: 66px; }
+.dcell { display: inline-block; vertical-align: top; width: 60px; height: 52px; margin-right: 6px; border: 2px #f0c226c0; border-radius: 5px;
+         background-color: #2a2008e0; }
+.dcell.off { opacity: 0.3; }
+.dcell img { width: 56px; height: 48px; }
+.dcn { padding-top: 3px; font-size: 12px; line-height: 14px; text-align: center; color: #fff8e0; }
+.dnames { margin-top: 14px; max-height: 90px; overflow: hidden; font-size: 23px; line-height: 30px; color: #e7d7a8; }
 
 /* ---- J1: the code -------------------------------------------------------------- */
 

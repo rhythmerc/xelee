@@ -54,6 +54,8 @@ const char* const kLeft = "\xe2\x80\xb9"; // the value arrows
 const char* const kRight = "\xe2\x80\xba";
 const char* const kDot = " \xc2\xb7 ";
 const int kListRows = 5; // B1's rows in view
+// The players' colours, as Melee's ports.
+const char* const kPortColor[4] = {"#e8463c", "#4a78f0", "#f0c226", "#3dbb5a"};
 
 std::string fmt(float v) {
     char b[32];
@@ -145,6 +147,33 @@ int stage_count(unsigned mask) {
     for (const Stage& s : kStages)
         n += (mask >> s.bit) & 1;
     return n;
+}
+
+// B1's row summaries (docs/xeleenet-lobby-details-plan.md D4): the fighter
+// list, "" when it's All (or unknown).
+std::string fighters_summary(unsigned mask) {
+    if (mask == 0 || mask == XN_FIGHTERS_ALL)
+        return "";
+    if (mask == XN_FIGHTERS_HIGH || mask == XN_FIGHTERS_LOW)
+        return tr(mask == XN_FIGHTERS_HIGH ? "xeleenet.rules_line.fighters_high" : "xeleenet.rules_line.fighters_low");
+    const int n = xn_fighters_count(mask);
+    for (int i = 0; i < XN_FIGHTER_ENTRIES && n == 1; i++)
+        if ((mask >> xn_fighter_order[i]) & 1)
+            return tr("xeleenet.lobbies.summary.only", {{"name", fighter_name(i)}});
+    return tr("xeleenet.lobbies.summary.fighters", {{"n", n}});
+}
+
+// The stage list, "" when it's Competitive (or unknown).
+std::string stages_summary(unsigned mask) {
+    if (mask == 0 || mask == kCompetitive)
+        return "";
+    if (mask == kAllStages)
+        return tr("xeleenet.lobbies.summary.all_stages");
+    const int n = stage_count(mask);
+    for (const Stage& s : kStages)
+        if (n == 1 && ((mask >> s.bit) & 1))
+            return tr("xeleenet.lobbies.summary.only", {{"name", tr(s.name)}});
+    return tr("xeleenet.lobbies.summary.stages", {{"n", n}});
 }
 
 // ---- the lobby's settings (H1) --------------------------------------------------
@@ -351,6 +380,41 @@ PcXnListing sample(const char* code, const char* name, const char* host, const c
     x.taken = taken, x.seats = seats, x.teams = teams, x.stock = stock, x.stocks = stocks, x.time_min = minutes;
     x.first_to = first_to, x.first_to_n = 2, x.playing = playing, x.xr = xr;
     std::snprintf(x.items, sizeof x.items, "off");
+    x.fighter_mask = XN_FIGHTERS_ALL, x.stage_mask = kCompetitive;
+    return x;
+}
+
+void sample_seat(PcXnListing& x, int port, const char* name, const char* tag, bool xr) {
+    PcXnSeat& s = x.players[x.nplayers++];
+    s = PcXnSeat{};
+    std::snprintf(s.name, sizeof s.name, "%s", name);
+    std::snprintf(s.tag, sizeof s.tag, "%s", tag);
+    s.port = static_cast<uint8_t>(port);
+    s.xr = xr;
+    s.extra = name[0] == '\0'; // another pad of P1's machine
+}
+
+// tools/xn_preview.py's details (XeleeNet: 3 of 4, Low tiers, Competitive)
+// and lan-details (full, in a game, a custom stage list, another pad's seat).
+PcXnListing details_sample(bool on_lan) {
+    PcXnListing x;
+    if (!on_lan) {
+        x = sample("K7MQ2D", "Low tier FFA", "RHYTHM", "K7Q2MPXA", "US", 3, 4, false, true, 4, 8, false, false, true);
+        sample_seat(x, 0, "RHYTHM", "K7Q2MPXA", false);
+        sample_seat(x, 1, "KOOPA", "Z2RWQ4NE", true);
+        sample_seat(x, 2, "WAVEDASH KID", "3MPAT2LA", false);
+        x.fighter_mask = XN_FIGHTERS_LOW, x.stage_mask = kCompetitive;
+        return x;
+    }
+    x = sample("C0UCH1", "couch crew", "KOOPA", "Z2RWQ4NE", "", 4, 4, true, true, 3, 7, true, true, true);
+    std::snprintf(x.address, sizeof x.address, "192.168.0.57");
+    sample_seat(x, 0, "KOOPA", "Z2RWQ4NE", false);
+    sample_seat(x, 1, "STAR", "Q4NEK7Q2", true);
+    sample_seat(x, 2, "MOSS", "T2LA3MPA", false);
+    sample_seat(x, 3, "", "", false);
+    std::snprintf(x.items, sizeof x.items, "low");
+    x.fighter_mask = XN_FIGHTERS_ALL;
+    x.stage_mask = kAllStages & ~(1u << 10 | 1u << 23 | 1u << 22);
     return x;
 }
 
@@ -390,11 +454,14 @@ void view(PcXnPunchView* v) {
 
 // ---- the screens --------------------------------------------------------------
 
-enum class Page { Host, Stages, Fighters, More, Lobbies, Code, Joining, Failed };
+enum class Page { Host, Stages, Fighters, More, Lobbies, Details, Code, Joining, Failed };
+// In Page's order. The board's class is the name in lower case (set_board).
 const char* page_name(Page p) {
-    static const char* const names[] = {"Host", "Stages", "More", "Lobbies", "Code", "Joining", "Failed"};
+    static const char* const names[] = {"Host",    "Stages", "Fighters", "More",  "Lobbies",
+                                        "Details", "Code",   "Joining",  "Failed"};
     return names[static_cast<int>(p)];
 }
+constexpr int kPageCount = static_cast<int>(Page::Failed) + 1;
 
 // A focusable thing: its element id, its place (col, row) and what it does.
 struct Item {
@@ -507,6 +574,12 @@ struct Screen : Rml::EventListener {
     std::string lastLegend;
     int scrollTop = 0; // B1's first row in view
 
+    // Details (docs/xeleenet-lobby-details-plan.md): the lobby as last listed,
+    // its row on B1 (B goes back to it), and whether it has left the list.
+    PcXnListing details{};
+    int detailsRow = 0;
+    bool detailsGone = false;
+
     bool load() {
         if (document != nullptr)
             return true;
@@ -526,7 +599,8 @@ struct Screen : Rml::EventListener {
 
     void go(Page p, const char* focus = nullptr) {
         if (p != page)
-            pc_log_line("xeleenet pages: %s -> %s", page_name(page), page_name(p));
+            pc_log_line("xeleenet pages: %s -> %s%s%s", page_name(page), page_name(p), focus != nullptr ? " at " : "",
+                        focus != nullptr ? focus : "");
         page = p;
         cursorId = focus != nullptr ? focus : "";
         cursor = 0;
@@ -814,7 +888,8 @@ struct Screen : Rml::EventListener {
                 sample("H3TR8B", "items on chaos", "KOOPA", "Z2RW", "US", 2, 4, false, false, 4, 3, false, true, false),
                 sample("W9PX4C", "Ledge practice FD only", "WAVE", "P9TX", "CA", 1, 2, false, true, 4, 8, false, false,
                        true),
-                sample("S4NQE7", "Sunday crew", "STAR", "Q4NE", "GB", 1, 4, true, true, 3, 7, true, false, false),
+                sample("S4NQE7", "Sunday crew", "WAVEDASH KID", "Q4NE", "GB", 1, 4, true, true, 3, 7, true, false,
+                       false),
                 sample("M2KD7F", "Marth dittos", "LUNA", "8KQD", "US", 1, 2, false, true, 4, 8, false, false, false),
                 sample("B8HC3N", "Brinstar beginners", "MOSS", "T2LA", "DE", 2, 4, false, true, 4, 8, false, false,
                        false),
@@ -822,6 +897,14 @@ struct Screen : Rml::EventListener {
                 sample("C5PL2Q", "Late night FFA", "NOVA", "C3RE", "JP", 2, 4, false, false, 4, 4, false, true,
                        false),
             };
+            // The row summaries (D4): All stages, Final Dest. only, Marth
+            // only, and a long line that drops its stage part (Mushroom K.
+            // II only).
+            rows[1].stage_mask = kAllStages;
+            rows[2].stage_mask = 1u << 25;
+            rows[3].fighter_mask = 1u << 0x0E, rows[3].stage_mask = 1u << 22;
+            rows[4].fighter_mask = 1u << 0x09;
+            rows[5].fighter_mask = XN_FIGHTERS_LOW;
             others = 2, fetch = 1, fetchedAt = SDL_GetTicks() - 4000;
             if (lan()) {
                 rows.resize(s_preview == "lan-lobbies" ? 3 : 0);
@@ -837,12 +920,17 @@ struct Screen : Rml::EventListener {
             fetch = -1;
             return;
         }
-        fetch = pc_xn_browse(url, &id, showFull) ? 0 : -1;
+        // Details asks for the full ones too: its lobby filling up isn't it
+        // closing (poll_browse keeps them off B1).
+        fetch = pc_xn_browse(url, &id, showFull || page == Page::Details) ? 0 : -1;
         std::memset(&id, 0, sizeof id);
     }
 
+    // B1 and Details read the list (Details follows its lobby in it).
+    bool browsing() const { return page == Page::Lobbies || page == Page::Details; }
+
     void poll_browse() {
-        if (page != Page::Lobbies || (fetch != 0 && !lan()) || !s_preview.empty())
+        if (!browsing() || (fetch != 0 && !lan()) || !s_preview.empty())
             return; // LAN's list is live: read every frame
         PcXnListing out[PC_XN_LIST_MAX];
         int n = 0, o = 0;
@@ -850,9 +938,22 @@ struct Screen : Rml::EventListener {
         if (st == 1) {
             rows.clear();
             const bool hide = !s_hidden_code.empty() && SDL_GetTicks() - s_hidden_at < kHiddenMs;
-            for (int i = 0; i < n; i++)
-                if (!hide || s_hidden_code != out[i].code)
+            // Details shows its lobby's newest row; one that has gone stays
+            // shown, closed.
+            bool found = false;
+            for (int i = 0; i < n; i++) {
+                if (hide && s_hidden_code == out[i].code)
+                    continue;
+                if (page == Page::Details && std::strcmp(out[i].code, details.code) == 0) {
+                    details = out[i];
+                    detailsRow = static_cast<int>(rows.size());
+                    found = true;
+                }
+                if (showFull || out[i].taken < out[i].seats)
                     rows.push_back(out[i]);
+            }
+            if (page == Page::Details)
+                detailsGone = !found;
             others = o;
             fetch = 1;
             fetchedAt = SDL_GetTicks();
@@ -904,24 +1005,31 @@ struct Screen : Rml::EventListener {
             const char* mode = x.teams        ? "xeleenet.lobbies.modes.doubles"
                                : x.seats == 2 ? "xeleenet.lobbies.modes.1v1"
                                               : "xeleenet.lobbies.modes.ffa";
-            const std::string sub =
+            const std::string base =
                 std::string(x.host) + (x.tag[0] ? "#" + std::string(x.tag).substr(0, 4) : "") + kDot +
                 (x.stock ? tr("xeleenet.lobbies.stocks", {{"n", x.stocks}}) : tr("xeleenet.lobbies.time")) + kDot +
                 minutes_label(x.time_min) + kDot +
                 (x.first_to ? tr("xeleenet.lobbies.first_to", {{"n", x.first_to_n}}) : tr("xeleenet.lobbies.endless"));
-            Item it{id, 0, static_cast<int>(i), !full};
-            it.act = [this, i] {
-                joining = rows[i];
-                joiningKnown = true;
-                code = rows[i].code;
-                join();
-            };
+            // Then the lists, when they aren't the defaults; the stages go
+            // first when the line runs out of room (Details always has them).
+            std::string lists = fighters_summary(x.fighter_mask);
+            const std::string stages = stages_summary(x.stage_mask);
+            if (!stages.empty()) {
+                const std::string both = lists.empty() ? stages : lists + kDot + stages;
+                if (fits_row(base + kDot + both))
+                    lists = both;
+            }
+            const std::string sub = enc(base) + (lists.empty() ? "" : enc(kDot) + "<span class=\"lsum\">" + enc(lists) +
+                                                                         "</span>");
+            // Full ones too: Details still shows them.
+            Item it{id, 0, static_cast<int>(i), true};
+            it.act = [this, i] { open_details(static_cast<int>(i)); };
             it.hint = tr("xeleenet.lobbies.hints.row");
             items.push_back(std::move(it));
             if (static_cast<int>(i) < scrollTop || static_cast<int>(i) >= scrollTop + kListRows)
                 continue;
             r += "<div id=\"" + id + "\" class=\"lrow" + (full ? " full" : "") + "\"><div class=\"lw\"><div class=\"ln\">" +
-                 enc(x.name) + "</div><div class=\"ls\">" + enc(sub) + "</div></div><div class=\"lm\">" +
+                 enc(x.name) + "</div><div class=\"ls\">" + sub + "</div></div><div class=\"lm\">" +
                  enc(tr(mode)) + "</div><div class=\"lb\">" +
                  (x.playing ? "<span class=\"badge game\">" + enc(tr("xeleenet.lobbies.in_game")) + "</span>"
                   : x.xr    ? "<span class=\"badge\">" + enc(tr("xeleenet.lobbies.xr")) + "</span>"
@@ -940,6 +1048,196 @@ struct Screen : Rml::EventListener {
         if (others > 0)
             r += "<div class=\"foot\">" + enc(tr("xeleenet.lobbies.others", {{"n", others}})) + "</div>";
         set_board(r);
+    }
+
+    // ---- Details: a lobby before joining it ---------------------------------
+
+    void open_details(int i) {
+        details = rows[i];
+        detailsRow = i;
+        detailsGone = false;
+        log_details();
+        go(Page::Details, "dtop");
+        if (lan() && s_preview.empty())
+            browse(); // full lobbies too, while here (the service's next fetch asks)
+    }
+
+    // "RHYTHM#K7Q2", or for another pad "RHYTHM 2", as the CSS names it.
+    static std::string seat_name(const PcXnListing& x, const PcXnSeat& s) {
+        if (!s.extra)
+            return std::string(s.name) + (s.tag[0] ? "#" + std::string(s.tag).substr(0, 4) : "");
+        int n = 1;
+        std::string owner;
+        for (int i = 0; i < x.nplayers; i++) {
+            const PcXnSeat& o = x.players[i];
+            if (!o.extra && o.port == s.owner)
+                owner = o.name;
+            if (o.extra && o.owner == s.owner && o.port <= s.port)
+                n++;
+        }
+        return owner.empty() ? tr("xeleenet.details.other_pad", {{"n", n}})
+                             : tr("xeleenet.details.pad_seat", {{"name", owner}, {"n", n}});
+    }
+
+    void log_details() const {
+        const PcXnListing& x = details;
+        std::string who;
+        for (int i = 0; i < x.nplayers; i++)
+            who += (who.empty() ? "" : ",") + std::string("P") + std::to_string(x.players[i].port + 1) + "=" +
+                   seat_name(x, x.players[i]) + (x.players[i].port == 0 ? "(host)" : "");
+        pc_log_line("xeleenet pages: details %s %d/%d players=%s fighters=%08x stages=%08x%s", x.code, x.taken,
+                    x.seats, who.c_str(), x.fighter_mask, x.stage_mask, x.playing ? " playing" : "");
+    }
+
+    bool details_full() const { return details.taken >= details.seats; }
+    bool details_joinable() const { return !details_full() && !detailsGone; }
+
+    // The seat a joiner would get: the lowest port nobody holds.
+    int details_open_port() const {
+        unsigned held = 1;
+        for (int i = 0; i < details.nplayers; i++)
+            held |= 1u << details.players[i].port;
+        for (int q = 1; q < 4; q++)
+            if (!(held & (1u << q)))
+                return q;
+        return details.taken;
+    }
+
+    // The place line: the region, or on LAN the host's address.
+    std::string details_place() const { return lan() ? details.address : details.country; }
+
+    // "Off: Fox, Falco" or "Only: Marth", whichever is shorter (ties go to
+    // Off); every name on: `all`.
+    template <typename Name>
+    static std::string names_line(int total, const std::function<bool(int)>& on, Name name, const char* all) {
+        std::string offs, ons;
+        int n_on = 0;
+        for (int i = 0; i < total; i++) {
+            std::string& to = on(i) ? ons : offs;
+            n_on += on(i);
+            // Each name kept on one line ("Young Link"): no-break spaces.
+            std::string n = name(i);
+            for (size_t at; (at = n.find(' ')) != std::string::npos;)
+                n.replace(at, 1, "\xc2\xa0");
+            to += (to.empty() ? "" : ", ") + n;
+        }
+        if (n_on == total)
+            return tr(all);
+        return offs.size() <= ons.size() ? tr("xeleenet.details.off", {{"names", offs}})
+                                         : tr("xeleenet.details.only", {{"names", ons}});
+    }
+
+    void build_details() {
+        const PcXnListing& x = details;
+        const bool can = details_joinable();
+        // The top block: the name, seats and place; the host and the rules.
+        // A (or a click on it) joins.
+        std::string r = "<div id=\"dtop\"><div class=\"dl1\"><span class=\"dn\">" + enc(x.name) + "</span>";
+        if (x.playing)
+            r += "<span class=\"badge game\">" + enc(tr("xeleenet.lobbies.in_game")) + "</span>";
+        if (detailsGone)
+            r += "<span class=\"badge gone\">" + enc(tr("xeleenet.details.closed_badge")) + "</span>";
+        r += "<div class=\"dplace\">" +
+             (details_place().empty() ? std::string() : "<span class=\"dpl\">" + enc(details_place()) + "</span>") +
+             enc(tr("xeleenet.details.seats", {{"n", x.taken}, {"m", x.seats}})) + "</div></div>";
+        const std::string host = std::string(x.host) + (x.tag[0] ? "#" + std::string(x.tag).substr(0, 4) : "");
+        r += "<div class=\"dl2\">" +
+             enc(host + kDot + rules_line(x.teams, x.seats, x.stock, x.stocks, x.time_min, x.items) + kDot +
+                 (x.first_to ? tr("xeleenet.lobbies.first_to", {{"n", x.first_to_n}})
+                             : tr("xeleenet.lobbies.endless"))) +
+             "</div></div>";
+        {
+            Item it{"dtop", 0, 0, can};
+            it.act = [this] {
+                joining = details;
+                joiningKnown = true;
+                code = details.code;
+                join();
+            };
+            items.push_back(std::move(it));
+        }
+        // Players: a row per seat in port order; open seats dashed.
+        r += "<div class=\"col dleft\">";
+        group(r, "xeleenet.details.players");
+        for (int q = 0; q < std::clamp(x.seats, 2, 4); q++) {
+            const PcXnSeat* s = nullptr;
+            for (int i = 0; i < x.nplayers; i++)
+                if (x.players[i].port == q)
+                    s = &x.players[i];
+            const std::string pn = "<div class=\"pn\">P" + std::to_string(q + 1) + "</div>";
+            if (s == nullptr) {
+                r += "<div class=\"dseat open\">" + pn + "<div class=\"nm\">" + enc(tr("xeleenet.details.open_seat")) +
+                     "</div></div>";
+                continue;
+            }
+            r += "<div class=\"dseat\"><div class=\"pc\" style=\"background-color: " + std::string(kPortColor[q]) +
+                 ";\"></div>" + pn + "<div class=\"nm\">" + enc(seat_name(x, *s)) + "</div><div class=\"tags\">" +
+                 (q == 0 ? "<span class=\"badge\">" + enc(tr("xeleenet.joining.host")) + "</span>" : std::string()) +
+                 (s->xr ? "<span class=\"badge\">" + enc(tr("xeleenet.lobbies.xr")) + "</span>" : std::string()) +
+                 "</div></div>";
+        }
+        // Stages: by name, the shorter side (dimmed when it's the off one).
+        r += "<div class=\"grp\"><span>" + enc(tr("xeleenet.details.stages")) + "</span><div class=\"gv\">" +
+             enc(stage_list_label(x.stage_mask)) + "</div></div><div class=\"dchips\">";
+        const int n_on = stage_count(x.stage_mask);
+        if (n_on == kStageCount) {
+            r += "<div class=\"dline\">" + enc(tr("xeleenet.details.every_stage")) + "</div>";
+        } else {
+            const bool offs = kStageCount - n_on <= n_on;
+            if (offs)
+                r += "<div class=\"dchip lbl\">" + enc(tr("xeleenet.details.off_label")) + "</div>";
+            for (const Stage& s : kStages)
+                if (((x.stage_mask >> s.bit) & 1) != offs)
+                    r += "<div class=\"dchip" + std::string(offs ? " dim" : "") + "\">" + enc(tr(s.name)) + "</div>";
+        }
+        r += "</div></div>";
+        // Fighters: the CSS's rows of 9, 9 and 7, off-list cells dimmed, and
+        // their names in a line under them.
+        r += "<div class=\"col dright\"><div class=\"grp\"><span>" + enc(tr("xeleenet.details.fighters")) +
+             "</span><div class=\"gv\">" + enc(fighter_list_label(x.fighter_mask)) + "</div></div><div id=\"dgrid\">";
+        for (int i = 0; i < XN_FIGHTER_ENTRIES; i++) {
+            if (i % kFightersAcross == 0)
+                r += std::string(i ? "</div>" : "") + "<div class=\"drow" + (i / kFightersAcross == 2 ? " short" : "") +
+                     "\">";
+            const bool on = (x.fighter_mask >> xn_fighter_order[i]) & 1;
+            r += "<div class=\"dcell" + std::string(on ? "" : " off") + "\">" + fighter_cell(i) + "</div>";
+        }
+        const unsigned fm = x.fighter_mask;
+        r += "</div></div><div class=\"dnames\">" +
+             enc(names_line(
+                 XN_FIGHTER_ENTRIES, [fm](int i) { return ((fm >> xn_fighter_order[i]) & 1) != 0; },
+                 [](int i) { return fighter_name(i); }, "xeleenet.details.every_fighter")) +
+             "</div></div>";
+        set_board(r);
+    }
+
+    // A fighter's cell in the Details grid: its name (D5 adds its CSS
+    // portrait).
+    static std::string fighter_cell(int entry) { return "<div class=\"dcn\">" + enc(fighter_name(entry)) + "</div>"; }
+
+    std::string details_hint() const {
+        if (detailsGone)
+            return tr("xeleenet.details.hints.closed");
+        if (details_full())
+            return tr("xeleenet.details.hints.full");
+        if (details.playing)
+            return tr("xeleenet.details.hints.in_game");
+        return tr("xeleenet.details.hints.open",
+                  {{"n", details.seats - details.taken}, {"p", details_open_port() + 1}});
+    }
+
+    // Whether a row's second line fits its 600 px (.lrow .lw), measured on
+    // the hidden #lsm (xeleenet.rml), which has the line's font. Until that
+    // has its font (the first frame), a count of characters stands in.
+    bool fits_row(const std::string& line) const {
+        constexpr int kRowLinePx = 600, kRowLineChars = 62;
+        auto* m = document != nullptr ? document->GetElementById("lsm") : nullptr;
+        if (m != nullptr && m->GetFontFaceHandle() != 0)
+            return Rml::ElementUtilities::GetStringWidth(m, line) <= kRowLinePx;
+        size_t chars = 0;
+        for (const char c : line)
+            chars += (static_cast<unsigned char>(c) & 0xC0) != 0x80; // UTF-8 lead bytes
+        return chars <= kRowLineChars;
     }
 
     // LAN's list with nothing at all heard, not even our own query: the
@@ -1202,13 +1500,17 @@ struct Screen : Rml::EventListener {
         touchedAt = SDL_GetTicks();
     }
 
+    // Back to B1, and to the row a join off Details came from.
     void to_lobbies() {
+        const std::string row = joiningKnown && std::strcmp(joining.code, details.code) == 0
+                                    ? "lb" + std::to_string(detailsRow)
+                                    : std::string();
         touchedAt = SDL_GetTicks();
         joiningKnown = false;
         code.clear();
         lookFrom = SDL_GetTicks();
         blockedLogged = false;
-        go(Page::Lobbies);
+        go(Page::Lobbies, row.empty() ? nullptr : row.c_str());
         browse();
     }
 
@@ -1246,9 +1548,14 @@ struct Screen : Rml::EventListener {
                 r += key("y", "xeleenet.legend.only_this");
             r += key("x", "xeleenet.legend.fighter_sets") + key("b", "xeleenet.legend.done");
             break;
+        case Page::Details:
+            if (details_joinable())
+                r += key("a", "xeleenet.legend.join");
+            r += key("b", "xeleenet.legend.back");
+            break;
         case Page::Lobbies:
             if (!rows.empty())
-                r += key("a", "xeleenet.legend.join");
+                r += key("a", "xeleenet.legend.details");
             r += lan() ? key("x", "xeleenet.legend.join_address")
                        : key("y", "xeleenet.legend.enter_code") + key("x", "xeleenet.legend.refresh");
             r += key("start", showFull ? "xeleenet.legend.hide_full" : "xeleenet.legend.show_full") +
@@ -1298,10 +1605,11 @@ struct Screen : Rml::EventListener {
         last = r;
         auto* board = document->GetElementById("board");
         board->SetInnerRML(r);
-        // In Page's order.
-        const char* kinds[] = {"host", "stages", "fighters", "more", "lobbies", "code", "joining", "failed"};
-        for (int i = 0; i < static_cast<int>(sizeof kinds / sizeof kinds[0]); i++)
-            board->SetClass(kinds[i], static_cast<int>(page) == i);
+        for (int i = 0; i < kPageCount; i++) {
+            std::string kind = page_name(static_cast<Page>(i));
+            kind[0] = static_cast<char>(std::tolower(kind[0]));
+            board->SetClass(kind, static_cast<int>(page) == i);
+        }
         mark();
         update_legend();
     }
@@ -1316,6 +1624,7 @@ struct Screen : Rml::EventListener {
         case Page::Stages: build_stages(); break;
         case Page::Fighters: build_fighters(); break;
         case Page::Lobbies: build_lobbies(); break;
+        case Page::Details: build_details(); break;
         case Page::Code: build_code(); break;
         case Page::Joining: build_joining(); break;
         case Page::Failed: build_failed(); break;
@@ -1444,6 +1753,12 @@ struct Screen : Rml::EventListener {
         case Page::Fighters:
             go(Page::Host, "flist");
             break;
+        case Page::Details: {
+            // The same row, with no fetch (the list stays as it was).
+            const std::string row = "lb" + std::to_string(detailsRow);
+            go(Page::Lobbies, row.c_str());
+            break;
+        }
         case Page::Code:
             if (!code.empty() && !lan()) {
                 code.pop_back();
@@ -1548,6 +1863,8 @@ struct Screen : Rml::EventListener {
                              : tr("xeleenet.joining.hints.finding");
         } else if (page == Page::Failed) {
             hintText = tr("xeleenet.failed.hint");
+        } else if (page == Page::Details) {
+            hintText = details_hint();
         } else if (!hostNote.empty() && (page == Page::Host || page == Page::Lobbies)) {
             hintText = hostNote;
         } else if (page == Page::Lobbies && items.empty()) {
@@ -1567,6 +1884,7 @@ struct Screen : Rml::EventListener {
         case Page::Stages: return pc_tr("xeleenet.stages.title");
         case Page::Fighters: return pc_tr("xeleenet.fighters.title");
         case Page::Lobbies: return pc_tr("xeleenet.lobbies.title");
+        case Page::Details: return pc_tr("xeleenet.details.title");
         case Page::Code: return pc_tr("xeleenet.code.title");
         case Page::Joining:
         case Page::Failed: return pc_tr("xeleenet.joining.title");
@@ -1664,7 +1982,7 @@ struct Screen : Rml::EventListener {
         // B1 refreshes every 10 s while it's open and someone's using it: a
         // game left on the list stops asking the service after kIdleMs (LAN
         // asks no service).
-        if (page == Page::Lobbies && fetch != 0 && SDL_GetTicks() - fetchAsked > 10000 &&
+        if (browsing() && fetch != 0 && SDL_GetTicks() - fetchAsked > 10000 &&
             (lan() || SDL_GetTicks() - touchedAt < kIdleMs))
             browse();
         if (!shown)
@@ -2126,9 +2444,6 @@ constexpr float kRowH = 58.f, kTileW = 84.f, kTileH = 73.f;
 // An icon frame's corner cut, as a fraction of its width (measured).
 constexpr float kFrameCut = 0.07f;
 
-// The players' colours, as Melee's ports.
-const char* const kPortColor[4] = {"#e8463c", "#4a78f0", "#f0c226", "#3dbb5a"};
-
 std::string short_name(const std::string& n) {
     const size_t hash = n.find('#');
     return hash == std::string::npos ? n : n.substr(0, hash);
@@ -2469,6 +2784,10 @@ extern "C" void pc_xn_menu_begin(int what) {
     } else if (s_preview == "failed") {
         s_screen.code = "K7MQ2D";
         s_screen.failed();
+    } else if (s_preview == "details" || s_preview == "lan-details") {
+        s_screen.to_lobbies();
+        s_screen.details = details_sample(lan());
+        s_screen.go(Page::Details, "dtop");
     } else if (what == PC_XN_MENU_JOIN || s_preview == "lobbies" || s_preview == "lan-lobbies" ||
                s_preview == "lan-empty" || s_preview == "lan-blocked") {
         s_screen.to_lobbies();
