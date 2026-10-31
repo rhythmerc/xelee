@@ -2912,11 +2912,15 @@ bool pc_net_scene_hold(void) {
          * scene's first tick raises the barrier past every outstanding
          * frame, and snapshot_unusable() rejects those snapshots anyway, so
          * a correction arriving then is dropped and the peers finish the
-         * match on different remote inputs. Running the last frames of the
-         * scene lockstep costs nothing -- they are the frames after the
-         * match has already been decided -- and it is the same thing the
-         * entry side does. */
-        barrier_raise(s_scene_exit_at);
+         * match on different remote inputs. So the last frames of the scene
+         * run lockstep (scene_exit_lockstep): they cost nothing, being the
+         * frames after the match has already been decided, and it is the
+         * same thing the entry side does.
+         *
+         * Not by raising the barrier: the peer's announcement can land a few
+         * frames after our own ask, with those frames still predicted, and a
+         * barrier over them dropped their correction (DESYNC a frame later,
+         * seen unpaced in net_test_xn_menu's set and fighters runs). */
         pc_log_line("net: scene %u ends at frame %d (asked %d, peer %d)", s_scene_seq,
             s_scene_exit_at, s_scene_exit_local, remote);
     }
@@ -4326,6 +4330,12 @@ static void game_over_note(int32_t f) {
     }
 }
 
+/* The frames up to an agreed scene exit run lockstep, and predict nothing;
+ * those predicted before the agreement can still be corrected. */
+static bool scene_exit_lockstep(int32_t f) {
+    return s_scene_exit_at >= 0 && f <= s_scene_exit_at;
+}
+
 /* Only the fight it was confirmed in: a scene after it waits as usual. */
 static bool game_over(void) {
     return s_game_over && in_fight();
@@ -4349,7 +4359,7 @@ static void predict(int32_t f) {
  * The caller must wait for real input before running this frame. */
 static bool snap_predicted(int32_t f) {
     Snapshot* s = snap_slot(f);
-    if (s_lockstep || f <= net.rb_barrier) {
+    if (s_lockstep || f <= net.rb_barrier || scene_exit_lockstep(f)) {
         return false;
     }
     if (!snapshot_take(s, f)) {
@@ -4994,7 +5004,8 @@ static void fresh_tick(PADStatus* head, bool raw) {
          * the frame itself leaves nothing that can roll back across it. */
         bool voiding = s_void_frame >= 0 && net.frame >= s_void_frame - 1 && net.frame <= s_void_frame;
         bool lockstep =
-            s_lockstep || !in_fight() || net.frame <= net.rb_barrier || !speed_1 || voiding;
+            s_lockstep || !in_fight() || net.frame <= net.rb_barrier || !speed_1 || voiding ||
+            scene_exit_lockstep(net.frame);
         /* The last lockstep frames before this fight can predict: size and
          * page in the rollback ring now, a slot a frame, while the wait below
          * is for the peer anyway (net_snapshot.c snaps_reserve). A barrier
