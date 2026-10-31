@@ -473,7 +473,86 @@ static const char* mnPage_Title(MenuKind kind)
     return NULL;
 }
 
-void mnPage_PanelMainTitle(HSD_JObj* panel, const char* text);
+/* XeleeNet's pages: the menu's own title ("VS. Mode", joint 84) reads
+ * "XeleeNet" too, as the wireframe's tab does, drawn the same way. Joint 86,
+ * at the same place, is the parent's title (Main Menu in VS. Mode's range). */
+typedef struct PanelMainTitle {
+    int index;
+    void (*italic)(void* gobj);
+    HSD_JObj* joint;
+    HSD_Text* text;
+    char shown[32];
+    bool hidden;
+} PanelMainTitle;
+
+static void mnPage_MainItalic(void* gobj);
+static void mnPage_ParentItalic(void* gobj);
+static PanelMainTitle mnPage_mainTitle = { 84, mnPage_MainItalic };
+static PanelMainTitle mnPage_parentTitle = { 86, mnPage_ParentItalic };
+
+static void mnPage_ItalicOn(void* gobj, HSD_JObj* joint)
+{
+    HSD_JObj* keep = mnPage_titleJoint;
+    mnPage_titleJoint = joint;
+    mnPage_TitleItalic(gobj);
+    mnPage_titleJoint = keep;
+}
+
+static void mnPage_MainItalic(void* gobj)
+{
+    mnPage_ItalicOn(gobj, mnPage_mainTitle.joint);
+}
+
+static void mnPage_ParentItalic(void* gobj)
+{
+    mnPage_ItalicOn(gobj, mnPage_parentTitle.joint);
+}
+
+static void mnPage_PanelMainTitle(HSD_JObj* panel, PanelMainTitle* title, const char* text)
+{
+    static const GXColor colour = { 0x9C, 0x9C, 0x9C, 0xFF };
+    HSD_JObj* joint = NULL;
+    Vec3 pos;
+
+    lb_80011E24(panel, &joint, title->index, -1);
+    if (joint == NULL) {
+        return;
+    }
+    title->joint = joint;
+    if (text == NULL) {
+        if (title->text != NULL) {
+            HSD_SisLib_803A5CC4(title->text);
+            title->text = NULL;
+        }
+        if (title->hidden) {
+            HSD_JObjClearFlagsAll(joint, JOBJ_HIDDEN);
+            title->hidden = false;
+        }
+        return;
+    }
+    HSD_JObjSetFlagsAll(joint, JOBJ_HIDDEN);
+    title->hidden = true;
+    /* Made again when the text changed (Online Mode to a network's tab, or
+     * XeleeNet to LAN). */
+    if (title->text != NULL && strcmp(title->shown, text) != 0) {
+        HSD_SisLib_803A5CC4(title->text);
+        title->text = NULL;
+    }
+    if (title->text == NULL) {
+        snprintf(title->shown, sizeof title->shown, "%s", text);
+        title->text = HSD_SisLib_803A6754(0, mn_804D6BB4);
+        title->text->default_kerning = 1;
+        title->text->font_size.x = 0.034f;
+        title->text->font_size.y = 0.040f;
+        HSD_SisLib_803A6B98(title->text, 0.0f, 0.0f, "%s", title->shown);
+        title->text->render_callback = title->italic;
+    }
+    lb_8000B1CC(joint, NULL, &pos);
+    title->text->pos_x = pos.x + 0.4f;
+    title->text->pos_y = -pos.y - 16.0f * title->text->font_size.y;
+    title->text->pos_z = pos.z;
+    HSD_SisLib_803A74F0(title->text, 0, (GXColor*) &colour);
+}
 
 /* The tab's main title over a PC kind, or NULL for the stock texture. The
  * Online Mode menus borrow VS. Mode's panel, whose title would read VS. Mode:
@@ -501,10 +580,11 @@ static HSD_Text* mnPage_title;
 static char mnPage_titleShown[32];
 static bool mnPage_titleHidden;
 
-void mnPage_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, bool leaving)
+void mnPage_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, int state)
 {
     /* Sampled from the stock sub-titles: a light grey. */
     static const GXColor colour = { 0x9C, 0x9C, 0x9C, 0xFF };
+    const bool leaving = state == 1;
     const char* text = mnPage_Title(cur);
     HSD_JObj* joint = NULL;
     Vec3 pos;
@@ -513,7 +593,12 @@ void mnPage_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, bool leavin
         text = mnPage_Title(prev);
     }
     /* While the tab slides out, the menu it is leaving keeps its title. */
-    mnPage_PanelMainTitle(panel, mnPage_MainTitle(leaving ? prev : cur));
+    mnPage_PanelMainTitle(panel, &mnPage_mainTitle, mnPage_MainTitle(leaving ? prev : cur));
+    /* The parent menu's title, beside it: squeezed out as a sub-menu slides
+     * in, grown back as one slides out. VS. Mode's range has Main Menu there,
+     * so Online Mode's sub-menus put their parent's in its place. */
+    mnPage_PanelMainTitle(panel, &mnPage_parentTitle,
+                          state == 2 ? NULL : mnPage_MainTitle(leaving ? cur : prev));
     lb_80011E24(panel, &joint, PANEL_TITLE_JOINT, -1);
     if (joint == NULL) {
         return;
@@ -551,73 +636,14 @@ void mnPage_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, bool leavin
     HSD_SisLib_803A74F0(mnPage_title, 0, (GXColor*) &colour);
 }
 
-/* XeleeNet's pages: the menu's own title ("VS. Mode", joint 84) reads
- * "XeleeNet" too, as the wireframe's tab does, drawn the same way. */
-static HSD_Text* mnPage_mainTitle;
-static bool mnPage_mainHidden;
-static HSD_JObj* mnPage_mainJoint;
-
-static void mnPage_MainItalic(void* gobj)
-{
-    HSD_JObj* keep = mnPage_titleJoint;
-    mnPage_titleJoint = mnPage_mainJoint;
-    mnPage_TitleItalic(gobj);
-    mnPage_titleJoint = keep;
-}
-
-void mnPage_PanelMainTitle(HSD_JObj* panel, const char* text)
-{
-    static const GXColor colour = { 0x9C, 0x9C, 0x9C, 0xFF };
-    HSD_JObj* joint = NULL;
-    Vec3 pos;
-
-    lb_80011E24(panel, &joint, 84, -1);
-    if (joint == NULL) {
-        return;
-    }
-    mnPage_mainJoint = joint;
-    if (text == NULL) {
-        if (mnPage_mainTitle != NULL) {
-            HSD_SisLib_803A5CC4(mnPage_mainTitle);
-            mnPage_mainTitle = NULL;
-        }
-        if (mnPage_mainHidden) {
-            HSD_JObjClearFlagsAll(joint, JOBJ_HIDDEN);
-            mnPage_mainHidden = false;
-        }
-        return;
-    }
-    HSD_JObjSetFlagsAll(joint, JOBJ_HIDDEN);
-    mnPage_mainHidden = true;
-    /* Made again when the text changed (Online Mode to a network's tab, or
-     * XeleeNet to LAN). */
-    static char mainTitleText[32];
-    if (mnPage_mainTitle != NULL && strcmp(mainTitleText, text) != 0) {
-        HSD_SisLib_803A5CC4(mnPage_mainTitle);
-        mnPage_mainTitle = NULL;
-    }
-    if (mnPage_mainTitle == NULL) {
-        snprintf(mainTitleText, sizeof mainTitleText, "%s", text);
-        mnPage_mainTitle = HSD_SisLib_803A6754(0, mn_804D6BB4);
-        mnPage_mainTitle->default_kerning = 1;
-        mnPage_mainTitle->font_size.x = 0.034f;
-        mnPage_mainTitle->font_size.y = 0.040f;
-        HSD_SisLib_803A6B98(mnPage_mainTitle, 0.0f, 0.0f, "%s", mainTitleText);
-        mnPage_mainTitle->render_callback = mnPage_MainItalic;
-    }
-    lb_8000B1CC(joint, NULL, &pos);
-    mnPage_mainTitle->pos_x = pos.x + 0.4f;
-    mnPage_mainTitle->pos_y = -pos.y - 16.0f * mnPage_mainTitle->font_size.y;
-    mnPage_mainTitle->pos_z = pos.z;
-    HSD_SisLib_803A74F0(mnPage_mainTitle, 0, (GXColor*) &colour);
-}
-
 void mnPage_PanelTitleForget(void)
 {
     mnPage_title = NULL;
     mnPage_titleHidden = false;
-    mnPage_mainTitle = NULL;
-    mnPage_mainHidden = false;
+    mnPage_mainTitle.text = NULL;
+    mnPage_mainTitle.hidden = false;
+    mnPage_parentTitle.text = NULL;
+    mnPage_parentTitle.hidden = false;
 }
 
 void mnPage_SceneForget(void)

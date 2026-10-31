@@ -43,8 +43,9 @@ void mnPage_Update(void);
 HSD_Text* mnPage_HintText(const char* text);
 
 /* Each frame, from the panel's think (fn_80229BF4): the tab's title. The
- * panel is `panel`, showing `cur` (and leaving `prev` when `leaving`). */
-void mnPage_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, bool leaving);
+ * panel is `panel`, showing `cur`; `state` is its own (0 sliding in from
+ * `prev`, 1 sliding out of `prev`, 2 still). */
+void mnPage_PanelTitle(HSD_JObj* panel, MenuKind cur, MenuKind prev, int state);
 /* A scene that frees every SIS text (HSD_SisLib_803A5E70) and its panel to
  * build another screen calls this: the title went with them. */
 void mnPage_PanelTitleForget(void);

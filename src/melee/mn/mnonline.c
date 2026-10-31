@@ -238,6 +238,9 @@ void mnOnline_Think(HSD_GObj* gp)
 
     mn_804A04F0.buttons = buttons;
     if (buttons & MenuInput_Confirm) {
+        /* As the stock thinks do. Left at 0 by a B, the panel played the way
+         * in as a way out: Online Mode's title leaving, Main Menu arriving. */
+        mn_804A04F0.entering_menu = 1;
         switch (mn_804A04F0.hovered_selection) {
         case SEL_ONLINE_XN:
         case SEL_ONLINE_LAN:

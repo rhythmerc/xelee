@@ -1243,7 +1243,7 @@ void fn_80229BF4(HSD_GObj* gobj)
     }
     mn_8022ED6C(sp20, &mn_803EB354);
 #ifdef TARGET_PC
-    mnPage_PanelTitle(temp_r28, (MenuKind) data->cur_menu, (MenuKind) data->prev_menu, data->state == 1);
+    mnPage_PanelTitle(temp_r28, (MenuKind) data->cur_menu, (MenuKind) data->prev_menu, data->state);
 #endif
 }
 

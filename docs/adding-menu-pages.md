@@ -129,6 +129,7 @@ Three pieces are on screen at once, and they belong to different code:
 - **The panel's title pieces** sit at y 9.55, z 17.2 in panel space:
   - joint 84 is the menu's title ("Options");
   - joint 85 is the page's sub-title ("Sound", "Erase Data"), its own mesh;
+  - joint 86, at the same place as 84, is the parent menu's title ("Main Menu" in VS. Mode's range): squeezed out as a sub-menu slides in, grown back as one slides out;
   - joint 43 is the frame and tab shape;
   - joint 42's subtree is the frame, tabs and hint box border, but not the titles.
 - **The menu state** is `mn_804A04F0` (`MenuFlow`): `cur_menu`, `prev_menu`, `hovered_selection`, `entering_menu`. The panel's think compares `cur_menu` with what it last showed, and plays the in or out range on its own.
