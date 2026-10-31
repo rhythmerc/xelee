@@ -31,6 +31,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dolphin/pad.h>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #include "pc/pc.h"
 #include "pc/net.h"
@@ -416,7 +420,21 @@ static int fifo_thread(void* arg) {
     bool* held = pad == 0 ? s_fifo_key : s_pfifo_key[pad];
     char line[128];
     for (;;) {
+#ifndef _WIN32
+        /* Read-write: this end then counts as a writer too, so the FIFO
+         * never reads as EOF and is never reopened. Read-only, a writer
+         * that opened it between EOF and the reopen had its line dropped
+         * with the closing pipe -- harness threads writing one FIFO (a
+         * match's workout and the main thread's waits) lost a mark that
+         * way, and the step waited out its 120 s. */
+        int fd = open(path, O_RDWR);
+        FILE* f = fd >= 0 ? fdopen(fd, "r") : NULL;
+        if (f == NULL && fd >= 0) {
+            close(fd);
+        }
+#else
         FILE* f = fopen(path, "r"); /* blocks until a writer opens */
+#endif
         if (f == NULL) {
             SDL_Delay(200);
             continue;
