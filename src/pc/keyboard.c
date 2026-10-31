@@ -13,6 +13,11 @@
  * keys always count (see the comment on s_focused below). MELEE_INPUT_TRACE=1
  * logs one "pad: " line per change of the published pad, with the focus and
  * fifo state that produced it.
+ *
+ * The FIFOs also take frame scripts (docs/fast-tests-plan.md T2): a line that
+ * counts in frames ("X+Down 7f", "tap X 3f", "wait 30f", "until <text> [600f]",
+ * "tapuntil Return 9f 60f <text>", "mark <id>") is queued and run on the game thread at each frame boundary,
+ * so its presses start and end on exact frames however fast the game runs.
  */
 #ifdef AURORA_ENABLE_OPENXR
 #include <aurora/xr.h>
@@ -104,6 +109,293 @@ static bool s_pfifo_key[4][SDL_SCANCODE_COUNT];   /* pads 2-4 (index 1-3) */
 static bool s_pfifo_latch[4][SDL_SCANCODE_COUNT]; /* a press shorter than a frame */
 static const char* s_fifo_path[4];
 
+/* ---- frame scripts (docs/fast-tests-plan.md T2) -------------------------------
+ * Each FIFO has a queue of commands, run at frame boundaries (publish_locked,
+ * the game thread): a hold lasts exactly its frames, a wait idles, an until
+ * waits for a log line (pc_script_log_seen, any thread), a mark logs that the
+ * script got there. A harness writes a whole run ahead and checks the marks,
+ * instead of holding keys for milliseconds and sleeping between them. */
+typedef enum { SC_HOLD, SC_TAP, SC_WAIT, SC_UNTIL, SC_TAPUNTIL, SC_MARK } ScKind;
+/* A tapuntil gives up after this many frames: a step that never comes. */
+#define SC_TAPUNTIL_CAP 3600
+typedef struct ScCmd {
+    ScKind kind;
+    int frames; /* a hold's, a tap's (held, then as long released), a wait's; an until's cap, 0 none */
+    int every;  /* a tapuntil's: a tap starts this often until its text is seen */
+    SDL_Scancode keys[8];
+    int nkeys;
+    char text[120]; /* an until's text, a mark's id */
+} ScCmd;
+#define SC_QUEUE 256
+typedef struct Script {
+    ScCmd q[SC_QUEUE]; /* under s_key_mutex */
+    int head, n;
+    bool running; /* cur has started; game thread only from here */
+    ScCmd cur;
+    int left;  /* frames left of cur (of its phase) */
+    int phase; /* a tap: 0 held, 1 released */
+} Script;
+static Script s_script[4];
+static unsigned s_script_frame; /* boundaries seen, for the log */
+/* An until's text, which pc_script_log_seen matches against every log line. */
+static SDL_Mutex* s_until_mutex;
+static atomic_bool s_until_ready;
+static char s_until_text[4][120];
+static bool s_until_armed[4], s_until_hit[4];
+
+static int script_frames(const char* tok) {
+    char* end = NULL;
+    const long n = tok != NULL ? strtol(tok, &end, 10) : -1;
+    return tok != NULL && end != tok && end[0] == 'f' && end[1] == '\0' && n >= 0 && n < 1000000 ? (int)n : -1;
+}
+
+static int script_keys(char* tok, SDL_Scancode* keys) {
+    int n = 0;
+    for (char* k = strtok(tok, "+"); k != NULL && n < 8; k = strtok(NULL, "+")) {
+        SDL_Scancode sc = SDL_GetScancodeFromName(k);
+        if (sc != SDL_SCANCODE_UNKNOWN) {
+            keys[n++] = sc;
+        }
+    }
+    return n;
+}
+
+/* A frame-script line into a command; false for the old "keys ms" form. */
+static bool script_parse(const char* in, ScCmd* c) {
+    char line[160];
+    snprintf(line, sizeof line, "%s", in);
+    line[strcspn(line, "\r\n")] = '\0';
+    memset(c, 0, sizeof *c);
+    char* rest = strchr(line, ' ');
+    if (rest == NULL) {
+        return false;
+    }
+    *rest++ = '\0';
+    char* last = strrchr(rest, ' ');
+    const char* tail = last != NULL ? last + 1 : rest;
+    if (strcmp(line, "mark") == 0) {
+        c->kind = SC_MARK;
+        snprintf(c->text, sizeof c->text, "%s", rest);
+        return true;
+    }
+    if (strcmp(line, "wait") == 0) {
+        c->kind = SC_WAIT;
+        c->frames = script_frames(rest);
+        return c->frames >= 0;
+    }
+    if (strcmp(line, "until") == 0) {
+        c->kind = SC_UNTIL;
+        c->frames = last != NULL ? script_frames(tail) : -1;
+        if (c->frames >= 0) {
+            *last = '\0'; /* the cap is no part of the text */
+        } else {
+            c->frames = 0;
+        }
+        snprintf(c->text, sizeof c->text, "%s", rest);
+        return c->text[0] != '\0';
+    }
+    if (strcmp(line, "tapuntil") == 0) {
+        /* "tapuntil Keys Nf Mf <text>": tap every M frames until <text>. */
+        char* keys = rest;
+        char* a = strchr(keys, ' ');
+        char* b = a != NULL ? strchr(a + 1, ' ') : NULL;
+        if (a == NULL || b == NULL) {
+            return false;
+        }
+        *a++ = '\0';
+        *b++ = '\0';
+        char* text = b;
+        char* sp = strchr(a, ' ');
+        if (sp != NULL) {
+            *sp = '\0';
+        }
+        c->kind = SC_TAPUNTIL;
+        c->frames = script_frames(a);
+        b = text;
+        char* every = b;
+        text = strchr(every, ' ');
+        if (text == NULL) {
+            return false;
+        }
+        *text++ = '\0';
+        c->every = script_frames(every);
+        snprintf(c->text, sizeof c->text, "%s", text);
+        c->nkeys = script_keys(keys, c->keys);
+        return c->nkeys > 0 && c->frames > 0 && c->every > c->frames && c->text[0] != '\0';
+    }
+    if (strcmp(line, "tap") == 0) {
+        if (last == NULL || (c->frames = script_frames(tail)) <= 0) {
+            return false;
+        }
+        *last = '\0';
+        c->kind = SC_TAP;
+        c->nkeys = script_keys(rest, c->keys);
+        return c->nkeys > 0;
+    }
+    /* "Keys Nf": a hold. */
+    if (last != NULL || (c->frames = script_frames(rest)) <= 0) {
+        return false;
+    }
+    c->kind = SC_HOLD;
+    c->nkeys = script_keys(line, c->keys);
+    return c->nkeys > 0;
+}
+
+void pc_script_log_seen(const char* line) {
+    if (!atomic_load_explicit(&s_until_ready, memory_order_acquire) || line == NULL ||
+        strncmp(line, "script: ", 8) == 0)
+    {
+        return;
+    }
+    SDL_LockMutex(s_until_mutex);
+    for (int pad = 0; pad < 4; pad++) {
+        if (s_until_armed[pad] && !s_until_hit[pad] && strstr(line, s_until_text[pad]) != NULL) {
+            s_until_hit[pad] = true;
+        }
+    }
+    SDL_UnlockMutex(s_until_mutex);
+}
+
+static void script_keys_set(int pad, const ScCmd* c, bool on) {
+    bool* held = pad == 0 ? s_fifo_key : s_pfifo_key[pad];
+    for (int i = 0; i < c->nkeys; i++) {
+        held[c->keys[i]] = on;
+    }
+}
+
+static bool script_until_hit(int pad, bool disarm) {
+    SDL_LockMutex(s_until_mutex);
+    const bool hit = s_until_hit[pad];
+    if (disarm) {
+        s_until_armed[pad] = s_until_hit[pad] = false;
+    }
+    SDL_UnlockMutex(s_until_mutex);
+    return hit;
+}
+
+/* One frame boundary of every queue (s_key_mutex held): what is held this
+ * frame. A command that ends lets the next start on the same boundary. */
+static void script_tick_locked(void) {
+    s_script_frame++;
+    for (int pad = 0; pad < 4; pad++) {
+        Script* s = &s_script[pad];
+        for (int guard = 0; guard < SC_QUEUE; guard++) {
+            if (!s->running) {
+                if (s->n == 0) {
+                    break;
+                }
+                s->cur = s->q[s->head];
+                s->head = (s->head + 1) % SC_QUEUE;
+                s->n--;
+                s->running = true;
+                s->left = s->cur.frames;
+                s->phase = 0;
+                switch (s->cur.kind) {
+                case SC_MARK:
+                    pc_log_line("script: P%d mark %s at frame %u", pad + 1, s->cur.text, s_script_frame);
+                    s->running = false;
+                    continue;
+                case SC_UNTIL:
+                case SC_TAPUNTIL:
+                    if (s_trace) {
+                        pc_log_line("script: P%d until \"%s\" from frame %u", pad + 1, s->cur.text, s_script_frame);
+                    }
+                    if (s->cur.kind == SC_TAPUNTIL) {
+                        s->left = SC_TAPUNTIL_CAP;
+                        s->phase = 0; /* frames into the current tap's cycle */
+                        script_keys_set(pad, &s->cur, true);
+                        if (pad == 0) {
+                            s_active = true;
+                        }
+                    }
+                    SDL_LockMutex(s_until_mutex);
+                    snprintf(s_until_text[pad], sizeof s_until_text[pad], "%s", s->cur.text);
+                    s_until_armed[pad] = true;
+                    s_until_hit[pad] = false;
+                    SDL_UnlockMutex(s_until_mutex);
+                    break;
+                case SC_HOLD:
+                case SC_TAP:
+                    script_keys_set(pad, &s->cur, true);
+                    if (pad == 0) {
+                        s_active = true;
+                    }
+                    break;
+                case SC_WAIT:
+                    break;
+                }
+                break; /* it has this frame */
+            }
+            switch (s->cur.kind) {
+            case SC_HOLD:
+                if (--s->left > 0) {
+                    break;
+                }
+                script_keys_set(pad, &s->cur, false);
+                s->running = false;
+                continue;
+            case SC_TAP:
+                if (--s->left > 0) {
+                    break;
+                }
+                if (s->phase == 0) {
+                    script_keys_set(pad, &s->cur, false);
+                    s->phase = 1;
+                    s->left = s->cur.frames;
+                    break;
+                }
+                s->running = false;
+                continue;
+            case SC_WAIT:
+                if (--s->left > 0) {
+                    break;
+                }
+                s->running = false;
+                continue;
+            case SC_UNTIL:
+                if (script_until_hit(pad, false)) {
+                    script_until_hit(pad, true);
+                    pc_log_line("script: P%d saw \"%s\" at frame %u", pad + 1, s->cur.text, s_script_frame);
+                    s->running = false;
+                    continue;
+                }
+                if (s->cur.frames > 0 && --s->left <= 0) {
+                    script_until_hit(pad, true);
+                    pc_log_line("script: P%d timeout at \"%s\" after %d frames; the rest of its script is dropped",
+                        pad + 1, s->cur.text, s->cur.frames);
+                    s->running = false;
+                    s->n = 0;
+                }
+                break;
+            case SC_TAPUNTIL:
+                if (script_until_hit(pad, false)) {
+                    script_until_hit(pad, true);
+                    script_keys_set(pad, &s->cur, false);
+                    pc_log_line("script: P%d saw \"%s\" at frame %u", pad + 1, s->cur.text, s_script_frame);
+                    s->running = false;
+                    continue;
+                }
+                if (--s->left <= 0) {
+                    script_until_hit(pad, true);
+                    script_keys_set(pad, &s->cur, false);
+                    pc_log_line("script: P%d timeout at \"%s\" after %d frames; the rest of its script is dropped",
+                        pad + 1, s->cur.text, SC_TAPUNTIL_CAP);
+                    s->running = false;
+                    s->n = 0;
+                    break;
+                }
+                /* Held for `frames`, released until `every`, again. */
+                s->phase = (s->phase + 1) % s->cur.every;
+                script_keys_set(pad, &s->cur, s->phase < s->cur.frames);
+                break;
+            case SC_MARK:
+                break;
+            }
+            break;
+        }
+    }
+}
+
 static int fifo_thread(void* arg) {
     const int pad = (int)(intptr_t)arg;
     const char* path = s_fifo_path[pad];
@@ -116,6 +408,21 @@ static int fifo_thread(void* arg) {
             continue;
         }
         while (fgets(line, sizeof line, f) != NULL) {
+            ScCmd cmd;
+            if (script_parse(line, &cmd)) {
+                /* A frame command: into its queue, for the frame boundaries. */
+                SDL_LockMutex(s_key_mutex);
+                while (s_script[pad].n == SC_QUEUE) {
+                    SDL_UnlockMutex(s_key_mutex);
+                    SDL_Delay(5);
+                    SDL_LockMutex(s_key_mutex);
+                }
+                Script* s = &s_script[pad];
+                s->q[(s->head + s->n) % SC_QUEUE] = cmd;
+                s->n++;
+                SDL_UnlockMutex(s_key_mutex);
+                continue;
+            }
             SDL_Scancode keys[8];
             int n = 0, hold = 120;
             char* sp = strchr(line, ' ');
@@ -267,10 +574,17 @@ static void publish_locked(void) {
             const char* fifo = getenv(names[pad]);
             if (fifo != NULL && fifo[0] != '\0') {
                 s_fifo_path[pad] = fifo;
+                if (s_until_mutex == NULL) {
+                    s_until_mutex = SDL_CreateMutex();
+                    atomic_store_explicit(&s_until_ready, s_until_mutex != NULL, memory_order_release);
+                }
                 SDL_DetachThread(SDL_CreateThread(fifo_thread, "keyfifo", (void*)(intptr_t)pad));
                 s_active = s_active || pad == 0;
             }
         }
+    }
+    if (atomic_load_explicit(&s_until_ready, memory_order_relaxed)) {
+        script_tick_locked();
     }
     publish_pad_fifos_locked();
     PADStatus st = {0};

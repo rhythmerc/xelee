@@ -121,7 +121,8 @@ static u64 s_xr_carry;
 static bool unpaced_playback(void) {
     static int on = -1;
     if (on < 0) {
-        on = pc_slp_play_active() && getenv("MELEE_SLP_PLAY_PACED") == NULL;
+        on = (pc_slp_play_active() && getenv("MELEE_SLP_PLAY_PACED") == NULL) ||
+             getenv("MELEE_UNPACED") != NULL; /* experiment: tests faster than real time */
     }
     return on > 0;
 }

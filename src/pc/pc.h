@@ -49,6 +49,9 @@ const char* pc_log_dir(void);
 typedef union SDL_Event SDL_Event;
 void pc_keyboard_event(const SDL_Event* e);
 void pc_keyboard_apply(void);
+/* Every log line, for the key FIFOs' frame scripts ("until <text>",
+ * keyboard.c): pc_log_line and OSReport pass theirs on. Any thread. */
+void pc_script_log_seen(const char* line);
 void pc_touch_apply(void);
 
 /* GameCube adapter (WUP-028) read directly for raw 8-bit values
