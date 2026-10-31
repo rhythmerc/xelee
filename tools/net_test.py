@@ -228,6 +228,7 @@ class Instance:
         e.update(env)
         e.pop("MELEE_LOG_FILE", None)  # stderr is captured below; avoid double lines
         self.log = open(self.log_path, "wb")
+        self._text, self._read, self._text_lock = "", 0, threading.Lock()
         self.proc = subprocess.Popen([exe, "--no-card", disc], env=e, stdout=self.log,
                                      stderr=subprocess.STDOUT)
 
@@ -236,17 +237,19 @@ class Instance:
 
     def text(self):
         """The log so far. Read on from where the last call stopped: unpaced
-        runs poll often, and the logs grow to megabytes."""
-        if not hasattr(self, "_text"):
-            self._text, self._read = "", 0
-        with open(self.log_path, "rb") as f:
-            f.seek(self._read)
-            more = f.read()
-        # Up to the last whole line: a line half written is read whole next time.
-        cut = more.rfind(b"\n") + 1
-        self._read += cut
-        self._text += more[:cut].decode("utf-8", "replace")
-        return self._text
+        runs poll often, and the logs grow to megabytes. Locked: a match's
+        workout threads read it alongside the main thread, and two reads from
+        the same offset each moved it on, skipping lines (a mark no step ever
+        saw, so it waited out its 120 s)."""
+        with self._text_lock:
+            with open(self.log_path, "rb") as f:
+                f.seek(self._read)
+                more = f.read()
+            # Up to the last whole line: a line half written is read whole next time.
+            cut = more.rfind(b"\n") + 1
+            self._read += cut
+            self._text += more[:cut].decode("utf-8", "replace")
+            return self._text
 
     def wait_log(self, pattern, timeout):
         """True once `pattern` (regex) appears in the log; False on timeout/exit."""

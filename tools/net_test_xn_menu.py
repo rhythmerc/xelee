@@ -836,7 +836,7 @@ def wait_more(insts, pattern, since, timeout):
             return True
         if any(i.proc.poll() is not None for i in insts):
             return False
-        time.sleep(0.5)
+        time.sleep(0.05)  # unpaced, half a second is a hundred frames
     return False
 
 
@@ -931,16 +931,6 @@ def tap(inst, key, times=1):
         nt.press((inst,), key, 7, 0.35)
 
 
-def wait_more(inst, pattern, n, timeout=10):
-    """`pattern` has been logged more than `n` times."""
-    deadline = time.time() + timeout
-    while nt.count(inst, pattern) <= n:
-        if time.time() > deadline:
-            return False
-        time.sleep(0.02)
-    return True
-
-
 def open_settings(inst):
     """Z (Tab) opens Lobby Settings on that player's own game, and returns
     once the page takes input. Its load is wall time: unpaced, a settle in
@@ -951,7 +941,7 @@ def open_settings(inst):
     if nt.count(inst, r"xeleenet: Lobby Settings open") <= n:
         print(f"[{inst.name}] FAIL: Z didn't open Lobby Settings")
         return False
-    if not wait_more(inst, r"menu: page settings ready", r):
+    if not wait_more((inst,), r"menu: page settings ready", (r,), 10):
         print(f"[{inst.name}] FAIL: Lobby Settings never came up")
         return False
     return True
