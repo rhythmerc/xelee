@@ -48,7 +48,19 @@ STEP = 0.35
 NAMES = ["RHYTHM", "PIXEL", "WAVEDASH KID", "KOOPA"]
 
 
+SHOTS = True  # --no-shots: regression runs skip the pictures, and look()'s waits for them
+
+
+def look(seconds):
+    """A wait that only lets the screen settle for the next shot: none
+    without shots."""
+    if SHOTS:
+        nap(seconds)
+
+
 def shot(inst, shots, name):
+    if not SHOTS:
+        return
     out = os.path.join(shots, f"{name}.png")
     env = dict(os.environ, MELEE_WINDOW_TITLE=f"melee-net-{inst.name}")
     r = subprocess.run([sys.executable, os.path.join(HERE, "devctl.py"), "shot", out], env=env,
@@ -119,6 +131,7 @@ def type_code(inst, code, items=None):
     """The keypad: arrows to each character the way the game moves, A types it."""
     items = items or keypad()
     cur = 0
+    keys = []
     for ch in code:
         want = next(i for i, it in enumerate(items) if it[0] == ch)
         for _ in range(12):
@@ -127,9 +140,16 @@ def type_code(inst, code, items=None):
             r, c = items[cur][1], items[cur][2]
             wr, wc = items[want][1], items[want][2]
             key = "Down" if wr > r else "Up" if wr < r else "Right" if wc > c else "Left"
-            nt.press((inst,), key, 7, STEP)
+            keys.append(key)
             cur = step(items, cur, key)
-        nt.press((inst,), "X", 7, STEP)
+        keys.append("X")
+    if nt.UNPACED:
+        # The path is worked out here, so the whole code goes in one batch
+        # rather than a round trip a press.
+        nt.step((inst,), [line for key in keys for line in (f"{key} 7f", f"wait {int(STEP * 60)}f")])
+        return
+    for key in keys:
+        nt.press((inst,), key, 7, STEP)
 
 
 def open_details(inst, timeout=15):
@@ -285,7 +305,7 @@ def multipad_scenario(insts, pad, shots):
         before = [i.text().count("(players 03") for i in insts]
         loads = [css_loads(i) for i in insts]
         nt.hold(pad, "Z", 90)
-        nap(40 / 60)
+        look(40 / 60)
         shot(host, shots, "mp-3-css-giving-up")
         for i, n in zip(insts, before):
             deadline = time.time() + 40
@@ -431,7 +451,7 @@ def sss_picks(insts, shots, scenario):
             if not steer(i, "Up", BF):
                 return False
             nt.press((i,), "X", 7, 0.3)
-        nap(0.6)
+        look(0.6)
         shot(host, shots, "10c-sss-draw-same")
     elif scenario == "sss-repick":
         if c is None:
@@ -463,9 +483,9 @@ def sss_picks(insts, shots, scenario):
         nt.press((b,), "Z", 7, 0.1)
         nt.hold(b, "X", 7)
         nt.hold(c, "Return", 7)
-        nap(0.9)
+        look(0.9)
         shot(host, shots, "10e-sss-draw")
-        nap(1.1)
+        look(1.1)
         shot(host, shots, "10f-sss-landed")
     elif scenario == "sss-timeout":
         if c is None:
@@ -479,7 +499,7 @@ def sss_picks(insts, shots, scenario):
         if not all(steer(b, key, cell) for key, cell in (("Right", FD), ("Right", DL), ("Up", PS))):
             return False
         nt.press((b,), "X", 7, 0.5)
-        nap(4)
+        look(4)
         shot(c, shots, "10c-sss-card-timer")
         if not host.wait_log(r"sss: final: ", 30):
             print("FAIL: the pick timer never ended the picking")
@@ -543,7 +563,7 @@ def leave_guest(insts, shots):
     # One hold of 1.5 s (the leave takes 1 s of it), shot two thirds of the
     # way to leaving: the ring and the red notice.
     nt.hold(leaver, "Z", 90)
-    nap(40 / 60)
+    look(40 / 60)
     shot(leaver, shots, "9c-css-leaving")
     nap(4.0)
     if any(menu_loads(i) > n for i, n in zip(stay, menus)):
@@ -621,7 +641,7 @@ def leave_host(insts, shots):
     if any("DESYNC" in i.text() or "peer left" in i.text() for i in insts):
         print("FAIL: the close went through as a failure")
         return False
-    nap(2)
+    look(2)
     shot(host, shots, "9g-host-after-close")
     shot(guests[0], shots, "9h-guest-after-close")
     print("net_test_xn_menu: the host closed the lobby; everyone is back on the XeleeNet pages", flush=True)
@@ -723,7 +743,7 @@ def leave_host_alone(host, shots):
     pages."""
     menus = menu_loads(host)
     nt.hold(host, "Z", 90)
-    nap(40 / 60)
+    look(40 / 60)
     shot(host, shots, "4b-host-alone-leaving")
     deadline = time.time() + 15
     while time.time() < deadline and menu_loads(host) == menus:
@@ -734,7 +754,7 @@ def leave_host_alone(host, shots):
     if menu_loads(host) == menus:
         print("FAIL: the host's hold ended, but it never left the lobby")
         return False
-    nap(2)
+    look(2)
     shot(host, shots, "4c-host-alone-after")
     print("net_test_xn_menu: the host alone left its lobby for the XeleeNet pages", flush=True)
     return True
@@ -850,7 +870,7 @@ def rematch(insts, shots, drive):
         print("FAIL: the match never reached the results")
         return False
     drive.done()
-    nap(3)
+    look(3)
     shot(insts[0], shots, "13-results")
     css = [nt.count(i, r"online: enter CSS") for i in insts]
     for _ in range(12):
@@ -1378,7 +1398,7 @@ def settings_alone(host, shots):
     if not host.wait_log(r"the host alone reloads its CSS", 5) or not reloaded((host,), [loads]):
         print("FAIL: the host alone's Apply didn't reload its CSS")
         return False
-    nap(2)
+    look(2)
     shot(host, shots, "s-alone-after")
     if not host.wait_log(r"xeleenet: the CSS has new rules", 5):
         print("FAIL: the CSS never showed the new rules")
@@ -1734,6 +1754,8 @@ def main():
                          "with nobody in, -race applies while a join is in flight, -list changes the listing only")
     ap.add_argument("--paced", action="store_true",
                     help="the old way: 60 Hz, key holds in milliseconds (docs/fast-tests-plan.md)")
+    ap.add_argument("--no-shots", action="store_true",
+                    help="no screenshots, and none of the waits that only let the screen settle for one")
     ap.add_argument("--join-shots", action="store_true", help="shots every 0.35 s through the first join")
     ap.add_argument("--url", default="", help="a running service instead of a local lobby service")
     ap.add_argument("--net", choices=("service", "lan"), default="service",
@@ -1749,6 +1771,8 @@ def main():
     args = ap.parse_args()
     nt.UNPACED = not args.paced  # docs/fast-tests-plan.md T4: as fast as it runs
     nt.BOOT_MENU = True  # every instance boots into the main menu
+    global SHOTS
+    SHOTS = not args.no_shots
     if args.seconds is None:
         args.seconds = 40.0 if args.paced else 10.0
     if args.no_discovery and args.net != "lan":
