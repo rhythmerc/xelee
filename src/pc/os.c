@@ -451,6 +451,16 @@ void pc_platform_init(void) {
 #endif
 
 void OSVReport(const char* msg, va_list list) {
+    {
+        /* The test harnesses wait on some of these lines (the file cache's
+         * scene loads): the key FIFOs' "until" sees them too. */
+        char buf[512];
+        va_list copy;
+        va_copy(copy, list);
+        vsnprintf(buf, sizeof buf, msg, copy);
+        va_end(copy);
+        pc_script_log_seen(buf);
+    }
 #if defined(__ANDROID__)
     __android_log_vprint(ANDROID_LOG_INFO, "OSReport", msg, list);
 #elif defined(__APPLE__)

@@ -275,6 +275,7 @@ void pc_log_line(const char* fmt, ...) {
     vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
     const double t = log_now_ms();
+    pc_script_log_seen(msg);
 #if defined(__APPLE__)
     os_log_with_type(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, "[Melee] %{public}s", msg);
 #elif defined(__ANDROID__)
