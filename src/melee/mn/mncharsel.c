@@ -4,6 +4,7 @@
 #ifdef TARGET_PC
 #include "pc/net.h"
 #include "pc/pc.h"
+#include <melee/lb/lbheap.h>
 #include <stdlib.h>
 #include <string.h>
 extern bool pc_net_slippi_active(void);
@@ -1782,6 +1783,88 @@ static void cssSlippiTitle(void)
         HSD_JObjAnimAll(j);
         HSD_ForeachAnim(j, JOBJ_TYPE, TOBJ_MASK, HSD_AObjStopAnim, AOBJ_ARG_AOV, NULL);
     }
+}
+
+/* The biggest picture on a portrait's joint and its children (not its
+ * siblings: the next portrait). A portrait's material has two of the same
+ * size, 64x56: the shared backdrop (I4) and the face (C8), which wins. */
+static void cssXnPortraitImage(HSD_JObj* j, bool siblings, HSD_ImageDesc** best, HSD_Tlut** best_tl)
+{
+    for (; j != NULL; j = siblings ? j->next : NULL) {
+        if (!(j->flags & (JOBJ_INSTANCE | JOBJ_PTCL | JOBJ_SPLINE))) {
+            HSD_DObj* d;
+            HSD_TObj* t;
+            for (d = j->u.dobj; d != NULL; d = d->next) {
+                for (t = d->mobj != NULL ? d->mobj->tobj : NULL; t != NULL; t = t->next) {
+                    HSD_ImageDesc* im = t->imagedesc;
+                    const int area = im != NULL ? im->width * im->height : 0;
+                    const int best_area = *best != NULL ? (*best)->width * (*best)->height : 0;
+                    const bool ci = im != NULL && (im->format == GX_TF_C8 || im->format == GX_TF_C4);
+                    const bool best_ci =
+                        *best != NULL && ((*best)->format == GX_TF_C8 || (*best)->format == GX_TF_C4);
+                    if (im != NULL && DP(void, im->image_ptr) != NULL &&
+                        (area > best_area || (area == best_area && ci && !best_ci)))
+                    {
+                        *best = im;
+                        *best_tl = t->tlut_no != (u8) -1 && t->tluttbl != NULL ? t->tluttbl[t->tlut_no] : t->tlut;
+                    }
+                }
+            }
+        }
+        cssXnPortraitImage(j->child, true, best, best_tl);
+    }
+}
+
+/* XeleeNet's lobby Details (docs/xeleenet-lobby-details-plan.md D5): each
+ * portrait's picture for its fighter grid, out of the CSS's own menu model,
+ * built here outside the CSS for a moment and freed at once. Once a launch,
+ * from the XeleeNet pages (mnxeleenet.c), on the game's thread. */
+void mnCharSel_PcPortraits(void)
+{
+    const bool jp = lbLang_IsSavedLanguageJP() != 0;
+    const int free_before = lbHeap_PcFreeBytes(0);
+    HSD_Archive* arc = lbArchive_LoadArchive(jp ? "MnSlChr.dat" : "MnSlChr.usd");
+    MnSelectChrDataTable* table =
+        arc != NULL ? HSD_ArchiveGetPublicAddress(arc, "MnSelectChrDataTable") : NULL;
+    HSD_JObj* vs;
+    int i, got = 0;
+    if (table == NULL) {
+        pc_log_line("xeleenet: portraits: no MnSelectChrDataTable");
+        if (arc != NULL) {
+            lbArchive_80016EFC(arc);
+        }
+        return;
+    }
+    vs = HSD_JObjLoadJoint(DP(HSD_Joint, table->models.menu.joint));
+    HSD_JObjAddAnimAll(vs, DP(HSD_AnimJoint, table->models.menu.animjoint),
+                       DP(HSD_MatAnimJoint, table->models.menu.matanim_joint),
+                       DP(HSD_ShapeAnimJoint, table->models.menu.shapeanim_joint));
+    HSD_JObjReqAnimAll(vs, 0.0f);
+    HSD_JObjAnimAll(vs);
+    for (i = 0; i < 25; i++) {
+        HSD_JObj* j = NULL;
+        HSD_ImageDesc* im = NULL;
+        HSD_Tlut* tl = NULL;
+        lb_80011E24(vs, &j, icons[i].joint_id_vs, -1);
+        if (j != NULL) {
+            cssXnPortraitImage(j, false, &im, &tl);
+        }
+        if (im == NULL) {
+            pc_log_line("xeleenet: portraits: fighter %d has no picture (joint %d)", icons[i].char_kind,
+                        icons[i].joint_id_vs);
+            continue;
+        }
+        pc_log_line("xeleenet: portraits: fighter %d: %dx%d, format %d%s", icons[i].char_kind, im->width,
+                    im->height, (int) im->format, tl != NULL ? ", with a palette" : "");
+        got += pc_xn_fighter_thumb(icons[i].char_kind, DP(void, im->image_ptr), im->width, im->height,
+                                   (int) im->format, tl != NULL ? tl->lut : NULL, tl != NULL ? (int) tl->fmt : 0,
+                                   tl != NULL ? tl->n_entries : 0);
+    }
+    const int free_built = lbHeap_PcFreeBytes(0);
+    HSD_JObjRemoveAll(vs);
+    lbArchive_80016EFC(arc);
+    pc_log_line("xeleenet: portraits: %d of 25 decoded; heap 0 free %d KB, %d KB while built, %d KB after", got,
+                free_before / 1024, free_built / 1024, lbHeap_PcFreeBytes(0) / 1024);
 }
 #endif
 

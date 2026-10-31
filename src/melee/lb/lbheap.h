@@ -33,4 +33,10 @@ typedef enum LbHeapKind {
 /* 015DF8 */ void lbHeap_80015DF8(void);
 /* 015F3C */ void lbHeap_80015F3C(void);
 
+#ifdef TARGET_PC
+/// A heap's free bytes (OSCheckHeap's, or the allocator's), -1 when it
+/// isn't created: for logging what a load costs.
+int lbHeap_PcFreeBytes(int heap_id);
+#endif
+
 #endif

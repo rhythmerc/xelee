@@ -5,6 +5,7 @@
 #include "mnpage.h"
 #include "mnmain.h"
 #include "mnnamenew.h"
+#include "mncharsel.h"
 #include "types.h"
 #include "pc/pc.h"
 #include "pc/menu_screen.h"
@@ -187,6 +188,10 @@ void mnXeleeNet_Frame(void)
         return;
     }
     s.frames++;
+    /* A lobby's Details wants the CSS's portraits: read once a launch. */
+    if (pc_xn_menu_portraits_wanted()) {
+        mnCharSel_PcPortraits();
+    }
     if (s.frames == XN_HOLD_FRAMES) {
         pc_xn_menu_show(true);
         pc_xn_menu_presence(0.0f);

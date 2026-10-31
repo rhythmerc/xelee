@@ -29,4 +29,10 @@
 /* 2669F4 */ void mnCharSel_Scene_OnFrame(void);
 /* 266D70 */ void mnCharSel_Scene_OnExit(void*);
 
+#ifdef TARGET_PC
+/* The portraits for XeleeNet's lobby Details, read out of MnSlChr (loaded and
+ * freed here) into pc_xn_fighter_thumb. */
+void mnCharSel_PcPortraits(void);
+#endif
+
 #endif

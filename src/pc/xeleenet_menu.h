@@ -164,6 +164,15 @@ void pc_xn_sss_picks(const PcXnSssState* state);
 void pc_xn_sss_thumb(int cell, const void* c8, int w, int h, const void* tlut, int tlut_fmt, int entries);
 bool pc_xn_sss_has_thumb(int cell);
 
+/* A lobby's Details shows the CSS's portraits (docs/xeleenet-lobby-details-
+ * plan.md D5): true once, on the frame after the first Details, for the
+ * XeleeNet pages to read them (mnCharSel_PcPortraits). */
+bool pc_xn_menu_portraits_wanted(void);
+/* A portrait for a fighter (a CharacterKind): a GX texture of any format the
+ * menus use (GXTexFmt), its palette if any. 1 when decoded. */
+int pc_xn_fighter_thumb(int ckind, const void* image, int w, int h, int fmt, const void* tlut, int tlut_fmt,
+                        int entries);
+
 #ifdef __cplusplus
 }
 #endif

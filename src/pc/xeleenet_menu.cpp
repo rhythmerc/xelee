@@ -117,6 +117,19 @@ const char* const kFighterNames[XN_FIGHTER_ENTRIES] = {
 };
 constexpr int kFightersAcross = 9;
 
+// A picture decoded from the game's textures, for RmlUi (a texture provider
+// serves it): the stage select's icons, the CSS's portraits.
+struct Picture {
+    std::vector<uint8_t> rgba;
+    uint32_t w = 0, h = 0;
+};
+// The CSS's portraits for Details' fighter grid (D5 of
+// docs/xeleenet-lobby-details-plan.md), by entry: read out of MnSlChr once a
+// launch, after the first Details (mnCharSel_PcPortraits), served as
+// xnfighter://<entry>.
+std::array<Picture, XN_FIGHTER_ENTRIES> s_portraits;
+bool s_portraits_wanted = false, s_portraits_asked = false;
+
 std::string fighter_name(int entry) {
     return tr(("xeleenet.fighters.names." + std::string(kFighterNames[entry])).c_str());
 }
@@ -1211,9 +1224,14 @@ struct Screen : Rml::EventListener {
         set_board(r);
     }
 
-    // A fighter's cell in the Details grid: its name (D5 adds its CSS
-    // portrait).
-    static std::string fighter_cell(int entry) { return "<div class=\"dcn\">" + enc(fighter_name(entry)) + "</div>"; }
+    // A fighter's cell in the Details grid: its CSS portrait once decoded
+    // (D5), its name until then (and for good, should that fail).
+    static std::string fighter_cell(int entry) {
+        s_portraits_wanted = true; // read on the game's next frame (mnxeleenet.c)
+        if (!s_portraits[entry].rgba.empty())
+            return "<img src=\"xnfighter://" + std::to_string(entry) + "\"/>";
+        return "<div class=\"dcn\">" + enc(fighter_name(entry)) + "</div>";
+    }
 
     std::string details_hint() const {
         if (detailsGone)
@@ -2342,10 +2360,7 @@ struct Banner {
 
 // The icons' pictures (pc_xn_sss_thumb), decoded once and served to RmlUi as
 // xnstage://<cell>.
-struct Thumb {
-    std::vector<uint8_t> rgba;
-    uint32_t w = 0, h = 0;
-};
+using Thumb = Picture;
 std::array<Thumb, 32> s_thumbs;
 
 // A pick's ring round its icon (xnring://W_H_T_C_BEVELS_RRGGBB): the frame's
@@ -2424,6 +2439,68 @@ std::array<uint8_t, 4> tlut_rgba(const uint8_t* e, int fmt) {
         return {uint8_t((v >> 8 & 15) * 17), uint8_t((v >> 4 & 15) * 17), uint8_t((v & 15) * 17),
                 uint8_t((v >> 12 & 7) * 255 / 7)};
     }
+}
+
+// A GX texture into RGBA: the formats Melee's menus use (GXTexFmt: I4 0, I8
+// 1, IA4 2, IA8 3, RGB565 4, RGB5A3 5, RGBA8 6, C4 8, C8 9, CMPR 14), each
+// laid out in blocks of 32 bytes (RGBA8's 64), row by row. The palette is
+// for C4 and C8. False for any other format.
+bool decode_gx(const uint8_t* src, int fmt, int w, int h, const uint8_t* lut, int lut_fmt, int entries,
+               Picture& out) {
+    const int bw = fmt == 0 || fmt == 8 || fmt == 14 ? 8 : fmt == 1 || fmt == 2 || fmt == 9 ? 8 : 4;
+    const int bh = fmt == 0 || fmt == 8 || fmt == 14 ? 8 : 4;
+    if (src == nullptr || w <= 0 || h <= 0 || fmt == 7 || (fmt > 9 && fmt != 14) ||
+        ((fmt == 8 || fmt == 9) && (lut == nullptr || entries <= 0)))
+        return false;
+    out.w = uint32_t(w), out.h = uint32_t(h);
+    out.rgba.assign(size_t(w) * h * 4, 0);
+    const auto put = [&](int x, int y, std::array<uint8_t, 4> c) {
+        if (x < w && y < h)
+            std::memcpy(&out.rgba[(size_t(y) * w + x) * 4], c.data(), 4);
+    };
+    const auto pal = [&](int e) {
+        return e < entries ? tlut_rgba(lut + 2 * e, lut_fmt) : std::array<uint8_t, 4>{0, 0, 0, 0};
+    };
+    const uint8_t* p = src;
+    for (int by = 0; by < h; by += bh)
+        for (int bx = 0; bx < w; bx += bw) {
+            if (fmt == 14) { // four DXT1 blocks of 4x4, in Z order, big-endian
+                for (int s = 0; s < 4; s++, p += 8) {
+                    const unsigned c0 = unsigned(p[0]) << 8 | p[1], c1 = unsigned(p[2]) << 8 | p[3];
+                    std::array<std::array<uint8_t, 4>, 4> c;
+                    c[0] = tlut_rgba(p, 1), c[1] = tlut_rgba(p + 2, 1);
+                    for (int k = 0; k < 3; k++) {
+                        c[2][k] = uint8_t(c0 > c1 ? (2 * c[0][k] + c[1][k]) / 3 : (c[0][k] + c[1][k]) / 2);
+                        c[3][k] = uint8_t(c0 > c1 ? (c[0][k] + 2 * c[1][k]) / 3 : 0);
+                    }
+                    c[2][3] = 255, c[3][3] = c0 > c1 ? 255 : 0;
+                    for (int y = 0; y < 4; y++)
+                        for (int x = 0; x < 4; x++)
+                            put(bx + (s & 1) * 4 + x, by + (s >> 1) * 4 + y, c[(p[4 + y] >> (6 - 2 * x)) & 3]);
+                }
+                continue;
+            }
+            for (int i = 0; i < bw * bh; i++) {
+                const int x = bx + i % bw, y = by + i / bw;
+                const uint8_t nib = i & 1 ? p[i / 2] & 15 : p[i / 2] >> 4;
+                switch (fmt) {
+                case 0: put(x, y, {uint8_t(nib * 17), uint8_t(nib * 17), uint8_t(nib * 17), 255}); break;
+                case 1: put(x, y, {p[i], p[i], p[i], 255}); break;
+                case 2:
+                    put(x, y, {uint8_t((p[i] & 15) * 17), uint8_t((p[i] & 15) * 17), uint8_t((p[i] & 15) * 17),
+                               uint8_t((p[i] >> 4) * 17)});
+                    break;
+                case 3: put(x, y, tlut_rgba(p + 2 * i, 0)); break;
+                case 4: put(x, y, tlut_rgba(p + 2 * i, 1)); break;
+                case 5: put(x, y, tlut_rgba(p + 2 * i, 2)); break;
+                case 6: put(x, y, {p[2 * i + 1], p[32 + 2 * i], p[33 + 2 * i], p[2 * i]}); break;
+                case 8: put(x, y, pal(nib)); break;
+                case 9: put(x, y, pal(p[i])); break;
+                }
+            }
+            p += fmt == 6 ? 64 : 32;
+        }
+    return true;
 }
 
 std::string stage_name_key(int id) {
@@ -3014,50 +3091,65 @@ extern "C" bool pc_xn_sss_has_thumb(int cell) {
 }
 
 namespace {
+// xnstage://<cell> or xnfighter://<entry>: the picture at the number in
+// `pics`.
+template <size_t N>
+std::optional<aurora::rmlui::RuntimeTexture> picture_texture(std::string_view source,
+                                                             const std::array<Picture, N>& pics) {
+    const size_t at = source.find("://");
+    if (at == std::string_view::npos)
+        return std::nullopt;
+    const int c = std::atoi(std::string(source.substr(at + 3)).c_str());
+    if (c < 0 || c >= int(N) || pics[c].rgba.empty())
+        return std::nullopt;
+    aurora::rmlui::RuntimeTexture t;
+    t.width = pics[c].w;
+    t.height = pics[c].h;
+    t.rgba8 = std::as_bytes(std::span(pics[c].rgba));
+    t.generateMipmaps = true;
+    return t;
+}
+
 void register_sss_textures() {
     static bool registered;
     if (!registered) {
         registered = true;
         aurora::rmlui::register_texture_provider("xnring", ring_texture);
-        aurora::rmlui::register_texture_provider("xnstage", [](std::string_view source)
-                                                     -> std::optional<aurora::rmlui::RuntimeTexture> {
-            const size_t at = source.find("://");
-            if (at == std::string_view::npos)
-                return std::nullopt;
-            const int c = std::atoi(std::string(source.substr(at + 3)).c_str());
-            if (c < 0 || c >= int(s_thumbs.size()) || s_thumbs[c].rgba.empty())
-                return std::nullopt;
-            aurora::rmlui::RuntimeTexture t;
-            t.width = s_thumbs[c].w;
-            t.height = s_thumbs[c].h;
-            t.rgba8 = std::as_bytes(std::span(s_thumbs[c].rgba));
-            t.generateMipmaps = true;
-            return t;
+        aurora::rmlui::register_texture_provider("xnstage", [](std::string_view source) {
+            return picture_texture(source, s_thumbs);
+        });
+        aurora::rmlui::register_texture_provider("xnfighter", [](std::string_view source) {
+            return picture_texture(source, s_portraits);
         });
     }
 }
 } // namespace
 
 extern "C" void pc_xn_sss_thumb(int cell, const void* c8, int w, int h, const void* tlut, int tlut_fmt, int entries) {
-    if (cell < 0 || cell >= int(s_thumbs.size()) || c8 == nullptr || tlut == nullptr || w <= 0 || h <= 0 ||
-        w % 8 != 0 || h % 4 != 0 || entries <= 0)
+    if (cell < 0 || cell >= int(s_thumbs.size()) || tlut == nullptr || w % 8 != 0 || h % 4 != 0)
         return;
     register_sss_textures();
-    // C8: 8x4 blocks of palette indices, row by row.
-    const auto* idx = static_cast<const uint8_t*>(c8);
-    const auto* lut = static_cast<const uint8_t*>(tlut);
-    Thumb& t = s_thumbs[cell];
-    t.w = uint32_t(w), t.h = uint32_t(h);
-    t.rgba.assign(size_t(w) * h * 4, 0);
-    size_t at = 0;
-    for (int by = 0; by < h; by += 4)
-        for (int bx = 0; bx < w; bx += 8)
-            for (int y = 0; y < 4; y++)
-                for (int x = 0; x < 8; x++) {
-                    const int e = idx[at++];
-                    if (e >= entries)
-                        continue;
-                    const auto px = tlut_rgba(lut + 2 * e, tlut_fmt);
-                    std::memcpy(&t.rgba[(size_t(by + y) * w + bx + x) * 4], px.data(), 4);
-                }
+    decode_gx(static_cast<const uint8_t*>(c8), 9, w, h, static_cast<const uint8_t*>(tlut), tlut_fmt, entries,
+              s_thumbs[cell]);
+}
+
+extern "C" int pc_xn_fighter_thumb(int ckind, const void* image, int w, int h, int fmt, const void* tlut,
+                                   int tlut_fmt, int entries) {
+    for (int i = 0; i < XN_FIGHTER_ENTRIES; i++) {
+        if (xn_fighter_order[i] != ckind)
+            continue;
+        register_sss_textures();
+        return decode_gx(static_cast<const uint8_t*>(image), fmt, w, h, static_cast<const uint8_t*>(tlut), tlut_fmt,
+                         entries, s_portraits[i])
+                   ? 1
+                   : 0;
+    }
+    return 0;
+}
+
+extern "C" bool pc_xn_menu_portraits_wanted(void) {
+    if (!s_portraits_wanted || s_portraits_asked)
+        return false;
+    s_portraits_asked = true;
+    return true;
 }

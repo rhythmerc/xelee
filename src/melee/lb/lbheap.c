@@ -350,3 +350,14 @@ void lbHeap_80015F3C(void)
         desc++;
     }
 }
+
+#ifdef TARGET_PC
+int lbHeap_PcFreeBytes(int heap_id)
+{
+    struct Heap* p = &lbHeap_80431FA0.heap_array[heap_id];
+    if (p->status != LbHeapStatus_Create) {
+        return -1;
+    }
+    return p->type == 0 ? (int) OSCheckHeap(p->id) : (int) lbMemory_80014F7C(p->handle);
+}
+#endif
