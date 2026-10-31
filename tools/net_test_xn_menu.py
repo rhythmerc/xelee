@@ -850,12 +850,571 @@ def rematch(insts, shots, drive):
     return True
 
 
+# ---- Lobby Settings (docs/xeleenet-settings-overlay-plan.md) ------------------
+# The overlay's items, top to bottom, as Up and Down walk them on the host's
+# page (xeleenet_menu.cpp build_overlay_host): Friendly fire only with Teams
+# on; Visibility and Hide code not on LAN.
+def settings_rows(teams, lan):
+    rows = ["teams", "stocks", "time", "items"] + (["ff"] if teams else []) + ["more", "flist", "slist", "frozen",
+                                                                             "seats"]
+    return rows + ([] if lan else ["vis", "hide"]) + ["apply", "cancel"]
+
+
+def settings_file(work):
+    return os.path.join(work, "apply.txt")
+
+
+def commits(inst):
+    """Each "RULES in force" line: (frame, hash)."""
+    return nt.re.findall(r"net: RULES in force at frame (\d+) hash ([0-9a-f]+)", inst.text())
+
+
+def wait_commit(insts, before, timeout=60):
+    """Every instance has committed RULES more often than `before` (counts)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if all(len(commits(i)) > n for i, n in zip(insts, before)):
+            return True
+        time.sleep(0.5)
+    for i, n in zip(insts, before):
+        if len(commits(i)) <= n:
+            print(f"[{i.name}] FAIL: no new RULES commit")
+    return False
+
+
+def same_commit(insts):
+    last = {i.name: commits(i)[-1:] for i in insts}
+    print(f"net_test_xn_menu: last commits {last}", flush=True)
+    if len({tuple(v) for v in last.values()}) != 1 or not last[insts[0].name]:
+        print("FAIL: the players committed different RULES, or on different frames")
+        return False
+    return True
+
+
+def tap(inst, key, times=1):
+    for _ in range(times):
+        nt.press((inst,), key, 7, 0.35)
+
+
+def open_settings(inst):
+    """Z (Tab) opens Lobby Settings on that player's own game."""
+    n = nt.count(inst, r"xeleenet: Lobby Settings open")
+    nt.press((inst,), "Tab", 7, 0.9)
+    if nt.count(inst, r"xeleenet: Lobby Settings open") <= n:
+        print(f"[{inst.name}] FAIL: Z didn't open Lobby Settings")
+        return False
+    return True
+
+
+def to_row(inst, rows, row):
+    """Down from the first row (where the overlay opens) to `row`."""
+    tap(inst, "Down", rows.index(row))
+
+
+def portrait(inst, ckind):
+    """A portrait's middle, as the game logs them (MELEE_XN_TEST_HAND)."""
+    m = nt.re.search(r"css: portraits(.*)", inst.text())
+    for k, x, y in nt.re.findall(r" (\d+):(-?[\d.]+),(-?[\d.]+)", m.group(1) if m else ""):
+        if int(k) == ckind:
+            return float(x), float(y)
+    return None
+
+
+def token(inst, port):
+    """Where port's token is (it picks by that, not by the hand)."""
+    m = nt.re.findall(rf"css: P{port} hand at -?[\d.]+ -?[\d.]+ token (-?[\d.]+) (-?[\d.]+)", inst.text())
+    return (float(m[-1][0]), float(m[-1][1])) if m else None
+
+
+def hand_at(inst, port):
+    m = nt.re.findall(rf"css: P{port} hand at (-?[\d.]+) (-?[\d.]+)", inst.text())
+    return (float(m[-1][0]), float(m[-1][1])) if m else None
+
+
+def steer_to(inst, port, target, where=token, tries=10):
+    """Move port's hand until `where` (its token, or the hand itself) is
+    within a unit of `target`, by what the game logs (MELEE_XN_TEST_HAND)."""
+    for _ in range(tries):
+        time.sleep(0.7)
+        at = where(inst, port)
+        if at is None:
+            continue
+        dx, dy = target[0] - at[0], target[1] - at[1]
+        if abs(dx) < 1.0 and abs(dy) < 1.0:
+            return True
+        for d, plus, minus in ((dx, "Right", "Left"), (dy, "Up", "Down")):
+            frames = round(abs(d) / HAND_SPEED)
+            if frames > 0:
+                nt.press((inst,), plus if d > 0 else minus, frames, 0.2)
+    return False
+
+
+BANNER_AT = (0.0, 23.5)  # the top strip, under XeleeNet's banner
+
+
+def pick_high(inst, port, ckind=2):
+    """Port's hand puts its token on `ckind` (Fox: High tiers, off the Low
+    tiers list), steered by where the game says the token is. Returns the
+    fighter picked if it's a High tier, else None."""
+    target = None
+    for _ in range(20):
+        target = target or portrait(inst, ckind)
+        if target is not None:
+            break
+        time.sleep(0.5)
+    if target is None:
+        print(f"[{inst.name}] FAIL: the game never logged the portraits")
+        return None
+    steer_to(inst, port, target)
+    before = nt.count(inst, rf"css: P{port} picked")
+    nt.press((inst,), "X", 7, 0.6)
+    picks = nt.re.findall(rf"css: P{port} picked (\d+)", inst.text())
+    if len(picks) <= before:
+        print(f"[{inst.name}] FAIL: P{port} never picked (token at {token(inst, port)}, portrait {target})")
+        return None
+    got = int(picks[-1])
+    print(f"net_test_xn_menu: P{port} picked {got}", flush=True)
+    if not (FIGHTERS_HIGH >> got) & 1:
+        print(f"[{inst.name}] FAIL: P{port} picked {got}, not a High tier")
+        return None
+    return got
+
+
+def pick_rows(insts):
+    """Everyone sweeps two rows: a pick each, as ready_scenario does."""
+    for down in nt.CSS_ROWS[:2]:
+        nt.press(insts, "Left+Up", nt.CSS_PIN, 1.2)
+        nt.press(insts, "Down", down, 0.8)
+        nt.press(insts, "Right", nt.CSS_FIRST, 0.6)
+        for _ in range(nt.CSS_COLS):
+            nt.press(insts, "X", 7, 0.5)
+            nt.press(insts, "Right", nt.CSS_STEP, 0.4)
+
+
+def applied_everywhere(insts, loads, before, shots, name):
+    """An Apply landed: every CSS reloaded on one commit, the same everywhere."""
+    if not wait_commit(insts, before) or not reloaded(insts, loads) or not same_commit(insts):
+        return False
+    time.sleep(1.5)
+    shot(insts[0], shots, f"{name}-host")
+    if len(insts) > 1:
+        shot(insts[1], shots, f"{name}-guest")
+    return True
+
+
+
+
+def settings_engine(insts, shots, args):
+    """O2 with no UI (MELEE_XN_TEST_APPLY): P2 holds Fox; the host's game
+    applies Low tiers and 3 stocks. Every player commits the same RULES on
+    the same frame, and P2's Fox comes back empty everywhere."""
+    host, p2 = insts[0], insts[1]
+    nt.settle(insts, nt.MENU_SETTLE)
+    if pick_high(p2, 2) is None:
+        return False
+    time.sleep(1.0)
+    loads, before = [css_loads(i) for i in insts], [len(commits(i)) for i in insts]
+    with open(settings_file(args.work), "w") as f:
+        f.write(f"stock=1\nstocks=3\nfighters={FIGHTERS_LOW}\n")
+    if not host.wait_log(r"xeleenet: settings applied", 20):
+        print("FAIL: the test knob never applied")
+        return False
+    if not applied_everywhere(insts, loads, before, shots, "s-engine"):
+        return False
+    return settings_landed(insts, stocks=3, fighters=FIGHTERS_LOW, dropped=2)
+
+
+def settings_landed(insts, stocks=None, fighters=None, dropped=None):
+    """The last RULES each player put in force has these, and P`dropped`'s
+    pick came back empty everywhere."""
+    ok = True
+    for i in insts:
+        t = i.text()
+        applied = nt.re.findall(r"net: RULES (?:applied|in force) mode=(.*)", t)
+        last = " " + applied[-1] if applied else ""
+        if stocks is not None and f" stock={stocks} " not in last:
+            print(f"[{i.name}] FAIL: stocks={stocks} never came in force")
+            ok = False
+        if fighters is not None and f"fighters={fighters:07x}" not in last:
+            print(f"[{i.name}] FAIL: the fighter list {fighters:07x} never came in force")
+            ok = False
+        if dropped is not None and not nt.re.search(rf"online: XeleeNet P{dropped}'s pick \d+ is off the list", t):
+            print(f"[{i.name}] FAIL: P{dropped}'s pick wasn't dropped")
+            ok = False
+    if ok:
+        print("net_test_xn_menu: the new settings landed on every player", flush=True)
+    return ok
+
+
+def settings_hold(insts, shots, args):
+    """O3: with the overlay open, the host's stick, A and START reach no
+    player's CSS (its port rests); after B closes it, its A does again."""
+    host = insts[0]
+    nt.settle(insts, nt.MENU_SETTLE)
+    if not open_settings(host):
+        return False
+    a_at = [nt.count(i, r"css: P1 A at") for i in insts]
+    ready = [nt.count(i, r"css: P1 ready|css: P1 START") for i in insts]
+    # Down to More rules, A into it and B out: nothing changes, and none of
+    # it may reach the CSS. Then START (nothing to apply) closes it.
+    rows = settings_rows(teams=True, lan=args.net == "lan")
+    to_row(host, rows, "more")
+    shot(host, shots, "s-hold-open")
+    tap(host, "X")
+    tap(host, "Z")
+    tap(host, "Return")
+    time.sleep(1.0)
+    ok = True
+    if [nt.count(i, r"css: P1 A at") for i in insts] != a_at:
+        print("FAIL: the host's A reached the CSS with the overlay open")
+        ok = False
+    if [nt.count(i, r"css: P1 ready|css: P1 START") for i in insts] != ready:
+        print("FAIL: the host's START reached the CSS with the overlay open")
+        ok = False
+    if not host.wait_log(r"net: P1 rests", 1):
+        print("FAIL: the host's port never rested")
+        ok = False
+    # START on a page applies: here it went to the overlay (nothing changed).
+    if not host.wait_log(r"xeleenet: Lobby Settings closed \(nothing changed\)", 5):
+        print("FAIL: START didn't close the unchanged overlay")
+        ok = False
+    time.sleep(0.5)
+    nt.press((host,), "X", 7, 1.0)
+    if not all(nt.count(i, r"css: P1 A at") > n for i, n in zip(insts, a_at)):
+        print("FAIL: after the overlay, the host's A didn't reach the CSS")
+        ok = False
+    if ok:
+        print("net_test_xn_menu: the host rested while the overlay was open", flush=True)
+    return ok
+
+
+def settings_open(insts, shots, args):
+    """O5: the host's hand on the banner and A opens Lobby Settings, with
+    Melee's rules bar under it shut (the CSS stays); the guests hear it
+    (editing); B closes it. A guest's Z opens a read-only one. A Ready host's
+    Z opens nothing."""
+    host, guest = insts[0], insts[1]
+    nt.settle(insts, nt.MENU_SETTLE)
+    loads = [css_loads(i) for i in insts]
+    # The hand onto the banner's middle, where Melee's rules bar opened its
+    # rules menu.
+    steer_to(host, 1, BANNER_AT, where=hand_at)
+    shot(host, shots, "s-open-hot")
+    nt.press((host,), "X", 7, 1.0)
+    ok = True
+    if not host.wait_log(r"css: P1 opens Lobby Settings \(the banner\)", 3) or \
+            not host.wait_log(r"xeleenet: Lobby Settings open \(host\)", 3):
+        print("FAIL: A on the banner didn't open Lobby Settings")
+        return False
+    if not all(g.wait_log(r"xeleenet: the host opened Lobby Settings", 10) for g in insts[1:]):
+        print("FAIL: a guest never heard the host was editing")
+        ok = False
+    time.sleep(1.0)
+    shot(host, shots, "s-open-host")
+    shot(guest, shots, "s-open-guest-c3")
+    tap(host, "Z")  # B: cancel
+    if not host.wait_log(r"xeleenet: Lobby Settings closed", 5):
+        print("FAIL: B didn't close Lobby Settings")
+        ok = False
+    if not all(g.wait_log(r"xeleenet: the host closed Lobby Settings", 10) for g in insts[1:]):
+        print("FAIL: a guest never heard the host was done")
+        ok = False
+    time.sleep(1.0)
+    if [css_loads(i) for i in insts] != loads or any("online: enter SSS" in i.text() for i in insts):
+        print("FAIL: A over the rules bar left the CSS")
+        ok = False
+    if not open_settings(guest) or not guest.wait_log(r"xeleenet: Lobby Settings open \(read-only\)", 2):
+        print("FAIL: the guest's Z didn't open a read-only Lobby Settings")
+        return False
+    time.sleep(0.8)
+    shot(guest, shots, "s-open-guest-read-only")
+    tap(guest, "Z")
+    # A Ready host: Z opens nothing.
+    pick_rows((host,))
+    nt.press((host,), "Return", 9, 1.0)
+    if not host.wait_log(r"css: P1 ready", 5):
+        print("FAIL: the host never got Ready")
+        return False
+    n = nt.count(host, r"xeleenet: Lobby Settings open")
+    nt.press((host,), "Tab", 7, 1.0)
+    if nt.count(host, r"xeleenet: Lobby Settings open") != n:
+        print("FAIL: a Ready host's Z opened Lobby Settings")
+        ok = False
+    tap(host, "Z")  # not Ready again
+    if ok:
+        print("net_test_xn_menu: Lobby Settings opened from the banner and with Z, read-only for a guest",
+              flush=True)
+    return ok
+
+
+def settings_walk(insts, shots, args):
+    """The full UI walk: P2 holds Fox; the host opens Lobby Settings with Z,
+    Stocks right, Fighter list > X twice (Low tiers), START. Every player
+    commits on the same frame, P2's Fox comes back empty and Ready is 0."""
+    host, p2 = insts[0], insts[1]
+    lan = args.net == "lan"
+    nt.settle(insts, nt.MENU_SETTLE)
+    if pick_high(p2, 2) is None:
+        return False
+    nt.press((p2,), "Return", 9, 1.0)  # P2 Ready: the Apply clears it
+    if not p2.wait_log(r"css: P2 ready", 5):
+        print("FAIL: P2 never got Ready")
+        return False
+    rows = settings_rows(teams=True, lan=lan)
+    if not open_settings(host):
+        return False
+    to_row(host, rows, "stocks")
+    tap(host, "Right")  # 4 -> 5
+    shot(host, shots, "s-walk-stocks")
+    tap(host, "Down", rows.index("flist") - rows.index("stocks"))
+    tap(host, "X")  # A: the fighter page
+    tap(host, "C", 2)  # X: All -> High -> Low
+    shot(host, shots, "s-walk-fighters")
+    tap(host, "Z")  # B: back to the rows
+    time.sleep(0.5)
+    shot(host, shots, "s-walk-changes")
+    loads, before = [css_loads(i) for i in insts], [len(commits(i)) for i in insts]
+    ready = [nt.count(i, r"css: P\d ready") for i in insts]
+    tap(host, "Return")  # START: apply
+    if not host.wait_log(r"xeleenet: Lobby Settings applied", 5):
+        print("FAIL: START didn't apply")
+        return False
+    time.sleep(0.8)
+    shot(p2, shots, "s-walk-applying-guest")
+    if not applied_everywhere(insts, loads, before, shots, "s-walk-after"):
+        return False
+    if not settings_landed(insts, stocks=5, fighters=FIGHTERS_LOW, dropped=2):
+        return False
+    if [nt.count(i, r"css: P\d ready") for i in insts] != ready:
+        print("FAIL: someone was Ready after the reload")
+        return False
+    return True
+
+
+def settings_cancel(insts, shots, args):
+    """B: the host changes Stocks and cancels; no restart, no reload, and
+    P2's Ready stands."""
+    host, p2 = insts[0], insts[1]
+    nt.settle(insts, nt.MENU_SETTLE)
+    pick_rows((p2,))
+    nt.press((p2,), "Return", 9, 1.0)
+    if not p2.wait_log(r"css: P2 ready", 5):
+        print("FAIL: P2 never got Ready")
+        return False
+    loads = [css_loads(i) for i in insts]
+    starts = nt.count(host, r"xeleenet: starting")
+    if not open_settings(host):
+        return False
+    tap(host, "Down")
+    tap(host, "Right")
+    tap(host, "Z")  # B: cancel
+    if not host.wait_log(r"xeleenet: Lobby Settings closed", 5):
+        print("FAIL: B didn't close Lobby Settings")
+        return False
+    time.sleep(6)
+    ok = True
+    if nt.count(host, r"xeleenet: starting") != starts or [css_loads(i) for i in insts] != loads:
+        print("FAIL: a cancelled Lobby Settings restarted the session or reloaded the CSS")
+        ok = False
+    if any(nt.re.search(r"css: P2 not ready", i.text()) for i in insts):
+        print("FAIL: P2's Ready went")
+        ok = False
+    if ok:
+        print("net_test_xn_menu: cancel changed nothing; P2 still Ready", flush=True)
+    return ok
+
+
+def join_one(g, to_menu, lan, code):
+    """A latecomer joins: by address on LAN, by code on the service."""
+    walk(g, to_menu + [("X", 7), ("Down", 7), ("X", 7)])
+    time.sleep(2.5)
+    if lan:
+        nt.press((g,), "C", 7, 1.0)
+        type_code(g, "127.0.0.1", address_keypad())
+    else:
+        nt.press((g,), "V", 7, 1.0)
+        type_code(g, code)
+    nt.press((g,), "Return", 9, 0.4)
+
+
+def settings_seats(insts, extra, shots, args, code):
+    """Seats: 3 players in 4 seats. Lowering to 3 works and 2 can't be
+    reached; then a 4th is refused. Raising to 4 lets the 4th join."""
+    host = insts[0]
+    lan = args.net == "lan"
+    rows = settings_rows(teams=True, lan=lan)
+    nt.settle(insts, nt.MENU_SETTLE)
+    for want, key, times in ((3, "Left", 2), (4, "Right", 1)):
+        if not open_settings(host):
+            return False
+        to_row(host, rows, "seats")
+        tap(host, key, times)
+        shot(host, shots, f"s-seats-{want}")
+        loads, before = [css_loads(i) for i in insts], [len(commits(i)) for i in insts]
+        tap(host, "Return")
+        if not applied_everywhere(insts, loads, before, shots, f"s-seats-{want}-after"):
+            return False
+        if not all(i.wait_log(rf"seats={want} unlock_all", 5) for i in insts) or \
+                not all(nt.re.findall(r"css: (\d) seats", i.text())[-1:] == [str(want)] for i in insts):
+            print(f"FAIL: the lobby didn't come to {want} seats everywhere")
+            return False
+        print(f"net_test_xn_menu: {want} seats everywhere", flush=True)
+        if want == 3:
+            join_one(extra, TO_ONLINE + (TO_LAN_ROW if lan else []), lan, code)
+            if not extra.wait_log(r"xeleenet pages: join failed", 30):
+                print("FAIL: a 4th player joined a 3-seat lobby")
+                return False
+            time.sleep(1.0)
+            shot(extra, shots, "s-seats-4th-refused")
+            print("net_test_xn_menu: the 4th was refused", flush=True)
+    nt.press((extra,), "X", 7, 0.5)  # TRY AGAIN
+    if not extra.wait_log(r"lobby: entering CSS", 90):
+        print("FAIL: the 4th never got in once there were 4 seats")
+        return False
+    for i in insts + [extra]:
+        if not i.wait_log(nt.re.escape("(players 0f)"), 60):
+            print(f"[{i.name}] FAIL: no session with the 4th")
+            return False
+    print("net_test_xn_menu: 4 seats let the 4th in", flush=True)
+    time.sleep(4)
+    return True
+
+
+def team_of(inst, port):
+    m = nt.re.findall(rf"css: P{port}'s team (\d)", inst.text())
+    return int(m[-1]) if m else None
+
+
+def settings_teams(insts, shots, args):
+    """Teams: off -> on deals the teams again on every player; a team the
+    host then sets on its door survives an unrelated Apply."""
+    host = insts[0]
+    lan = args.net == "lan"
+    nt.settle(insts, nt.MENU_SETTLE)
+    if not open_settings(host):
+        return False
+    tap(host, "Right")  # Teams: Off -> On
+    loads, before = [css_loads(i) for i in insts], [len(commits(i)) for i in insts]
+    tap(host, "Return")
+    if not applied_everywhere(insts, loads, before, shots, "s-teams-on"):
+        return False
+    dealt = nt.re.escape(f"teams dealt for {(1 << len(insts)) - 1:02x} (Teams on)")
+    if not all(i.wait_log(dealt, 5) for i in insts):
+        print("FAIL: Teams on didn't deal the teams everywhere")
+        return False
+    print("net_test_xn_menu: Teams on dealt the teams", flush=True)
+    if not teams_scenario(insts, shots):
+        return False
+    team = team_of(host, 1)
+    rows = settings_rows(teams=True, lan=lan)
+    if not open_settings(host):
+        return False
+    to_row(host, rows, "stocks")
+    tap(host, "Right")
+    loads, before = [css_loads(i) for i in insts], [len(commits(i)) for i in insts]
+    deals = [nt.count(i, r"teams dealt") for i in insts]
+    tap(host, "Return")
+    if not applied_everywhere(insts, loads, before, shots, "s-teams-kept"):
+        return False
+    kept = f"teams kept {team}"
+    if [nt.count(i, r"teams dealt") for i in insts] != deals or \
+            not all(i.wait_log(nt.re.escape(kept), 5) for i in insts):
+        print(f"FAIL: the host's team ({team}) didn't survive the Apply")
+        return False
+    print(f"net_test_xn_menu: P1's team {team} survived an Apply", flush=True)
+    return True
+
+
+def settings_alone(host, shots):
+    """The host alone: Apply reloads its own CSS, with no session."""
+    nt.settle((host,), nt.MENU_SETTLE)
+    if not open_settings(host):
+        return False
+    tap(host, "Down")
+    tap(host, "Right")
+    loads = css_loads(host)
+    tap(host, "Return")
+    if not host.wait_log(r"the host alone reloads its CSS", 5) or not reloaded((host,), [loads]):
+        print("FAIL: the host alone's Apply didn't reload its CSS")
+        return False
+    time.sleep(2)
+    shot(host, shots, "s-alone-after")
+    if not host.wait_log(r"xeleenet: the CSS has new rules", 5):
+        print("FAIL: the CSS never showed the new rules")
+        return False
+    print("net_test_xn_menu: the host alone reloaded with the new settings", flush=True)
+    return True
+
+
+def settings_list(insts, shots, args):
+    """Visibility alone: the service hears, nothing reloads, nobody's
+    Ready goes. LAN has no listing-only row: there it changes Hide code's
+    neighbour... nothing, so the scenario checks the listing call only."""
+    host, p2 = insts[0], insts[1]
+    lan = args.net == "lan"
+    nt.settle(insts, nt.MENU_SETTLE)
+    if lan:
+        print("net_test_xn_menu: LAN lists every lobby: no listing-only row to change (skipped)", flush=True)
+        return True
+    rows = settings_rows(teams=True, lan=lan)
+    loads = [css_loads(i) for i in insts]
+    starts = nt.count(host, r"xeleenet: starting")
+    if not open_settings(host):
+        return False
+    to_row(host, rows, "vis")
+    tap(host, "Right")  # Public -> Private
+    tap(host, "Return")
+    if not host.wait_log(r"xeleenet: settings applied \(the listing only\)", 5) or \
+            not host.wait_log(r"xeleenet: settings taken \(HTTP 200\)", 10):
+        print("FAIL: the service never took the new visibility")
+        return False
+    time.sleep(5)
+    if nt.count(host, r"xeleenet: starting") != starts or [css_loads(i) for i in insts] != loads:
+        print("FAIL: a listing-only change restarted the session")
+        return False
+    print("net_test_xn_menu: visibility went to the service alone", flush=True)
+    return True
+
+
+def settings_race(insts, shots, args, to_menu, code):
+    """Apply while a join is in flight: the third player starts joining, and
+    the host's game applies (the knob) at once. The session that seats the
+    third carries the new rules, and every player's last commit is equal."""
+    host, late = insts[0], insts[-1]
+    lan = args.net == "lan"
+    join_one(late, to_menu, lan, code)
+    if not late.wait_log(r"xeleenet pages: joining", 20):
+        print("FAIL: the latecomer never started joining")
+        return False
+    with open(settings_file(args.work), "w") as f:
+        f.write(f"stock=1\nstocks=2\nfighters={FIGHTERS_LOW}\n")
+    if not host.wait_log(r"xeleenet: settings applied", 20):
+        print("FAIL: the test knob never applied")
+        return False
+    if not late.wait_log(r"lobby: entering CSS", 90):
+        print("FAIL: the latecomer never got in")
+        return False
+    want = f"(players {(1 << len(insts)) - 1:02x})"
+    if not all(i.wait_log(nt.re.escape(want), 60) for i in insts):
+        print("FAIL: no session with everyone")
+        return False
+    time.sleep(8)  # whichever session comes last
+    if not same_commit(insts) or not settings_landed(insts, stocks=2, fighters=FIGHTERS_LOW):
+        return False
+    shot(late, shots, "s-race-late")
+    return True
+
+
 def run(args):
-    names = "abcd"[:args.players]
+    # settings-seats: a 4th player, kept out of the lobby until it has 4 seats.
+    extra_seat = args.scenario == "settings-seats"
+    # settings-race: the last guest joins once the host's Apply is under way.
+    late = args.scenario == "settings-race"
+    names = "abcd"[:args.players + (1 if extra_seat else 0)]
     shots = args.shots or os.path.join(args.work, "shots")
     shutil.rmtree(args.work, ignore_errors=True)
     os.makedirs(shots)
-    ports = [args.port + k for k in range(args.players)]
+    ports = [args.port + k for k in range(len(names))]
     for p in ports:
         if not nt.wait_port_free(p):
             return False
@@ -868,11 +1427,18 @@ def run(args):
                       fighters=FIGHTERS_LOW if args.scenario == "fighters" else FIGHTERS_ALL)
         if args.scenario == "details" and k == 0:
             set_rules(ident, 2, fighters=FIGHTERS_LOW, stages=FINAL_DEST)
+        if args.scenario == "settings-teams" and k == 0:
+            # Teams off, 4 seats: the scenario turns Teams on from Lobby Settings.
+            with open(os.path.join(ident, "xeleenet-lobby.txt"), "w") as f:
+                f.write(f"preset=3\nname=Teams test\nopen=1\nseats=4\nteams=0\nstock=1\nstocks=4\nminutes=8\n"
+                        f"items=-1\nff=0\nhandicap=0\ndamage=10\npause=1\nstages={COMPETITIVE}\nfighters={FIGHTERS_ALL}\n"
+                        f"frozen=1\nhide=0\n")
         env = {
             "MELEE_XN_URL": args.url,
             "MELEE_XN_NAME": NAMES[k],
             "MELEE_XN_IDENTITY": ident,
             "MELEE_NET_EXIT_AFTER_FRAMES": str(int(args.seconds * 60) + 30000),
+            "MELEE_XN_TEST_HAND": "1",  # where the hands are (pick_high)
         }
         if args.block:
             env["MELEE_NET_SIM_BLOCK"] = args.block
@@ -880,6 +1446,8 @@ def run(args):
             env["MELEE_NET_SIM_NO_MCAST"] = "1"
         if args.scenario == "sss-repick" and k == 1:
             env["MELEE_NET_SIM_DELAY_MS"] = "80"  # P2's last change races P3's pick
+        if args.scenario in ("settings-engine", "settings-race") and k == 0:
+            env["MELEE_XN_TEST_APPLY"] = f"30:{settings_file(args.work)}"
         if args.scenario.startswith("multipad") and k == 0:
             fifo = os.path.join(args.work, f"{name}.pad2.keys")
             os.mkfifo(fifo)
@@ -892,6 +1460,7 @@ def run(args):
             if not nt.to_main_menu((inst,)):
                 print(f"[{inst.name}] FAIL: never reached the main menu")
                 return False
+        extra = insts.pop() if extra_seat else None
         host, guests = insts[0], insts[1:]
         lan = args.net == "lan"
         to_menu = TO_ONLINE + (TO_LAN_ROW if lan else [])
@@ -901,8 +1470,8 @@ def run(args):
         shot(host, shots, "2-xeleenet-menu")
         walk(host, [("X", 7)])
         time.sleep(1.5)
-        if (args.players > 2 or args.scenario == "multipad") and args.scenario not in ("set", "teams", "fighters",
-                                                                                         "details"):
+        if (args.players > 2 or args.scenario == "multipad") and \
+                args.scenario not in ("set", "teams", "fighters", "details", "settings-teams"):
             # (their rules file has the seats)
             nt.press((host,), "Right", 7, 0.6)  # Preset: 1v1 (2 seats) -> Doubles (4)
         shot(host, shots, "3-host-page")
@@ -920,7 +1489,10 @@ def run(args):
         if args.scenario == "leave-host-alone":
             ok = leave_host_alone(host, shots)
             return ok
-        for k, g in enumerate(guests):
+        if args.scenario == "settings-alone":
+            ok = settings_alone(host, shots)
+            return ok
+        for k, g in enumerate(guests[:-1] if late else guests):
             # Join opens the lobby browser (B1), which lists the host's lobby.
             walk(g, to_menu + [("X", 7), ("Down", 7), ("X", 7)])
             time.sleep(2.5)
@@ -971,6 +1543,8 @@ def run(args):
                 return False
         if args.scenario == "details":
             insts = insts[:2]  # the 2-seat lobby's players
+        if late and not settings_race(insts, shots, args, to_menu, code):
+            return False
         want = f"(players {(1 << len(insts)) - 1:02x})"
         for inst in insts:
             if not inst.wait_log(nt.re.escape(want), 90):
@@ -1008,6 +1582,16 @@ def run(args):
             insts = insts + [pad]  # its hand picks, readies and plays from here on
         if args.scenario == "teams" and not teams_scenario(insts, shots):
             return False
+        scenes = {"settings-engine": settings_engine, "settings-hold": settings_hold, "settings-open": settings_open,
+                  "settings": settings_walk, "settings-cancel": settings_cancel, "settings-teams": settings_teams,
+                  "settings-list": settings_list}
+        if args.scenario in scenes and not scenes[args.scenario](insts, shots, args):
+            return False
+        if args.scenario == "settings-seats":
+            if not settings_seats(insts, extra, shots, args, code):
+                return False
+            insts = insts + [extra]
+            extra = None
         if args.scenario != "ready" and not drive_css(insts):
             print("FAIL: no CSS pick reached the SSS")
             return False
@@ -1073,7 +1657,9 @@ def main():
     ap.add_argument("--scenario", default="",
                     choices=("", "sss-host-b", "ready", "leave-guest", "leave-host", "sss-repick", "sss-timeout",
                              "sss-same", "css-b-hold", "leave-host-alone", "set", "teams", "multipad",
-                             "multipad-full", "fighters", "details"),
+                             "multipad-full", "fighters", "details", "settings-engine", "settings-hold",
+                             "settings-open", "settings", "settings-cancel", "settings-seats", "settings-teams",
+                             "settings-alone", "settings-race", "settings-list"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
@@ -1091,7 +1677,12 @@ def main():
                          "fighters: the host's lobby allows Low tiers only; off-list A is refused everywhere; "
                          "details: a 2-seat lobby (Low tiers, Final Dest. only): the first guest's Details shows "
                          "them and A joins; the next turns Show full on, and the full lobby's Details won't join "
-                         "(use --players 3)")
+                         "(use --players 3); "
+                         "settings-*: Lobby Settings (docs/xeleenet-settings-overlay-plan.md): -engine applies "
+                         "with no UI (MELEE_XN_TEST_APPLY), -hold rests the host's port, -open opens it from the "
+                         "banner and with Z, settings walks the UI and applies, -cancel changes nothing, -seats "
+                         "lowers and raises the seats (a 4th joins), -teams deals and keeps teams, -alone applies "
+                         "with nobody in, -race applies while a join is in flight, -list changes the listing only")
     ap.add_argument("--join-shots", action="store_true", help="shots every 0.35 s through the first join")
     ap.add_argument("--url", default="", help="a running service instead of a local lobby service")
     ap.add_argument("--net", choices=("service", "lan"), default="service",

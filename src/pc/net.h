@@ -131,6 +131,16 @@ int pc_net_port_phys(int port);
  * not); false when nothing is connected there or no session runs. */
 struct PADStatus;
 bool pc_net_phys_pad(int phys, struct PADStatus* out);
+/* One of our ports rests (the Lobby Settings overlay reads its pad instead,
+ * docs/xeleenet-settings-overlay-plan.md O3): its sample goes out neutral.
+ * Once let go it stays neutral until its pad is at rest, so the press that
+ * closed the overlay never reaches the game. */
+void pc_net_hold_local(int port, bool on);
+/* XeleeNet's host has Lobby Settings open, or closed it: {1} or {0}, host to
+ * guests (C3 of docs/xeleenet-settings-overlay-plan.md). The reliable lane
+ * hands it to xeleenet_menu.cpp at once, never to the caller's queue, and
+ * nothing in the game reads it. */
+#define PC_NET_MSG_XN_EDITING 0x16
 /* The primary port of the machine that plays `port` (its own for a primary
  * port), -1 for a port nobody plays. */
 int pc_net_port_owner(int port);
@@ -213,6 +223,23 @@ bool pc_net_rules_teams(void);
  * host's own setting before one), a bit per CharacterKind. All by default. */
 void pc_net_set_fighters(uint32_t mask);
 uint32_t pc_net_fighters(void);
+/* XeleeNet's lobby rules (docs/xeleenet-settings-overlay-plan.md, O1):
+ *   - pc_net_set_rules_staging: on while a lobby runs (net_punch.c). A RULES
+ *     set is then staged, on the host and on the guests, and the rules in
+ *     force stay through a session's switch to the next;
+ *   - pc_net_rules_commit: the staged set in force, on the session's agreed
+ *     frame (gmonlinemode.c's xnAgreeFrame); false when none was staged;
+ *   - pc_net_set_rules_wanted: what the host's RULES carry in place of its
+ *     own GameRules and GamePrefs, with the lobby's seats;
+ *   - pc_net_rules_take_wanted: those in force at once, the host alone;
+ *   - pc_net_rules_seats: the seats in force (the wanted ones before a
+ *     session), 0 when never set. */
+struct GameRules;
+void pc_net_set_rules_staging(bool on);
+bool pc_net_rules_commit(void);
+void pc_net_set_rules_wanted(const struct GameRules* game, uint8_t item_freq, uint32_t stage_mask, int seats);
+void pc_net_rules_take_wanted(void);
+int pc_net_rules_seats(void);
 
 /* Called once per simulation tick before the pad queue head is consumed.
  * Replaces the head sample's four ports with the synced inputs for this

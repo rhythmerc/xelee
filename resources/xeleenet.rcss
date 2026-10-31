@@ -3,7 +3,7 @@
  * (slippi-setup.rcss). Laid out in px on the same 1120x660 screen. F5 in the
  * game reloads this file. */
 
-.arr, .type, .go, .small, .note { display: inline; }
+.arr, .type, .go, .small, .note, .val, .was { display: inline; }
 .arr { color: #f0c226; margin: 0 12px; font-weight: bold; }
 
 /* ---- H1: the preset bar, two columns of rows, OPEN LOBBY ------------------- */
@@ -219,6 +219,9 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
         background-color: #d6d3cb; }
 .gl.y { width: 34px; height: 23px; border-radius: 12px; font-size: 15px; line-height: 23px; color: #2b2925;
         background-color: #d6d3cb; }
+/* Z: the GameCube's violet shoulder button. */
+.gl.z { width: 30px; height: 22px; border-radius: 6px 6px 3px 3px; font-size: 14px; line-height: 22px; color: #ffffff;
+        background-color: #6a52d6; }
 .gl.start { height: 23px; padding: 0 9px; border-radius: 12px; font-size: 11px; letter-spacing: 1px; line-height: 23px;
             color: #26241f; background-color: #aeaba3; }
 .gl.stick { position: relative; width: 30px; height: 30px; border: 3px #aeaba3; border-radius: 15px;

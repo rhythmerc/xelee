@@ -61,6 +61,19 @@ bool pc_xn_punch_claim_refused(void);
 bool pc_xn_punch_seat_left(int port);
 /* Host: the lobby's seats now, which caps the seats other pads get. */
 void pc_xn_punch_set_seats(int seats);
+/* Host: the next session with the same players, as a join would start it
+ * (docs/xeleenet-settings-overlay-plan.md, O2): the Lobby Settings' Apply.
+ * Its handshake carries the new rules, and every CSS reloads on its agreed
+ * frame. Waits for any link still being made, so a join in flight lands in
+ * the same session. `reason`: PC_XN_SWITCH_*. */
+enum { PC_XN_SWITCH_ROSTER, PC_XN_SWITCH_SETTINGS };
+void pc_xn_punch_restart(int reason);
+/* Why the next session is coming (a PC_XN_SWITCH_*), named but not yet
+ * started; -1 when none is. Host and guests alike. */
+int pc_xn_punch_switch_pending(void);
+/* The session running: the ports port `port` has its own link to (bits), or
+ * -1 when it isn't a machine's own port in it. For Lobby Settings' LINKS. */
+int pc_xn_punch_direct(int port);
 
 /* What the waiting room shows (gmonlinemode.c). */
 enum {

@@ -107,6 +107,11 @@ typedef struct PcXnCssState {
     int hold_port;
     int spare;
     uint8_t claimed;
+    /* Each door's fighter (a CharacterKind, 0xFF none), for Lobby Settings'
+     * CHANGES and its fighter page, and whether this machine's hand is over
+     * the banner (it glows: A there opens Lobby Settings). */
+    uint8_t ckind[4];
+    bool hot;
 } PcXnCssState;
 void pc_xn_css_frame(const PcXnCssState* state);
 /* For the CSS's doors (mncharsel.c): the lobby's seats (2-4, 4 when not
@@ -123,6 +128,29 @@ void pc_xn_css_off_list(int port, int ckind);
 /* START on a spare pad (physical pad `phys`) with no seat open: the notice
  * slot says the lobby is full, on this machine only. */
 void pc_xn_css_seat_full(int phys);
+/* A reload dropped port `port`'s pick, now off the lobby's fighter list
+ * (gmonlinemode.c's xnPicksTake, every player): its player picks again (F3 of
+ * docs/xeleenet-settings-overlay-plan.md). */
+void pc_xn_css_dropped(int port, int ckind);
+/* The rules in force as the CSS is entered with them (gmonlinemode.c, every
+ * entry): the banner's rules line, a guest's read-only Lobby Settings, and
+ * C4's "Host changed" notice when they differ from the last. */
+void pc_xn_css_rules(const PcXnRules* rules);
+
+/* Lobby Settings over XeleeNet's CSS (docs/xeleenet-settings-overlay-plan.md):
+ * the host's settings to change (START applies them, B cancels), a guest's to
+ * read. Opened from the CSS on this machine only (Z, or A on the banner),
+ * with this machine's primary port resting meanwhile (pc_net_hold_local).
+ *   - pc_xn_settings_pad: its pad, read off the physical one, once a CSS
+ *     frame while up;
+ *   - pc_xn_settings_cancel: it closes as B would (the sim shows this player
+ *     Ready, or the CSS ends). */
+void pc_xn_settings_open(bool host);
+bool pc_xn_settings_up(void);
+void pc_xn_settings_cancel(void);
+void pc_xn_settings_pad(unsigned buttons, int stick_x, int stick_y);
+/* PC_NET_MSG_XN_EDITING from the host (net_reliable.c). */
+void pc_xn_editing_receive(const void* payload, int len);
 /* A line for the next XeleeNet page (pc_xn_menu_begin), e.g. why the player
  * is back there. A lang key. */
 void pc_xn_menu_note(const char* key);

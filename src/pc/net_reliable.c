@@ -40,6 +40,7 @@
 #include "compat.h"
 #include "pc/net_internal.h"
 #include "pc/net_chat.h"
+#include "pc/xeleenet_menu.h"
 
 #include <SDL3/SDL_timer.h>
 #include <string.h>
@@ -277,6 +278,8 @@ bool rel_dispatch(int peer, uint8_t type, const void* payload, int len) {
         net_scene_rel(peer, payload, len);
     } else if (type == REL_CHAT) {
         pc_net_chat_receive(payload, len);
+    } else if (type == REL_XN_EDITING) {
+        pc_xn_editing_receive(payload, len); /* the overlay's notice only: never queued */
     } else {
         if (s_rel_rx_n >= REL_QUEUE) {
             return false;
