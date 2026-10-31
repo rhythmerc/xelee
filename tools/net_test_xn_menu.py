@@ -1701,7 +1701,9 @@ def run(args):
                   + ("  DESYNC" if "net: DESYNC" in t else ""))
     finally:
         for inst in everyone:
-            inst.kill(5)
+            # Unpaced, nothing asks them to exit (the frame cap is far off):
+            # a grace is only dead time.
+            inst.kill(0 if nt.UNPACED else 5)
     return ok
 
 

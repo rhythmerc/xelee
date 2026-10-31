@@ -109,6 +109,8 @@ def step(insts, lines, timeout=120):
         if any(i.proc.poll() is not None for i in insts):
             return False
         time.sleep(0.05)
+    late = [i.name for i in insts if not rx.search(i.text())]
+    print(f"step: mark {mark} never came on {' '.join(late)} after {timeout:.0f} s ({lines[0]})", flush=True)
     return False
 
 
