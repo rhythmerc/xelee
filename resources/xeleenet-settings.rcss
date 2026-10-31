@@ -13,9 +13,9 @@
 #otitle .ts { display: inline; font-size: 22px; font-weight: bold; color: #c9b77c; }
 #otitle .badge { display: inline-block; margin-left: 16px; vertical-align: 4px; }
 #board { top: 62px; height: 590px; }
-#ohint { position: absolute; left: 40px; top: 652px; width: 1040px; height: 28px; text-align: center; font-size: 19px;
+#ohint { position: absolute; left: 40px; top: 656px; width: 1040px; height: 28px; text-align: center; font-size: 19px;
          color: #c9b77c; }
-#legend { top: 684px; }
+#legend { top: 688px; }
 
 /* The Host page's columns, with no preset bar above them. */
 #board .col { top: 0; }
@@ -30,12 +30,12 @@
 .links { padding: 6px 14px 0; }
 .ll { font-size: 19px; color: #f0e4b8; line-height: 28px; }
 
-#changes { position: relative; margin-top: 12px; height: 128px; padding: 8px 14px; border: 1px #f0c22660;
+#changes { position: relative; margin-top: 12px; height: 118px; padding: 6px 14px; border: 1px #f0c22660;
            border-radius: 8px; background-color: #14110ae0; overflow: hidden; }
 #changes .ch { font-size: 14px; font-weight: bold; letter-spacing: 3px; color: #c9b77c; }
-#changes .cl { margin-top: 4px; font-size: 17px; font-weight: bold; color: #fff8e0; line-height: 23px; }
+#changes .cl { margin-top: 2px; font-size: 17px; font-weight: bold; color: #fff8e0; line-height: 22px; }
 #changes .cl.none { font-weight: normal; color: #8d8468; }
-#changes .ce { margin-top: 2px; font-size: 15px; color: #c9b77c; line-height: 20px; }
+#changes .ce { margin-top: 1px; font-size: 15px; color: #c9b77c; line-height: 19px; }
 #changes .ce.red { color: #ff9a7c; }
 #changes.ro { height: 60px; }
 

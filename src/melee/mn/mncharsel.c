@@ -6091,6 +6091,37 @@ static bool cssXnReadyFrame(void)
                 st.hand_ok = cssXnHandOnScreen(held, &st.hand_x, &st.hand_y);
             }
             cssXnSparePads(&st);
+            {
+                /* MELEE_XN_TEST_HAND (tools/net_test_xn_menu.py): where this
+                 * machine's hands are, twice a second, to steer them by. */
+                static int test_hand = -1;
+                if (test_hand < 0) {
+                    test_hand = getenv("MELEE_XN_TEST_HAND") != NULL;
+                }
+                if (test_hand && mnCharSel_804D6CEC == 30) {
+                    /* The portraits' middles, which the token picks by. */
+                    char line[640];
+                    int k, o = 0;
+                    for (k = 0; k < 25 && o < (int) sizeof line - 24; k++) {
+                        o += snprintf(line + o, sizeof line - o, " %d:%.1f,%.1f", icons[k].char_kind,
+                                      (icons[k].bound_l + icons[k].bound_r) / 2,
+                                      (icons[k].bound_u + icons[k].bound_d) / 2);
+                    }
+                    pc_log_line("css: portraits%s", line);
+                }
+                if (test_hand && mnCharSel_804D6CEC % 30 == 0) {
+                    int k;
+                    for (k = 0; k < 4; k++) {
+                        if ((st.local & (1 << k)) && mnCharSel_804A0BC0[k] != NULL &&
+                            mnCharSel_804A0BD0[k] != NULL)
+                        {
+                            pc_log_line("css: P%d hand at %.1f %.1f token %.1f %.1f", k + 1,
+                                        mnCharSel_804A0BC0[k]->xC, mnCharSel_804A0BC0[k]->x10,
+                                        mnCharSel_804A0BD0[k]->x8, mnCharSel_804A0BD0[k]->xC);
+                        }
+                    }
+                }
+            }
             pc_xn_css_frame(&st);
         }
     }
