@@ -363,6 +363,20 @@ void pc_frame_boundary(void) {
         browser_yield(); /* every frame returns to the event loop at least once */
 #endif
 
+    /* MELEE_DRAW_EVERY=<n>: draw and present one frame in n; the others run
+     * their GX commands without drawing (aurora_set_frame_discard). For
+     * tests run faster than real time: the game reads nothing back from the
+     * GPU, so the simulation is the same, and the draws were half of a frame. */
+    static int draw_every = -1;
+    if (draw_every < 0) {
+        const char* e = getenv("MELEE_DRAW_EVERY");
+        draw_every = e != NULL && atoi(e) > 1 ? atoi(e) : 1;
+    }
+    if (draw_every > 1) {
+        static unsigned drawn_n;
+        aurora_set_frame_discard(drawn_n++ % (unsigned)draw_every != 0);
+    }
+
     /* aurora_begin_frame returns false while minimized/paused; keep pumping.
      * Sleep a frame between attempts: without it a minimized window spins a
      * core at 100% polling SDL. */

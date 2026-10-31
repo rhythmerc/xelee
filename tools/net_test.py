@@ -86,6 +86,12 @@ SCENE_FILE = {
 # the speed. A harness that has been ported sets this before its instances
 # start; the rest stay paced, with millisecond holds.
 UNPACED = False
+# Unpaced runs draw one frame in DRAW_EVERY (MELEE_DRAW_EVERY, T5); the rest
+# run their GX commands undrawn and aren't presented. The game reads nothing
+# back from the GPU, so the simulation is the same; a window shot shows a
+# frame at most DRAW_EVERY frames old. MELEE_DRAW_EVERY in the environment
+# overrides it (1 draws every frame).
+DRAW_EVERY = 10
 # Menu harnesses boot every instance straight into the main menu
 # (MELEE_BOOT_SCENE=menu), instead of pressing through the card message, the
 # movie and the title one instance at a time. Set before instances start.
@@ -207,6 +213,7 @@ class Instance:
         })
         if UNPACED:
             e["MELEE_UNPACED"] = "1"  # as fast as it runs; the inputs are frame scripts
+            e.setdefault("MELEE_DRAW_EVERY", str(DRAW_EVERY))
         # Menus and pages log when they take input and when their highlight
         # moves (mnmain.c, xeleenet_menu.cpp): tests wait on those.
         e["MELEE_TEST_EVENTS"] = "1"
