@@ -5,17 +5,20 @@
  * F5 in the game reloads this file. */
 
 #dim { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #000000b8; }
-#screen { width: 1120px; height: 740px; }
-#frame { position: absolute; left: 0; top: 0; width: 1120px; height: 740px; border: 3px #f0c226c0;
+#screen { width: 1120px; height: 712px; }
+#frame { position: absolute; left: 0; top: 0; width: 1120px; height: 712px; border: 3px #f0c226c0;
          border-radius: 14px; background-color: #0b0a07f2; }
 #otitle { position: absolute; left: 30px; top: 16px; width: 1060px; height: 40px; }
 #otitle .tt { display: inline; font-size: 26px; font-weight: 800; letter-spacing: 3px; color: #ffffff; }
 #otitle .ts { display: inline; font-size: 22px; font-weight: bold; color: #c9b77c; }
 #otitle .badge { display: inline-block; margin-left: 16px; vertical-align: 4px; }
 #board { top: 62px; height: 590px; }
-#ohint { position: absolute; left: 40px; top: 656px; width: 1040px; height: 28px; text-align: center; font-size: 19px;
+/* The hint: its own line, clear of the buttons above it. */
+#ohint { position: absolute; left: 40px; top: 670px; width: 1040px; height: 28px; text-align: center; font-size: 19px;
          color: #c9b77c; }
-#legend { top: 688px; }
+/* The legend sits under the frame, where the CSS's own does (placed by the
+ * code), not inside it. */
+#legend { top: 0; transform-origin: 0 0; }
 
 /* The Host page's columns, with no preset bar above them. */
 #board .col { top: 0; }
@@ -39,7 +42,7 @@
 #changes .ce.red { color: #ff9a7c; }
 #changes.ro { height: 60px; }
 
-.obtns { position: relative; margin-top: 12px; height: 58px; text-align: right; }
+.obtns { position: relative; margin-top: 18px; height: 58px; text-align: right; }
 .obtns button { display: inline-block; position: relative; margin: 0 0 0 14px; width: 220px; height: 58px; }
 button.plain { text-align: center; font-size: 24px; font-weight: 800; letter-spacing: 2px; line-height: 52px;
                color: #f0e4b8; background-color: #0c0b08; border: 3px #f0c22680; border-radius: 8px; }

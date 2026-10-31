@@ -52,7 +52,7 @@ enum { SFX_BACK = 0, SFX_CONFIRM = 1, SFX_MOVE = 2 };
 // The layout, in px, scaled to fit the frame's inside, as the Slippi pages'.
 constexpr float kScreenW = 1120.f, kScreenH = 660.f;
 // The Lobby Settings overlay's, scaled to fit the window over the CSS.
-constexpr float kOverlayW = 1120.f, kOverlayH = 740.f;
+constexpr float kOverlayW = 1120.f, kOverlayH = 712.f;
 
 const char* const kLeft = "\xe2\x80\xb9"; // the value arrows
 const char* const kRight = "\xe2\x80\xba";
@@ -641,6 +641,29 @@ std::string legend_key(const std::string& button, const char* label) {
 
 void settings_done(bool apply); // the Lobby Settings overlay closes (below)
 void s_draft_set(bool host);     // and its draft (below)
+
+// The doors' rectangles in the CSS as Melee lays it out, as fractions of the
+// game's picture (the RmlUi context is that picture: Aurora's content
+// framebuffer, not the window): four in a row under the portraits, measured
+// on its frames. XeleeNet's CSS draws smaller about the centre
+// (PC_XN_CSS_ZOOM), and css_zoom() moves a point the same way.
+constexpr float kDoorX0 = 0.0668f, kDoorPitch = 0.2194f, kDoorW = 0.2080f, kDoorY0 = 0.536f, kDoorH = 0.4005f;
+constexpr float css_zoom(float f) { return 0.5f + (f - 0.5f) * PC_XN_CSS_ZOOM; }
+
+// The CSS's legend: below the doors, centred in the room the zoom leaves, a
+// 1120x46 strip scaled by `scale` with its top left at (left, top), in the
+// context's px. Lobby Settings puts its own legend in the same place.
+struct LegendPlace {
+    float scale, left, top;
+};
+LegendPlace css_legend_place(Rml::Vector2i d) {
+    const float ls = 0.8f * d.y / 720.f;
+    const float below = (css_zoom(kDoorY0 + kDoorH) + 1.f) / 2.f;
+    return {ls, d.x / 2 - 560.f * ls, below * d.y - 23.f * ls};
+}
+
+// Lobby Settings is up: the CSS's own legend gives way to the overlay's.
+bool s_settings_up = false;
 
 struct Screen : Rml::EventListener {
     Rml::ElementDocument* document = nullptr;
@@ -2114,6 +2137,8 @@ struct Screen : Rml::EventListener {
             if (shown || !load())
                 return;
             shown = true;
+            if (overlay)
+                s_settings_up = true;
             presence = 0.f;
             placedPresence = -1.f;
             document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
@@ -2121,6 +2146,8 @@ struct Screen : Rml::EventListener {
             layout();
         } else if (shown) {
             shown = false;
+            if (overlay)
+                s_settings_up = false;
             document->Hide();
         }
     }
@@ -2139,12 +2166,23 @@ struct Screen : Rml::EventListener {
         placedDims = d;
         placedPresence = presence;
         if (overlay) {
+            // The legend where the CSS's sits; the frame centred in the room
+            // above it.
             const float p = std::clamp(presence, 0.f, 1.f);
-            const float scale = std::min(0.94f * d.x / kOverlayW, 0.94f * d.y / kOverlayH);
+            const LegendPlace lp = css_legend_place(d);
+            const float above = 0.025f * d.y, below = lp.top - 0.02f * d.y;
+            const float scale = std::min(0.94f * d.x / kOverlayW, (below - above) / kOverlayH);
             screen->SetProperty("transform", "scale(" + fmt(scale) + ")");
             screen->SetProperty("left", fmt((d.x - kOverlayW * scale) / 2) + "px");
-            screen->SetProperty("top", fmt((d.y - kOverlayH * scale) / 2 + (1.f - p) * 10.f * scale) + "px");
+            screen->SetProperty("top",
+                fmt(above + (below - above - kOverlayH * scale) / 2 + (1.f - p) * 10.f * scale) + "px");
             screen->SetProperty("opacity", fmt(p));
+            if (auto* legend = document->GetElementById("legend")) {
+                legend->SetProperty("transform", "scale(" + fmt(lp.scale) + ")");
+                legend->SetProperty("left", fmt(lp.left) + "px");
+                legend->SetProperty("top", fmt(lp.top) + "px");
+                legend->SetProperty("opacity", fmt(p));
+            }
             if (auto* dim = document->GetElementById("dim"))
                 dim->SetProperty("opacity", fmt(p));
             return;
@@ -2447,13 +2485,6 @@ void seat_changes(const PcXnPunchView& v, int seats) {
     s_prev_others = others;
 }
 
-// The doors' rectangles in the CSS as Melee lays it out, as fractions of the
-// game's picture (the RmlUi context is that picture: Aurora's content
-// framebuffer, not the window): four in a row under the portraits, measured
-// on its frames. XeleeNet's CSS draws smaller about the centre
-// (PC_XN_CSS_ZOOM), and css_zoom() moves a point the same way.
-constexpr float kDoorX0 = 0.0668f, kDoorPitch = 0.2194f, kDoorW = 0.2080f, kDoorY0 = 0.536f, kDoorH = 0.4005f;
-constexpr float css_zoom(float f) { return 0.5f + (f - 0.5f) * PC_XN_CSS_ZOOM; }
 
 // The banner's rules line, its parts lit (bright) where `lit` has their bit:
 // 1 the mode, 2 stocks or time, 4 the time limit, 8 items, 16 the fighters.
@@ -2688,7 +2719,8 @@ struct Banner : Rml::EventListener {
         if (doors == nullptr)
             return;
         std::string r;
-        if (css) {
+        // Lobby Settings covers the doors: their tags and the legend wait.
+        if (css && !s_settings_up) {
             const float k = d.y / 720.f;
             // The lobby's seats' doors stand centred (mncharsel.c moves them).
             const int seats = s_css.seats >= 2 && s_css.seats <= 4 ? s_css.seats : 4;
@@ -2795,10 +2827,9 @@ struct Banner : Rml::EventListener {
                 }
             }
             // Below the doors, centred in the room the zoom leaves.
-            const float ls = 0.8f * k;
-            const float below = (css_zoom(kDoorY0 + kDoorH) + 1.f) / 2.f;
-            r += "<div id=\"clegend\" style=\"transform: scale(" + fmt(ls) + "); left: " + fmt(d.x / 2 - 560.f * ls) +
-                 "px; top: " + fmt(below * d.y - 23.f * ls) + "px;\"><div class=\"keys\">" + keys + "</div></div>";
+            const LegendPlace lp = css_legend_place(d);
+            r += "<div id=\"clegend\" style=\"transform: scale(" + fmt(lp.scale) + "); left: " + fmt(lp.left) +
+                     "px; top: " + fmt(lp.top) + "px;\"><div class=\"keys\">" + keys + "</div></div>";
         }
         if (r != lastDoors) {
             lastDoors = r;

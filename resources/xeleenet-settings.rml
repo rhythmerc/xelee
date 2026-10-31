@@ -1,5 +1,6 @@
 <rml><head><title>XeleeNet Lobby Settings</title><link type="text/rcss" href="slippi-setup.rcss" /><link type="text/rcss" href="xeleenet.rcss" /><link type="text/rcss" href="xeleenet-settings.rcss" /></head>
 <body>
 <div id="dim"></div>
-<div id="screen"><div id="frame"></div><div id="otitle"></div><div id="board"></div><div id="ohint"></div><div id="legend"></div></div>
+<div id="screen"><div id="frame"></div><div id="otitle"></div><div id="board"></div><div id="ohint"></div></div>
+<div id="legend"></div>
 </body></rml>
