@@ -469,8 +469,9 @@ static struct {
     s8 cell[4];     /* and the stage its card shows */
     u8 timed_out;
     int chosen;
-    s32 start, deadline, sent_at;
-    int pending; /* our newest pick (or XN_UNPICK), not out yet */
+    s32 start, deadline;
+    s32 sent_at[4]; /* by port: when its pick last went out */
+    int pending[4]; /* by port, ours: its newest pick (or XN_UNPICK), not out yet */
     int lit;
     int frames;
     int over; /* the cell under the cursor, for the log */
@@ -480,8 +481,10 @@ static void xnSss_Reset(void)
 {
     memset(&xn_sss, 0, sizeof xn_sss);
     xn_sss.chosen = -1;
-    xn_sss.start = xn_sss.deadline = xn_sss.sent_at = -1;
-    xn_sss.pending = -1;
+    xn_sss.start = xn_sss.deadline = -1;
+    for (int i = 0; i < 4; i++) {
+        xn_sss.sent_at[i] = xn_sss.pending[i] = -1;
+    }
     xn_sss.lit = -1;
     xn_sss.over = -1;
 }
@@ -520,23 +523,149 @@ static int xnSss_RandomCell(void)
     return n > 0 ? allowed[xnSss_Rand() % (u32) n] : 0;
 }
 
-/* A on a stage (or Random): ours until FINAL, or until B takes it back. A
- * with a pick does nothing: a change goes through B, so the card's row
- * always shows the pick that stands. */
-static void xnSss_Pick(int cell)
+/* A on a stage (or Random): that seat's until FINAL, or until B takes it
+ * back. A with a pick does nothing: a change goes through B, so the card's
+ * row always shows the pick that stands. `port` is one of ours: the primary
+ * seat's cursor is the game's, any other seat's its own (xnSss_Seat*). */
+static void xnSss_PickPort(int port, int cell)
 {
-    int me = pc_net_local_player() & 3;
+    port &= 3;
     if (xn_sss.final || xn_sss.leaving) {
         return;
     }
-    if (net_picks[me] >= 0) {
+    if (net_picks[port] >= 0) {
         lbAudioAx_80024030(3);
         return;
     }
     sfxForward();
-    net_picks[me] = cell;
-    xn_sss.pending = cell;
-    pc_log_line("sss: we picked %d", cell);
+    net_picks[port] = cell;
+    xn_sss.pending[port] = cell;
+    if (port == pc_net_local_player()) {
+        pc_log_line("sss: we picked %d", cell);
+    } else {
+        pc_log_line("sss: our P%d picked %d", port + 1, cell);
+    }
+}
+
+static void xnSss_Pick(int cell)
+{
+    xnSss_PickPort(pc_net_local_player(), cell);
+}
+
+/* The cursors of our other seats (docs/lan-multipad-plan.md): the game's
+ * cursor is the primary seat's; each other seat of ours gets the same model
+ * in its port's colour, moved by its own pad (the synced one: its machine's
+ * other pad), and picks with its own A. Not lockstep, like the game's: the
+ * picks are the messages. */
+static void do_anim(HSD_JObj* jobj, int frame);
+typedef struct XnSeatCursor {
+    int port; /* -1: none */
+    float x, y;
+    int over; /* the cell under it, 30 for none */
+    HSD_GObj* gobj;
+} XnSeatCursor;
+static XnSeatCursor xn_seat[2] = { { -1 }, { -1 } };
+
+static int xnSss_SeatHit(float x, float y)
+{
+    int i;
+    Vec3 at;
+    for (i = 0; i < 0x1E; i++) {
+        if (mnStageSel_803F06D0[i].x8 != 0) {
+            lb_8000B1CC(mnStageSel_803F06D0[i].x0, NULL, &at);
+            if (at.x - mnStageSel_803F06D0[i].xC < x && at.x + mnStageSel_803F06D0[i].xC > x &&
+                at.y - mnStageSel_803F06D0[i].x10 < y && at.y + mnStageSel_803F06D0[i].x10 > y)
+            {
+                return sss_off_list(i) ? 0x1E : i;
+            }
+        }
+    }
+    return 0x1E;
+}
+
+/* A stick past the dead zone, as the game's cursor takes it. */
+static float xnSss_SeatAxis(s8 v)
+{
+    return v < -0x1E ? v + 0x1E : v > 0x1E ? v - 0x1E : 0;
+}
+
+static void xnSss_SeatsFrame(void)
+{
+    int k;
+    for (k = 0; k < 2; k++) {
+        XnSeatCursor* c = &xn_seat[k];
+        HSD_PadStatus* pad;
+        u64 trig;
+        if (c->port < 0 || c->gobj == NULL) {
+            continue;
+        }
+        if (xn_sss.final || mnStageSel_804D6CAF != 0) {
+            HSD_JObjSetFlags(GET_JOBJ(c->gobj), JOBJ_HIDDEN);
+            continue;
+        }
+        HSD_JObjClearFlags(GET_JOBJ(c->gobj), JOBJ_HIDDEN);
+        pad = &HSD_PadCopyStatus[c->port];
+        c->x += 0.03F * xnSss_SeatAxis(pad->stickX);
+        c->y += 0.03F * xnSss_SeatAxis(pad->stickY);
+        c->x = c->x < -27.0F ? -27.0F : c->x > 27.0F ? 27.0F : c->x;
+        c->y = c->y < -19.0F ? -19.0F : c->y > 19.0F ? 19.0F : c->y;
+        HSD_JObjSetTranslateX(GET_JOBJ(c->gobj), c->x);
+        HSD_JObjSetTranslateY(GET_JOBJ(c->gobj), c->y);
+        {
+            /* The hit test is in the world, as the game's (fn_8025A310). */
+            Vec3 w;
+            lb_8000B1CC(GET_JOBJ(c->gobj), NULL, &w);
+            c->over = xnSss_SeatHit(w.x, w.y);
+        }
+        trig = pad->trigger;
+        if (c->over == 30) {
+            if (trig & HSD_PAD_START) {
+                xnSss_PickPort(c->port, 30);
+            }
+        } else if (trig & (HSD_PAD_A | HSD_PAD_START)) {
+            if (c->over == 29) {
+                xnSss_PickPort(c->port, 30);
+            } else if (mnStageSel_803F06D0[c->over].x8 >= 2) {
+                xnSss_PickPort(c->port, c->over);
+            } else {
+                lbAudioAx_80024030(3);
+            }
+        }
+    }
+}
+
+/* The SSS is up: a cursor for each other seat of ours, beside the game's. */
+static void xnSss_SeatsCreate(const Vec3* start)
+{
+    int k = 0, p;
+    for (p = 0; p < 2; p++) {
+        xn_seat[p].port = -1;
+        xn_seat[p].gobj = NULL;
+    }
+    for (p = 0; p < 4 && k < 2; p++) {
+        HSD_JObj* jobj;
+        HSD_GObj* gobj;
+        if (p == pc_net_local_player() || !(pc_net_local_mask() & (1 << p))) {
+            continue;
+        }
+        gobj = GObj_Create(4, 5, 0x80);
+        jobj = HSD_JObjLoadJoint(DP(HSD_Joint, sss_models->cursor.joint));
+        HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
+        GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 4, 0x86);
+        HSD_GObj_SetupProc(gobj, mn_8022EAE0, 2);
+        HSD_JObjAddAnimAll(jobj, DP(HSD_AnimJoint, sss_models->cursor.animjoint),
+                           DP(HSD_MatAnimJoint, sss_models->cursor.matanim_joint),
+                           DP(HSD_ShapeAnimJoint, sss_models->cursor.shapeanim_joint));
+        do_anim(jobj, p + 1); /* that port's colour */
+        xn_seat[k].port = p;
+        xn_seat[k].x = start->x + 4.0F * (k + 1);
+        xn_seat[k].y = start->y;
+        xn_seat[k].over = 30;
+        xn_seat[k].gobj = gobj;
+        HSD_JObjSetTranslate(jobj, start);
+        pc_log_line("sss: a cursor for our P%d", p + 1);
+        k++;
+    }
 }
 
 static bool xnSss_Same(void)
@@ -617,7 +746,7 @@ static void xnSss_Poll(void)
     int n, i;
     while ((n = pc_net_recv_reliable(&type, buf, sizeof buf)) >= 0) {
         if (type == NET_MSG_STAGE_PICK && n >= 2 && buf[1] < 4 &&
-            buf[1] != pc_net_local_player() && !xn_sss.final)
+            !(pc_net_local_mask() & (1 << buf[1])) && !xn_sss.final)
         {
             net_picks[buf[1]] = buf[0] == XN_UNPICK ? -1 : buf[0];
             if (buf[0] == XN_UNPICK) {
@@ -647,9 +776,9 @@ static void xnSss_Poll(void)
             xn_sss.chosen = buf[9];
             xn_sss.start = (s32) ((u32) buf[10] << 24 | (u32) buf[11] << 16 | (u32) buf[12] << 8 | buf[13]);
             xn_sss.final = true;
-            xn_sss.pending = -1;
             for (i = 0; i < 4; i++) {
                 net_picks[i] = xn_sss.pick[i];
+                xn_sss.pending[i] = -1;
             }
             xnSss_LogFinal("final from the host");
         } else if (type == NET_MSG_STAGE_BACK && pc_net_local_player() != 0 && !xn_sss.final) {
@@ -666,9 +795,20 @@ static bool xnSss_Back(void)
     if (xn_sss.leaving || xn_sss.final) {
         return false;
     }
+    /* Each seat of ours takes back its own pick with its own B. */
+    for (int p = 0; p < 4; p++) {
+        if (p != me && (pc_net_local_mask() & (1 << p)) &&
+            (HSD_PadCopyStatus[p].trigger & HSD_PAD_B) && net_picks[p] >= 0)
+        {
+            net_picks[p] = -1;
+            xn_sss.pending[p] = XN_UNPICK;
+            sfxBack();
+            pc_log_line("sss: our P%d took its pick back", p + 1);
+        }
+    }
     if ((HSD_PadCopyStatus[me].trigger & HSD_PAD_B) && net_picks[me] >= 0) {
         net_picks[me] = -1;
-        xn_sss.pending = XN_UNPICK;
+        xn_sss.pending[me] = XN_UNPICK;
         sfxBack();
         pc_log_line("sss: we took our pick back");
     } else if (me == 0 && (HSD_PadCopyStatus[0].trigger & HSD_PAD_B)) {
@@ -884,15 +1024,18 @@ static void xnSss_Frame(void)
         xn_sss.leaving = true;
         gm_801A4B60();
     }
-    if (xn_sss.pending >= 0 && !xn_sss.final &&
-        (xn_sss.sent_at < 0 || f - xn_sss.sent_at >= XN_RESEND))
-    {
-        u8 b[2] = { (u8) xn_sss.pending, (u8) me };
-        if (pc_net_send_reliable(NET_MSG_STAGE_PICK, b, 2)) {
-            xn_sss.sent_at = f;
-            xn_sss.pending = -1;
+    for (i = 0; i < 4; i++) {
+        if (xn_sss.pending[i] >= 0 && !xn_sss.final &&
+            (xn_sss.sent_at[i] < 0 || f - xn_sss.sent_at[i] >= XN_RESEND))
+        {
+            u8 b[2] = { (u8) xn_sss.pending[i], (u8) i };
+            if (pc_net_send_reliable(NET_MSG_STAGE_PICK, b, 2)) {
+                xn_sss.sent_at[i] = f;
+                xn_sss.pending[i] = -1;
+            }
         }
     }
+    xnSss_SeatsFrame();
     for (i = 0; i < 4; i++) {
         if (ports & (1 << i)) {
             any |= net_picks[i] >= 0;
@@ -1796,6 +1939,11 @@ void mnStageSel_Scene_OnEnter(void* arg0)
                 HSD_GObj_SetupProc(g, fn_8025A310, 2);
                 do_anim(jobj2, mnStageSel_804D50A0 + 1);
                 HSD_JObjSetTranslate(jobj2, &spCC);
+#ifdef TARGET_PC
+                if (gmOnline_XnFlow() && netStageSel_Active()) {
+                    xnSss_SeatsCreate(&spCC);
+                }
+#endif
             }
         }
 
