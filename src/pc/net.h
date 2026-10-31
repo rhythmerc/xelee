@@ -131,6 +131,16 @@ int pc_net_port_phys(int port);
  * not); false when nothing is connected there or no session runs. */
 struct PADStatus;
 bool pc_net_phys_pad(int phys, struct PADStatus* out);
+/* One of our ports rests (the Lobby Settings overlay reads its pad instead,
+ * docs/xeleenet-settings-overlay-plan.md O3): its sample goes out neutral.
+ * Once let go it stays neutral until its pad is at rest, so the press that
+ * closed the overlay never reaches the game. */
+void pc_net_hold_local(int port, bool on);
+/* XeleeNet's host has Lobby Settings open, or closed it: {1} or {0}, host to
+ * guests (C3 of docs/xeleenet-settings-overlay-plan.md). The reliable lane
+ * hands it to xeleenet_menu.cpp at once, never to the caller's queue, and
+ * nothing in the game reads it. */
+#define PC_NET_MSG_XN_EDITING 0x16
 /* The primary port of the machine that plays `port` (its own for a primary
  * port), -1 for a port nobody plays. */
 int pc_net_port_owner(int port);

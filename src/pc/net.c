@@ -245,6 +245,9 @@ static PADStatus s_raw_last[PORTS]; /* newest physical sample, by local port */
 /* Every physical pad as the last fresh tick read it, ours or not: a spare pad
  * asking for a seat on the CSS is read here (pc_net_phys_pad). */
 static PADStatus s_phys_last[PORTS];
+/* Our ports that rest (pc_net_hold_local), and those let go whose pad isn't
+ * at rest yet. */
+static uint8_t s_hold_mask, s_hold_rest;
 static int s_status;         /* pc_net_peer_status(); kept until the next connect */
 static bool s_peer_left;     /* BYE received or version mismatch: stop waiting */
 static bool s_warn_src, s_warn_sess, s_warn_bad, s_warn_mac; /* one reject line each per session */
@@ -4834,6 +4837,39 @@ static void hitch_test(void) {
     }
 }
 
+/* A resting port's sample (pc_net_hold_local): nothing pressed, the sticks
+ * centred, until it is let go and its pad has come to rest. */
+static void hold_neutral(int q, PADStatus* pad) {
+    const uint8_t bit = (uint8_t)(1u << q);
+    if (!(s_hold_mask & bit) && pad->button == 0 && abs(pad->stickX) < 23 && abs(pad->stickY) < 23 &&
+        abs(pad->substickX) < 23 && abs(pad->substickY) < 23 && pad->triggerLeft < 40 && pad->triggerRight < 40)
+    {
+        s_hold_rest &= (uint8_t)~bit;
+        pc_log_line("net: P%d plays again at frame %d", q + 1, net.frame);
+        return;
+    }
+    const s8 err = pad->err;
+    memset(pad, 0, sizeof *pad);
+    pad->err = err;
+}
+
+void pc_net_hold_local(int port, bool on) {
+    if (port < 0 || port >= PORTS) {
+        return;
+    }
+    const uint8_t bit = (uint8_t)(1u << port);
+    if (on == ((s_hold_mask & bit) != 0)) {
+        return;
+    }
+    if (on) {
+        s_hold_mask |= bit;
+        s_hold_rest |= bit;
+    } else {
+        s_hold_mask &= (uint8_t)~bit;
+    }
+    pc_log_line("net: P%d %s at frame %d", port + 1, on ? "rests" : "let go", net.frame);
+}
+
 /* Read the latest published hardware state immediately before input is
  * sent. Extra time-sync ticks and rollback must reuse their recorded sample;
  * they must never sample hardware a second time. Physical port zero is the
@@ -4847,6 +4883,9 @@ static void capture_local_sample(bool fresh) {
         for (int q = 0; q < PORTS; q++) {
             if (net.local_mask & (1u << q)) {
                 s_raw_last[q] = pads[s_local_phys[q]];
+                if ((s_hold_mask | s_hold_rest) & (1u << q)) {
+                    hold_neutral(q, &s_raw_last[q]);
+                }
             }
         }
     }
