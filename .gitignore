@@ -28,6 +28,9 @@ docs/*
 !docs/xeleenet-ready-plan.md
 !docs/lan-lobbies-plan.md
 !docs/lan-multipad-plan.md
+!docs/xeleenet-fighter-list-plan.md
+!docs/xeleenet-lobby-details-plan.md
+!docs/xeleenet-settings-overlay-plan.md
 !docs/client-camera-plan.md
 !docs/site/
 
