@@ -183,6 +183,18 @@ char address[48];                  /* LAN: the host's lobby address (":port" off
 Test: test_service.py (below), and net_test_xn_menu.py (3 players) still
 passes.
 
+As built (2026-10-30):
+- An extra seat is named after its machine's player, "RHYTHM 2" (open
+  question 2), so the list needs whose pad it is. The heartbeat gains
+  `owners`, a port per `extra` entry (from net_punch.c's `XnStart.owners`,
+  now passed through `pc_xn_set_roster`). The service keeps it as
+  `Lobby.ExtraOwner`, and an extra seat lists as `{port, extra, owner}`.
+- The XR flag is `pc_xr_presenting()` (xr_scene.h), which is
+  `aurora_xr_active()` where XR is built and false elsewhere.
+- The biggest listing (50 lobbies of 4, long names, custom lists) measures
+  34,333 bytes. The JSON parser's 4096-value cap holds about 50 values a row,
+  so it fits too.
+
 ### D2 · LAN data (medium)
 1. `host_announce`: cut `s` before the masks, and add `fm`, `sm`, `g` and `p`.
 2. Log the sizes once.
@@ -194,6 +206,9 @@ passes.
 
 Test: `net_test_xn_menu.py --net lan` passes. The host logs `s` at 240 bytes
 or less. A guest's Details log names the same players and masks the host set.
+
+As built: an extra pad in `p` is `<port><owner's port>--------0` (the XR
+digit carries the owner, as D1 does on the service).
 
 ### D3 · The Details page, text cells (medium-large)
 1. `Page::Details`: the enum, title and build. `set_board` sets the page's
@@ -218,9 +233,25 @@ or less. A guest's Details log names the same players and masks the host set.
 
 D3 can be tested with previews alone, before D1 and D2.
 
+As built:
+- While Details is up, the list is fetched with the full lobbies too
+  (`full=1`, and LAN's browse flag), and `poll_browse` keeps them off B1
+  unless Show full is on. Otherwise a lobby filling up while you read its
+  Details would vanish from the rows and read as "closed".
+- A page change logs its focus: `xeleenet pages: Details -> Lobbies at lb0`.
+- RmlUi has no dashed borders: an open seat is a dim outline, as the stage
+  page's Custom chip is.
+- The names line keeps each name on one line (no-break spaces).
+
 ### D4 · Row summaries (small)
 `fighters_summary` and `stages_summary`, the measured drop, and their text. A
 preview row with a long host name shows the stage part dropping.
+
+As built: the measure element is `#lsm`, a permanent hidden element in
+xeleenet.rml with `.ls`'s font, rather than one inside the board. Twelve
+characters (the name cap) leave a lot of room on a 600 px line, so the
+preview's dropping row uses long single-item lists instead ("Ice Climbers
+only", with "Mushroom K. II only" dropped).
 
 ### D5 · Portraits (medium, the uncertain part)
 1. `mnCharSel_PcPortraits()` in mncharsel.c:
@@ -240,6 +271,23 @@ preview row with a long host name shows the stage part dropping.
 
 Test: the `details` preview shows portraits on a cold launch. Memory is logged
 before and after.
+
+As built (2026-10-30), it works:
+- `joint_id_vs` is right: each portrait's joint (4-34 in the VS model) has
+  one material with two 64x56 textures, the shared backdrop (I4, animated)
+  and the face (C8 with a palette; a few have a 2-image table, frame 0 is
+  the face). "The largest" ties, so the C8 one wins the tie.
+- `decode_gx` in xeleenet_menu.cpp decodes I4, I8, IA4, IA8, RGB565,
+  RGB5A3, RGBA8, C4, C8 and CMPR; the stage select's thumbs use it too.
+- It runs from mnxeleenet.c's frame (the game's thread) when
+  `pc_xn_menu_portraits_wanted()` says so: once a launch, after the first
+  Details build.
+- Desktop log: heap 0 free 80,930 KB before, 76,928 KB while built (a 4 MB
+  spike), 80,654 KB after. The 276 KB not given back is the HSD object
+  pools the model's objects came from, which keep their freed objects for
+  reuse. The Quest pass should check the same line.
+- The CSS harvest fallback wasn't needed. The Fighters picker still uses
+  text tiles (the optional item).
 
 ### D6 · Scenario and the headset (small)
 `net_test_xn_menu.py --scenario details`, on the service and with `--net lan`:
@@ -280,14 +328,15 @@ Then a Quest pass: read Details on the flat panel.
 - **XR:** B1's XR badge goes from never shown to real. A guest's XR is
   captured at join only.
 
-## Open questions
+## Open questions (answered 2026-10-30)
 
 1. Should the place line show the region as a code ("US"), as B1 does, or as a
-   name?
+   name? **A code, as B1.**
 2. Is "Second controller" the right label for a multi-pad seat? The CSS calls
-   it "RHYTHM 2".
+   it "RHYTHM 2". **"RHYTHM 2", as the CSS** (D1's `owners`).
 3. Should headings and HOST/XR tags keep their small caps (15 px)? Only lines
-   of words are held at 23 px.
-4. Should B1's second line (17 px today) also rise to 12 units?
+   of words are held at 23 px. **Yes.**
+4. Should B1's second line (17 px today) also rise to 12 units? **No, it
+   stays.**
 5. Should Details get a visible JOIN button for pointer users, or is clicking
-   the top block enough?
+   the top block enough? **The top block is enough.**
