@@ -32,6 +32,11 @@ static struct {
     unsigned long long procNs, renderNs; /* all of them, this frame */
     int logged;                          /* this window's lines */
     unsigned long long windowStart;
+    /* Totals over the second so far, for the once-a-second split: the
+     * boundary is from one frame's drawn to the next one's begin (Aurora's
+     * end and begin frame, the pacing). */
+    unsigned long long lastDrawn, sumStart, sumPad, sumSim, sumDraw, sumBoundary;
+    int sumFrames;
 } P;
 
 unsigned long long pc_frame_probe_now(void)
@@ -57,6 +62,9 @@ void pc_frame_probe_begin(void)
         return;
     }
     P.start = pc_frame_probe_now();
+    if (P.lastDrawn != 0) {
+        P.sumBoundary += P.start - P.lastDrawn;
+    }
     P.ready = P.simEnd = P.audioNs = 0;
     P.ticks = 0;
     P.proc = (Slowest) { 0 };
@@ -132,6 +140,24 @@ void pc_frame_probe_drawn(void)
         return;
     }
     const unsigned long long now = pc_frame_probe_now();
+    {
+        const unsigned long long rdy = P.ready != 0 ? P.ready : P.start;
+        const unsigned long long end = P.simEnd != 0 ? P.simEnd : now;
+        P.sumPad += rdy - P.start;
+        P.sumSim += end - rdy;
+        P.sumDraw += now - end;
+        P.sumFrames++;
+        P.lastDrawn = now;
+        if (P.sumStart == 0) {
+            P.sumStart = now;
+        } else if (now - P.sumStart >= 1000000000ull) {
+            pc_log_line("frame probe: second of %d frames: pad wait %.0f ms, sim %.0f, draw %.0f, boundary %.0f",
+                        P.sumFrames, P.sumPad / 1e6, P.sumSim / 1e6, P.sumDraw / 1e6, P.sumBoundary / 1e6);
+            P.sumStart = now;
+            P.sumPad = P.sumSim = P.sumDraw = P.sumBoundary = 0;
+            P.sumFrames = 0;
+        }
+    }
     if (now - P.windowStart > 10000000000ull) {
         P.windowStart = now;
         P.logged = 0;
