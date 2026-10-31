@@ -21,6 +21,7 @@
 #include "pc/net_internal.h"
 #include "pc/net_mdns.h"
 #include "pc/pc.h"
+#include "pc/xr_scene.h"
 #include "xeleenet_backend.h"
 
 #include <SDL3/SDL_atomic.h>
@@ -185,6 +186,7 @@ static int s_nroster;
 /* Ports machines' other pads hold (docs/lan-multipad-plan.md): taken seats
  * that no joiner is given. The host's game names them with the roster. */
 static uint8_t s_extra, s_extra_announced;
+static uint8_t s_owners; /* each port's machine, two bits a port (pc_xn_set_roster) */
 static PcXnListing s_info;
 static bool s_info_known;
 static char s_address[64]; /* the host's lobby socket, as the banner shows it */
@@ -280,23 +282,63 @@ static void set_address(const char* ip, uint16_t port) {
 
 /* ---- the host --------------------------------------------------------------- */
 
+/* One seat in the announcement's `p`, with nothing to escape: its port, XR
+ * (0/1), its tag in 8 characters, its name's length in a hex digit and the
+ * name. A machine's other pad is its port, its machine's port and
+ * "--------0" (docs/xeleenet-lobby-details-plan.md). */
+static size_t seat_txt(char* out, size_t cap, int port, bool xr, const char* tag, const char* name) {
+    const size_t len = strnlen(name, 15);
+    return (size_t)snprintf(out, cap, "%d%d%-8.8s%zx%.*s", port, xr ? 1 : 0, tag, len, (int)len, name);
+}
+
 /* Our announcement: who we are and what the list shows. */
 static void host_announce(void) {
     char proto[8], seats[4], taken[4], port[8], instance[32];
-    char name[40], settings[320];
+    char name[40], settings[320], fm[12] = "", sm[12] = "", seat_list[128];
     SDL_LockMutex(s_lock);
     snprintf(name, sizeof name, "%s", s_opts.name[0] ? s_opts.name : s_args.name);
     snprintf(settings, sizeof settings, "%s", s_opts.settings);
     snprintf(taken, sizeof taken, "%d", 1 + s_nmembers + __builtin_popcount(s_extra));
     s_extra_announced = s_extra;
+    /* Every seat in port order: us, the guests, other pads. */
+    size_t o = seat_txt(seat_list, sizeof seat_list, 0, pc_xr_presenting(), s_args.tag, s_args.name);
+    for (int q = 1; q < 4; q++) {
+        for (int i = 0; i < s_nmembers; i++) {
+            if (s_members[i].port == q) {
+                o += seat_txt(seat_list + o, sizeof seat_list - o, q, s_members[i].xr, s_members[i].tag,
+                              s_members[i].name);
+            }
+        }
+        if (s_extra & (1u << q)) {
+            o += (size_t)snprintf(seat_list + o, sizeof seat_list - o, "%d%d--------0", q, (s_owners >> (2 * q)) & 3);
+        }
+    }
     SDL_UnlockMutex(s_lock);
+    /* The masks don't fit in `s` (a TXT value is 255 bytes at most): they
+     * come last in it (xeleenet_menu.cpp settings_json), cut off here and
+     * sent as keys of their own. */
+    char* masks = strstr(settings, ",\"fighter_mask\":");
+    unsigned f = 0, st = 0;
+    if (masks != NULL && sscanf(masks, ",\"fighter_mask\":%u,\"stage_mask\":%u", &f, &st) == 2) {
+        snprintf(fm, sizeof fm, "%x", f);
+        snprintf(sm, sizeof sm, "%x", st);
+        masks[0] = '}';
+        masks[1] = '\0';
+    }
     snprintf(proto, sizeof proto, "%d", PC_NET_PROTO_VERSION);
     snprintf(seats, sizeof seats, "%d", s_args.seats);
     snprintf(port, sizeof port, "%u", s_lobby_port);
     snprintf(instance, sizeof instance, "xn-%.16s", s_lobby_hex);
-    const char* keys[] = {"v", "rev", "disc", "id", "name", "host", "tag", "seats", "taken", "port", "s"};
+    const char* keys[] = {"v", "rev", "disc", "id", "name", "host", "tag", "seats", "taken", "port", "s", "fm", "sm",
+                          "g", "p"};
     const char* values[] = {proto, pc_app_rev(), pc_net_disc_id(), s_lobby_hex, name, s_args.name, s_args.tag,
-                            seats, taken, port, settings};
+                            seats, taken, port, settings, fm, sm, pc_xn_playing() ? "1" : "0", seat_list};
+    static bool logged;
+    if (!logged) {
+        logged = true;
+        pc_log_line("xeleenet: LAN announcement: s %zu bytes, p %zu, fm %s, sm %s", strlen(settings),
+                    strlen(seat_list), fm, sm);
+    }
     pc_mdns_announce(instance, s_lobby_port, keys, values, (int)(sizeof keys / sizeof keys[0]));
 }
 
@@ -367,6 +409,7 @@ static void on_join(const LJoin* j, const struct sockaddr_in* from) {
         copy_str(m->name, sizeof m->name, j->name, sizeof j->name);
         copy_str(m->tag, sizeof m->tag, j->tag, sizeof j->tag);
         m->port = port;
+        m->xr = (j->reserved[0] & 1) != 0;
         m->ncands = j->ncands < PC_XN_CANDS ? j->ncands : PC_XN_CANDS;
         for (int c = 0; c < m->ncands; c++) {
             get_cand(j->cands[c], &m->ip[c], &m->udp[c]);
@@ -538,6 +581,7 @@ static void join_fill(LJoin* j, const uint8_t lobby[16], const uint8_t nonce[8])
     snprintf(j->disc, sizeof j->disc, "%s", pc_net_disc_id());
     j->proto = PC_NET_PROTO_VERSION;
     j->ncands = (uint8_t)s_args.ncands;
+    j->reserved[0] = pc_xr_presenting() ? 1 : 0; /* bit 0: in a headset, for the list's XR tag */
     memcpy(j->lobby, lobby, 16);
     for (int c = 0; c < s_args.ncands; c++) {
         put_cand(j->cands[c], s_args.ip[c], s_args.udp[c]);
@@ -671,6 +715,37 @@ static void guest_leave(void) {
 
 /* ---- browsing ---------------------------------------------------------------- */
 
+/* An announcement's `p` (seat_txt) into a listing's seats. */
+static void parse_seats(const char* p, PcXnListing* x) {
+    x->nplayers = 0;
+    while (p != NULL && strlen(p) >= 11 && x->nplayers < 4 && p[0] >= '0' && p[0] <= '3') {
+        PcXnSeat* s = &x->players[x->nplayers];
+        memset(s, 0, sizeof *s);
+        s->port = (uint8_t)(p[0] - '0');
+        if (strncmp(p + 2, "--------", 8) == 0) {
+            s->extra = true;
+            s->owner = (uint8_t)((p[1] - '0') & 3);
+            x->nplayers++;
+            p += 11;
+            continue;
+        }
+        s->xr = p[1] == '1';
+        x->xr |= s->xr;
+        copy_str(s->tag, sizeof s->tag, p + 2, 8);
+        for (size_t n = strlen(s->tag); n > 0 && s->tag[n - 1] == ' '; n--) {
+            s->tag[n - 1] = '\0';
+        }
+        const char c = p[10];
+        const size_t len = c >= '0' && c <= '9' ? (size_t)(c - '0') : c >= 'a' && c <= 'f' ? (size_t)(c - 'a' + 10) : 0;
+        if (strlen(p + 11) < len) {
+            break;
+        }
+        copy_str(s->name, sizeof s->name, p + 11, len);
+        x->nplayers++;
+        p += 11 + len;
+    }
+}
+
 static void browse_tick(void) {
     pc_mdns_open(SERVICE); /* a browse alone (M_OFF) has opened nothing yet */
     pc_mdns_poll();
@@ -707,6 +782,18 @@ static void browse_tick(void) {
         if ((s = pc_mdns_txt(&r[i], "seats")) != NULL)
             x->seats = atoi(s);
         x->taken = (s = pc_mdns_txt(&r[i], "taken")) != NULL ? atoi(s) : 1;
+        /* The lists' masks (else the named lists', from `s`), in a game or
+         * not, the seats, and where the host is. */
+        if ((s = pc_mdns_txt(&r[i], "fm")) != NULL && strtoul(s, NULL, 16) != 0)
+            x->fighter_mask = (uint32_t)strtoul(s, NULL, 16);
+        if ((s = pc_mdns_txt(&r[i], "sm")) != NULL && strtoul(s, NULL, 16) != 0)
+            x->stage_mask = (uint32_t)strtoul(s, NULL, 16);
+        x->playing = (s = pc_mdns_txt(&r[i], "g")) != NULL && s[0] == '1';
+        parse_seats(pc_mdns_txt(&r[i], "p"), x);
+        if (r[i].port == LOBBY_PORT)
+            snprintf(x->address, sizeof x->address, "%s", r[i].ip);
+        else
+            snprintf(x->address, sizeof x->address, "%s:%u", r[i].ip, r[i].port);
         if (x->taken >= x->seats && !full) {
             continue;
         }
@@ -882,12 +969,12 @@ static int lan_members(PcXnMember* out, int max) {
 }
 
 static void lan_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra, uint8_t owners) {
-    (void)owners;
     if (s_lock == NULL) {
         return;
     }
     SDL_LockMutex(s_lock);
     s_extra = (uint8_t)(extra & 14u);
+    s_owners = owners;
     s_nroster = n < 3 ? n : 3;
     memcpy(s_roster, keys, (size_t)s_nroster * 32);
     SDL_UnlockMutex(s_lock);
