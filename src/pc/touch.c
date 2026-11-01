@@ -43,6 +43,13 @@ void pc_touch_set_active(bool active) {
     pthread_mutex_unlock(&s_touch_lock);
 }
 
+bool pc_touch_is_active(void) {
+    pthread_mutex_lock(&s_touch_lock);
+    const bool on = s_touch_active;
+    pthread_mutex_unlock(&s_touch_lock);
+    return on;
+}
+
 bool pc_touch_get_status(PADStatus* out) {
     pthread_mutex_lock(&s_touch_lock);
     if (!s_touch_active) {
@@ -180,6 +187,10 @@ JNIEXPORT void JNICALL Java_dev_melee_TouchControls_nativeSetTouchActive(
 #endif
 
 #else
+
+bool pc_touch_is_active(void) {
+    return false;
+}
 
 bool pc_touch_get_status(PADStatus* out) {
     (void)out;

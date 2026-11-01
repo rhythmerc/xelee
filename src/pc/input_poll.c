@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "pc/input_poll.h"
 #include "pc/pc.h"
+#include "pc/touch.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_thread.h>
@@ -242,6 +243,9 @@ size_t pc_pad_census(char* out, size_t cap) {
         CENSUS("  port %u: %s%s%s\n", (unsigned)port + 1, index < 0 ? "no pad" : "'",
             index < 0 ? "" : (name != NULL ? name : "?"), index < 0 ? "" : "'");
     }
+    /* Not an SDL device: merged into port 1's input (keyboard.c), with
+     * the keyboard's keys; it holds no SDL slot. */
+    CENSUS("  touch controls: %s\n", pc_touch_is_active() ? "on (port 1)" : "off");
 #undef CENSUS
     return n;
 }
