@@ -62,7 +62,7 @@ Download `Xelee-Android-arm64.apk` on the device, open it, and allow installs fr
 
 ### Windows
 
-Download `Xelee-Windows-x86_64.zip`, extract it, and run `melee.exe`. Keep the DLLs and the `resources` folder next to it.
+Download `Xelee-Windows-x86_64.zip`, extract it, and run `xelee.exe`. Keep the DLLs and the `resources` folder next to it.
 
 ### Steam Deck
 

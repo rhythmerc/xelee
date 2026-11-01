@@ -1,7 +1,7 @@
 @echo off
-REM Runs melee.exe with verbose logging and leaves the window open, so a run
+REM Runs xelee.exe with verbose logging and leaves the window open, so a run
 REM from a USB stick on a machine we cannot debug still produces something
-REM worth reading. Writes melee-pc.log next to melee.exe.
+REM worth reading. Writes melee-pc.log next to xelee.exe.
 setlocal
 cd /d "%~dp0"
 
@@ -30,13 +30,13 @@ if not defined DISC (
     )
 )
 
-echo Running melee.exe %DISC% with logging enabled...
+echo Running xelee.exe %DISC% with logging enabled...
 echo.
-melee.exe %DISC% %* 2>melee-frames.log
+xelee.exe %DISC% %* 2>melee-frames.log
 set RC=%ERRORLEVEL%
 
 echo.
-echo === melee.exe exited with code %RC% ===
+echo === xelee.exe exited with code %RC% ===
 echo.
 echo Send back these two files from this folder:
 echo    melee-pc.log

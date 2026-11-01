@@ -10,7 +10,7 @@ it). Without it:
 
 | Platform | Log file |
 |---|---|
-| Windows | `melee-pc.log` in the working directory (beside `melee.exe`); the session before it is kept as `melee-pc.1.log`. |
+| Windows | `melee-pc.log` in the working directory (beside `xelee.exe`); the session before it is kept as `melee-pc.1.log`. |
 | Linux | `~/.local/share/melee-pc/logs/melee-<date>-<time>-<pid>.log` |
 | macOS | `~/Library/Application Support/melee-pc/logs/melee-<date>-<time>-<pid>.log` |
 | Android / Quest | `/sdcard/Android/data/dev.melee.game/files/logs/melee-<date>-<time>-<pid>.log`; the Quest's launcher panel and game are separate processes and write one each. |

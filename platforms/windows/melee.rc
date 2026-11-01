@@ -18,7 +18,7 @@ BEGIN
             VALUE "FileDescription",  "Super Smash Bros. Melee PC Port\0"
             VALUE "FileVersion",      "1.0.2.0\0"
             VALUE "InternalName",     "melee\0"
-            VALUE "OriginalFilename", "melee.exe\0"
+            VALUE "OriginalFilename", "xelee.exe\0"
             VALUE "ProductName",      "melee-pc\0"
             VALUE "ProductVersion",   "1.0.2.0\0"
         END

@@ -49,7 +49,7 @@ body:
     id: vulkan-changes
     attributes:
       label: Does `MELEE_BACKEND=vulkan` change anything?
-      description: Windows only. Set the variable (`set MELEE_BACKEND=vulkan` in a console, then run `melee.exe` from it) and try again.
+      description: Windows only. Set the variable (`set MELEE_BACKEND=vulkan` in a console, then run `xelee.exe` from it) and try again.
       options:
         - Not tested
         - Not applicable (Linux/Android/macOS)
@@ -95,7 +95,7 @@ body:
       description: |
         Easiest: in the launcher, Settings → Launcher → Logs → Send, and paste the code it shows (XL-...) here.
         Or attach the log (drag the file in). Where it is:
-        - Windows: `melee-pc.log` next to `melee.exe` (`melee-pc.1.log` is the session before). If the game closes at once, run `RUN-AND-LOG.bat` instead and attach `melee-pc.log` from the same folder.
+        - Windows: `melee-pc.log` next to `xelee.exe` (`melee-pc.1.log` is the session before). If the game closes at once, run `RUN-AND-LOG.bat` instead and attach `melee-pc.log` from the same folder.
         - Linux: the newest file in `~/.local/share/melee-pc/logs/`. macOS: the newest file in `~/Library/Application Support/melee-pc/logs/`.
         - Quest / Android: the newest files in `Android/data/dev.melee.game/files/logs/` (over USB, or `adb pull /sdcard/Android/data/dev.melee.game/files/logs`).
         Paste the last 30 lines here if the file is small; attach the whole file otherwise.

@@ -10,7 +10,7 @@ case "${TARGET_ARCH}" in
     x86_64|amd64)
         TARGET_ARCH="x86_64"
         BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build-win}"
-        STAGE_DIR="${DIST_DIR}/melee-windows-x86_64"
+        STAGE_DIR="${DIST_DIR}/xelee-windows-x86_64"
         ZIP_NAME="Xelee-Windows-x86_64.zip"
         TOOLCHAIN_FILE="${ROOT_DIR}/cmake/x86_64-w64-mingw32.cmake"
         SDL3_PROVIDER="vendor"
@@ -26,7 +26,7 @@ case "${TARGET_ARCH}" in
     arm64|aarch64)
         TARGET_ARCH="arm64"
         BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build-win-arm64}"
-        STAGE_DIR="${DIST_DIR}/melee-windows-arm64"
+        STAGE_DIR="${DIST_DIR}/xelee-windows-arm64"
         ZIP_NAME="Xelee-Windows-arm64.zip"
         TOOLCHAIN_FILE="${ROOT_DIR}/cmake/aarch64-w64-mingw32.cmake"
         SDL3_PROVIDER="vendor"
@@ -61,7 +61,7 @@ echo "=== Staging Windows package ==="
 rm -rf "${STAGE_DIR}"
 mkdir -p "${STAGE_DIR}"
 
-cp "${BUILD_DIR}/melee.exe" "${STAGE_DIR}/"
+cp "${BUILD_DIR}/melee.exe" "${STAGE_DIR}/xelee.exe"
 cp -r "${ROOT_DIR}/resources" "${STAGE_DIR}/"
 # A double-clicked run loses its console on exit, so ship a launcher that
 # turns on verbose logging, records the environment, and stays open.
@@ -192,8 +192,8 @@ echo "=== Refusing a determinism test build ==="
 # trig function one ULP off on purpose, so it desyncs against every other
 # build. The marker is the banner src/pc/net.c logs on every run of such a
 # build, which only exists in the image when the option was on.
-if grep -qa "FP PERTURB" "${STAGE_DIR}/melee.exe"; then
-    echo "error: melee.exe was built with MELEE_FP_PERTURB; it desyncs by design" >&2
+if grep -qa "FP PERTURB" "${STAGE_DIR}/xelee.exe"; then
+    echo "error: xelee.exe was built with MELEE_FP_PERTURB; it desyncs by design" >&2
     exit 1
 fi
 echo "  clean (no MELEE_FP_PERTURB marker)"
