@@ -2,49 +2,17 @@ Xelee for Meta Quest 3 / 3S, Android phones and tablets, Windows PCs, Steam Deck
 
 ## Changelog
 
-XeleeNet, Xelee's own online play with custom lobbies for two to four players.
+A small update to v0.3.0-beta: controllers on Android, and a way to send us your logs. New to XeleeNet? See [v0.3.0-beta's notes](https://github.com/rhythmerc/xelee/releases/tag/v0.3.0-beta).
 
-Windows, Linux, and Android flat builds are now available! Play Xelee with your friends whether they're in or out of a headset.
+**Controllers (Android)**
+- The controller you press a button on now becomes player 1 when player 1's controller has never been used. Some phones list their own buttons as a controller: RedMagic phones show their shoulder triggers as an "Xbox 360 Controller", which took player 1 ahead of your real one. Your controller then couldn't type a XeleeNet name or play online. Controllers never swap during a fight, and the new order is remembered.
 
-**XeleeNet (Beta)**
-- A one-time message on the way to the main menu announces XeleeNet.
-- Online Mode > XeleeNet: host a lobby or join one, for 2 to 4 players. Public lobbies are listed in Join. A private one opens only with the 6-letter code its host shares.
-- Every fighter and stage is unlocked in XeleeNet and LAN lobbies, as in Slippi. Your own unlocks come back when you leave.
-- Pick a name the first time (XeleeNet > Name). It's XeleeNet's own, separate from Slippi's.
-- Hosting starts from a preset (1v1, Doubles or Free-for-all) or your own rules: seats, teams, stocks or time, items, friendly fire, pause, handicap, damage ratio and Frozen Stadium.
-- Fighter and stage lists: the host chooses which fighters may be picked (all of them, the high or low tiers, or your own choice) and which stages are in play. Random draws only from those.
-- Press A on a lobby in Join to see its players, fighters and stages before joining.
-- The character select is the lobby. Each player's START is their Ready. Hold B to leave on your own; when the host holds B, the lobby closes. If you join during a game, you're seated when the players are back on the character select.
-- Lobby Settings (Z on the character select): the host changes the rules without closing the lobby.
-- Stage select: everyone picks and one of the picks is drawn, with a 15-second timer. Only the host's B goes back.
-- More than one player per machine: press START on a spare controller at the character select to take an open seat. On the stage select, each seat gets its own cursor.
-- Hide code masks the code on the character select's banner, for streaming.
-- If a player drops mid-game, that game doesn't count.
-- Players connect to each other directly where their networks allow it, and through the host where they don't.
-- Every player needs the same Xelee version. Lobbies on another version aren't listed, and the list tells you how many there are.
-- Not ready yet, shown as SOON: other stage-pick modes, placement time, First to N sets and Ask before joining.
+**Send logs**
+- Settings > Launcher > Logs > Send now works on every platform. It uploads your recent logs and shows a code (XL-…) to give us with your bug report. Logs are kept 30 days, and public IP addresses are hidden.
+- The logs now list your controllers and which player each one is.
 
-**LAN**
-- Online Mode > LAN now works like XeleeNet on your own network: a live list of the lobbies there, with Host, Join and the same character select, settings and stage select. No codes: every LAN lobby is listed.
-- If your network blocks discovery, the list tells you, and X joins the host by its address instead.
-- The old LAN lobby is gone. Games on this version can't play LAN with older ones.
-
-**Headset**
-- While a game waits on the network, the headset keeps drawing the scene, so you can look around it. Before, it froze on one image that SpaceWarp smeared.
-- Menus, results and Classic's screens show on the virtual screen at its full resolution. Before, they were scaled up from 480 lines.
-
-**New platforms**
-- Windows (x86-64), Android phones and tablets (arm64, Vulkan), Steam Deck and other Linux PCs (AppImage) builds come with every release. They're new, so tell us what breaks. Install steps are below.
-
-**Fixes**
-- Clearing 100-Man Melee brings Falco's challenge again, and 10-Man and 100-Man clears and best times are saved to your records (from v0.2.2).
-- Fixed a rare crash when a match loaded Pokémon Stadium's sounds.
-- The game no longer freezes for several seconds while it tidies its shader cache.
-- Online Mode's sub-menus no longer flash Main Menu on the way in and out, and tab titles animate with Melee's own.
-
-**Also**
-- Options > Credits: who and what Xelee is built from.
-- The Android app icon is the new Xelee badge.
+**Windows**
+- The game in the Windows zip is now `xelee.exe`.
 
 ## Installing
 
