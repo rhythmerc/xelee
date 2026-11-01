@@ -412,6 +412,9 @@ static void routeAfterFailure(void)
         gm_SetNextGameModeStateId(state_css);
         return;
     }
+    if (online_kind == ONLINE_KIND_XN) {
+        pc_net_unlock_release(); /* the lobby's pin (onEnterCss) */
+    }
     gm_SetNextGameModeStateId(state_lobby);
 }
 #endif
@@ -460,6 +463,11 @@ void onEnterCss(GameModeState* state)
 #endif
 #ifdef TARGET_PC
     if (online_kind == ONLINE_KIND_XN) {
+        /* Everything unlocked from the first frame, as Slippi's CSS: a host
+         * alone has no session yet, whose handshake would pin it, and saw its
+         * own progress until someone joined. Released on the way out (a B
+         * hold, a failure); a session's end alone keeps it. */
+        pc_net_unlock_pin();
         /* A door for every player in the session, by controller port. */
         int ports = pc_net_port_mask();
         if (ports == 0) {
@@ -575,6 +583,7 @@ void onExitCss(GameModeState* state)
         pc_net_disconnect();
         pc_net_peer_status_clear();
         pc_xn_punch_end();
+        pc_net_unlock_release();
         gm_SetNextGameModeStateId(state_lobby);
         return;
     }
