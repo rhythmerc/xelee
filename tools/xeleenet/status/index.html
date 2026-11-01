@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XeleeNet status</title>
+<style>
+  :root {
+    --bg: #0d0f14; --panel: #161a22; --line: #262c38; --text: #e8eaf0; --dim: #8a93a6;
+    --red: #e0262f; --gold: #f0b429; --green: #3ccf7a; --blue: #5aa9ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px 14px 40px; }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .brand { background: var(--red); color: #fff; font-weight: 800; font-style: italic;
+           letter-spacing: .02em; padding: 4px 12px; border-radius: 6px 0 0 6px; font-size: 18px; }
+  .brand-sub { font-weight: 700; font-size: 18px; }
+  .status { margin-left: auto; font-size: 12px; color: var(--dim); text-align: right; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--dim);
+         margin-right: 5px; vertical-align: 1px; }
+  .dot.live { background: var(--green); }
+  .dot.down { background: var(--red); }
+
+  .hero { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+          padding: 16px; display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; align-items: center; }
+  .big { font-size: 56px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .big-label { color: var(--dim); font-size: 13px; text-transform: uppercase; letter-spacing: .08em; }
+  .split { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--dim); }
+  .split b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 18px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .tile .n { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tile .l { color: var(--dim); font-size: 12px; }
+  @media (max-width: 520px) { .tiles { grid-template-columns: repeat(2, 1fr); } .big { font-size: 46px; } }
+
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim);
+       margin: 18px 0 8px; font-weight: 600; }
+  .versions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+          padding: 3px 10px; font-size: 13px; }
+  .chip b { font-variant-numeric: tabular-nums; }
+
+  .lobby { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+           padding: 12px; margin-bottom: 8px; }
+  .lobby-top { display: flex; align-items: baseline; gap: 8px; }
+  .lobby-name { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
+  .seats { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .meta { color: var(--dim); font-size: 13px; margin-top: 2px; }
+  .badges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .badge { font-size: 11px; font-weight: 700; letter-spacing: .05em; padding: 2px 7px; border-radius: 4px;
+           border: 1px solid var(--line); color: var(--dim); }
+  .badge.mode { color: var(--gold); border-color: #5a4a1a; }
+  .badge.playing { color: #fff; background: var(--red); border-color: var(--red); }
+  .badge.open { color: var(--green); border-color: #1f5a3a; }
+  .badge.xr { color: var(--blue); border-color: #22426a; }
+  .players { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .player { background: #0f1218; border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 13px; }
+  .player .tag { color: var(--dim); }
+  .player .p { color: var(--dim); font-weight: 700; margin-right: 4px; }
+  .empty { color: var(--dim); padding: 18px; text-align: center; background: var(--panel);
+           border: 1px dashed var(--line); border-radius: 10px; }
+  .err { color: #ffb4b4; }
+  footer { color: var(--dim); font-size: 12px; margin-top: 22px; }
+  footer code { color: var(--text); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="brand">XeleeNet</span><span class="brand-sub">status</span>
+    <div class="status"><span class="dot" id="dot"></span><span id="when">Connecting…</span></div>
+  </header>
+
+  <section class="hero">
+    <div class="big" id="online">–</div>
+    <div>
+      <div class="big-label">Players online</div>
+      <div class="split">
+        <span><b id="seated">–</b> in lobbies</span>
+        <span><b id="browsing">–</b> browsing</span>
+        <span><b id="xr">–</b> in a headset</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="tiles">
+    <div class="tile"><div class="n" id="l-total">–</div><div class="l">Lobbies</div></div>
+    <div class="tile"><div class="n" id="l-playing">–</div><div class="l">In a game</div></div>
+    <div class="tile"><div class="n" id="l-public">–</div><div class="l">Public</div></div>
+    <div class="tile"><div class="n" id="l-private">–</div><div class="l">Private</div></div>
+  </section>
+
+  <h2>Versions in use</h2>
+  <div class="versions" id="versions"></div>
+
+  <h2>Public lobbies</h2>
+  <div id="lobbies"></div>
+
+  <footer>
+    Updates every 10 s from <code id="src"></code>. Private lobbies are only counted.
+    “Browsing” is players whose game called XeleeNet in the last minute without a seat.
+  </footer>
+</main>
+
+<script>
+const params = new URLSearchParams(location.search);
+const BASE = (params.get("url") || "https://xn.xelee.net").replace(/\/+$/, "");
+const POLL_MS = 10000;
+document.getElementById("src").textContent = BASE + "/v1/stats";
+
+const $ = id => document.getElementById(id);
+let lastOk = 0, timer = null;
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function ago(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + " s";
+  const m = Math.round(s / 60);
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60);
+  return h + " h " + (m % 60) + " min";
+}
+
+const MODES = { "1v1": "1V1", doubles: "DOUBLES", ffa: "FFA" };
+const FIGHTERS = { all: "All fighters", high: "High tiers", low: "Low tiers", custom: "Custom fighters" };
+const STAGES = { competitive: "Competitive stages", all: "All stages", custom: "Custom stages" };
+
+function rulesLine(st) {
+  const parts = [];
+  parts.push(st.win === "time" ? `Time · ${st.time_min}:00` : `${st.stocks} stocks · ${st.time_min ? st.time_min + ":00" : "no limit"}`);
+  if (st.items && st.items !== "off") parts.push("Items " + st.items.replace("_", " "));
+  parts.push(FIGHTERS[st.fighter_list] || "All fighters");
+  parts.push(STAGES[st.stage_list] || "Stages");
+  return parts.join(" · ");
+}
+
+function flag(cc) {
+  if (!cc || cc.length !== 2) return "";
+  return String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)) + " ";
+}
+
+function renderLobby(l, now) {
+  const st = l.settings || {};
+  const card = el("div", "lobby");
+  const top = el("div", "lobby-top");
+  top.append(el("div", "lobby-name", l.name), el("div", "seats", `${l.taken}/${st.seats || "?"}`));
+  card.append(top);
+  const host = l.host ? `${l.host.name}#${l.host.tag}` : "";
+  card.append(el("div", "meta", `${flag(l.country)}${host} · open ${ago(now - l.created)} · ${l.version}`));
+  card.append(el("div", "meta", rulesLine(st)));
+
+  const badges = el("div", "badges");
+  badges.append(el("span", "badge mode", MODES[st.mode] || (st.mode || "").toUpperCase()));
+  badges.append(el("span", "badge " + (l.state === "playing" ? "playing" : "open"),
+                   l.state === "playing" ? "IN GAME" : "OPEN"));
+  if ((l.players || []).some(p => p.xr)) badges.append(el("span", "badge xr", "XR"));
+  if (st.format === "first_to" && st.first_to) badges.append(el("span", "badge", "FIRST TO " + st.first_to));
+  card.append(badges);
+
+  const ps = el("div", "players");
+  const owners = {};
+  for (const p of l.players || []) if (!p.extra) owners[p.port] = p.name;
+  for (const p of l.players || []) {
+    const chip = el("span", "player");
+    chip.append(el("span", "p", "P" + (p.port + 1)));
+    if (p.extra) {
+      chip.append(document.createTextNode((owners[p.owner] || "Player") + " (another pad)"));
+    } else {
+      chip.append(document.createTextNode(p.name + " "));
+      chip.append(el("span", "tag", "#" + p.tag));
+      if (p.xr) chip.append(el("span", "badge xr", "XR"));
+    }
+    ps.append(chip);
+  }
+  card.append(ps);
+  return card;
+}
+
+function render(d) {
+  $("online").textContent = d.online;
+  $("seated").textContent = d.seated;
+  $("browsing").textContent = d.browsing;
+  $("xr").textContent = d.xr;
+  $("l-total").textContent = d.lobbies.total;
+  $("l-playing").textContent = d.lobbies.playing;
+  $("l-public").textContent = d.lobbies.public;
+  $("l-private").textContent = d.lobbies.private;
+
+  const v = $("versions");
+  v.replaceChildren();
+  const vs = Object.entries(d.versions || {}).sort((a, b) => b[1] - a[1]);
+  if (!vs.length) v.append(el("span", "chip", "No lobbies open"));
+  for (const [rev, n] of vs) {
+    const c = el("span", "chip");
+    c.append(document.createTextNode(rev + " "), el("b", null, `× ${n}`));
+    v.append(c);
+  }
+
+  const box = $("lobbies");
+  box.replaceChildren();
+  if (!d.public.length) {
+    box.append(el("div", "empty", d.lobbies.private
+      ? "No public lobbies right now (only private ones)."
+      : "No public lobbies right now."));
+  }
+  for (const l of d.public) box.append(renderLobby(l, d.now));
+}
+
+function tick() {
+  const w = $("when"), dot = $("dot");
+  if (lastOk) w.textContent = "Updated " + ago(Date.now() - lastOk) + " ago";
+}
+
+async function poll() {
+  try {
+    const r = await fetch(BASE + "/v1/stats", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    render(await r.json());
+    lastOk = Date.now();
+    $("dot").className = "dot live";
+    $("when").classList.remove("err");
+    tick();
+  } catch (e) {
+    $("dot").className = "dot down";
+    $("when").className = "err";
+    $("when").textContent = "Can't reach XeleeNet (" + e.message + ")" +
+      (lastOk ? " · last update " + ago(Date.now() - lastOk) + " ago" : "");
+  }
+}
+
+function start() {
+  clearInterval(timer);
+  poll();
+  timer = setInterval(poll, POLL_MS);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) clearInterval(timer); else start();
+});
+setInterval(() => { if (!$("when").classList.contains("err")) tick(); }, 1000);
+start();
+</script>
+</body>
+</html>

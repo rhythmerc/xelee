@@ -51,6 +51,7 @@ type Service struct {
 	byHost  map[string]*Lobby // host key -> lobby
 	limits  limiter
 	geodb   *maxminddb.Reader
+	seen    seenSet // players' recent signed-in calls (stats.go)
 }
 
 func newService(cfg Config) *Service {

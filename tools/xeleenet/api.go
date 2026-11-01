@@ -68,6 +68,10 @@ func (s *Service) route(w http.ResponseWriter, r *http.Request, ip string) answe
 		return s.session(r)
 	case path == "/v1/session/verify" && method == "POST":
 		return s.verify(r)
+	case path == "/v1/stats" && method == "GET":
+		// For a status page anywhere: no sign-in, any origin (stats.go).
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		return s.locked(func() answer { return okBody(s.stats()) })
 	case path == "/v1/lobbies" && method == "GET":
 		return s.listCall(r)
 	case path == "/v1/lobbies" && method == "POST":

@@ -90,6 +90,7 @@ func (s *Service) authorize(r *http.Request) Me {
 		expires, err := strconv.ParseInt(parts[1], 10, 64)
 		if ok && err == nil && expires > unixNow() &&
 			sameText(parts[2], s.mac(fmt.Sprintf("t|%s|%s", parts[0], parts[1]))) {
+			s.seen.mark(parts[0])
 			return Me{parts[0], tagOf(key)}
 		}
 	}
