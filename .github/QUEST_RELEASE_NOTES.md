@@ -9,6 +9,7 @@ Windows, Linux, and Android flat builds are now available! Play Xelee with your 
 **XeleeNet (Beta)**
 - A one-time message on the way to the main menu announces XeleeNet.
 - Online Mode > XeleeNet: host a lobby or join one, for 2 to 4 players. Public lobbies are listed in Join. A private one opens only with the 6-letter code its host shares.
+- Every fighter and stage is unlocked in XeleeNet and LAN lobbies, as in Slippi. Your own unlocks come back when you leave.
 - Pick a name the first time (XeleeNet > Name). It's XeleeNet's own, separate from Slippi's.
 - Hosting starts from a preset (1v1, Doubles or Free-for-all) or your own rules: seats, teams, stocks or time, items, friendly fire, pause, handicap, damage ratio and Frozen Stadium.
 - Fighter and stage lists: the host chooses which fighters may be picked (all of them, the high or low tiers, or your own choice) and which stages are in play. Random draws only from those.
