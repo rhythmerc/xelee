@@ -15,6 +15,7 @@
 //   GET    /v1/lobbies/<id>/join       joiner, after "pending" -> joined | pending | refusal
 //   POST   /v1/lobbies/<id>/leave      member
 //   GET    /healthz                    -> ok
+//   POST   /logs, GET /logs[/<code>]   the log drop (logs.go), with -logs
 //
 // Everything but the two session calls carries "Authorization: Bearer <token>".
 // A refusal is {error, reason}: `reason` is a stable word for the game,
@@ -58,6 +59,9 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := s.clientIP(r)
 	s.limit("ip", ip, s.cfg.PerIP, "Too many requests; wait a minute")
+	if s.logsCall(w, r, ip) {
+		return
+	}
 	answerWith(w, s.route(w, r, ip))
 }
 

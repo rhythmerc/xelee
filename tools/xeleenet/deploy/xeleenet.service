@@ -1,5 +1,6 @@
 # The lobby service on a plain Linux VPS (README.md, "Running it on a server").
-# /etc/xeleenet.env holds XELEENET_TOKEN_KEY=... (and XELEENET_NAME_BLOCKLIST=...).
+# /etc/xeleenet.env holds XELEENET_TOKEN_KEY=..., XELEENET_LOGS_TOKEN=... (log drop
+# reads) and, optionally, XELEENET_NAME_BLOCKLIST=... and XELEENET_LOGS_WEBHOOK=....
 [Unit]
 Description=XeleeNet lobby service
 After=network-online.target
@@ -8,7 +9,7 @@ Wants=network-online.target
 [Service]
 EnvironmentFile=/etc/xeleenet.env
 ExecStart=/usr/local/bin/xeleenet -tls-domain ${XELEENET_DOMAIN} -tls-cache /var/lib/xeleenet/certs \
-    -state /var/lib/xeleenet/state.json -stun :3478 -geoip /usr/local/share/xeleenet/city.mmdb
+    -state /var/lib/xeleenet/state.json -logs /var/lib/xeleenet/logs -stun :3478 -geoip /usr/local/share/xeleenet/city.mmdb
 Restart=always
 DynamicUser=yes
 StateDirectory=xeleenet

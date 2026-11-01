@@ -7,7 +7,8 @@
 # It builds the binary here, copies it with the systemd unit, fetches this
 # month's DB-IP city database on the server (or copies the one given), opens
 # the firewall, and starts the service. The token key is made on the server
-# the first time and never leaves it. Running it again upgrades the binary
+# the first time and never leaves it; so is the log drop's read token
+# (XELEENET_LOGS_TOKEN in /etc/xeleenet.env, for tools/fetch_logs.py). Running it again upgrades the binary
 # and refreshes the database; lobbies survive (-state).
 set -eu
 host=$1
@@ -33,6 +34,9 @@ install -m 755 /tmp/xeleenet /usr/local/bin/xeleenet && rm /tmp/xeleenet
 if [ ! -f /etc/xeleenet.env ]; then
     (umask 077 && printf 'XELEENET_TOKEN_KEY=%s\nXELEENET_DOMAIN=%s\n' "$(openssl rand -hex 32)" "$DOMAIN" > /etc/xeleenet.env)
 fi
+# The log drop's read token (tools/fetch_logs.py): made once, kept after.
+grep -q '^XELEENET_LOGS_TOKEN=' /etc/xeleenet.env ||
+    printf 'XELEENET_LOGS_TOKEN=%s\n' "$(openssl rand -hex 24)" >> /etc/xeleenet.env
 install -d -m 755 /usr/local/share/xeleenet
 if [ -f /tmp/city.mmdb ]; then
     install -m 644 /tmp/city.mmdb /usr/local/share/xeleenet/city.mmdb && rm /tmp/city.mmdb

@@ -7,7 +7,9 @@
 //
 // Secrets come from the environment: XELEENET_TOKEN_KEY (signs session
 // tokens; any long random string) and, optionally, XELEENET_NAME_BLOCKLIST
-// (comma-separated words refused in player and lobby names).
+// (comma-separated words refused in player and lobby names),
+// XELEENET_LOGS_TOKEN (reads of the log drop, -logs) and XELEENET_LOGS_WEBHOOK
+// (a Discord note per upload).
 
 package main
 
@@ -52,6 +54,7 @@ type Service struct {
 	limits  limiter
 	geodb   *maxminddb.Reader
 	seen    seenSet // players' recent signed-in calls (stats.go)
+	logs    *LogDrop // Send logs uploads (logs.go); nil without -logs
 }
 
 func newService(cfg Config) *Service {
@@ -73,6 +76,8 @@ func main() {
 	flag.DurationVar(&cfg.RosterGrace, "roster-grace", 20*time.Second, "keep a member the host doesn't list yet this long")
 	flag.IntVar(&cfg.PerIP, "limit-ip", 120, "calls a minute per address (0: no limit)")
 	flag.IntVar(&cfg.Hosts, "limit-host", 6, "lobbies opened a minute per player (0: no limit)")
+	logsDir := flag.String("logs", "", "keep Send logs uploads in this folder (logs.go); off without it")
+	logsCap := flag.Int64("logs-cap", 1<<30, "bytes of logs kept in all; uploads past it are refused")
 	flag.IntVar(&cfg.Joins, "limit-join", 20, "joins by code a minute per address (0: no limit)")
 	flag.Parse()
 
@@ -93,6 +98,19 @@ func main() {
 			log.Fatalf("geoip: %v", err)
 		}
 		s.geodb = db
+	}
+	if *logsDir != "" {
+		if err := os.MkdirAll(*logsDir, 0o700); err != nil {
+			log.Fatalf("logs: %v", err)
+		}
+		s.logs = &LogDrop{Dir: *logsDir, Cap: *logsCap, Token: os.Getenv("XELEENET_LOGS_TOKEN"),
+			Webhook: os.Getenv("XELEENET_LOGS_WEBHOOK")}
+		s.logs.prune()
+		go func() {
+			for range time.Tick(time.Hour) {
+				s.logs.prune()
+			}
+		}()
 	}
 	if *state != "" {
 		if err := s.load(*state); err != nil {

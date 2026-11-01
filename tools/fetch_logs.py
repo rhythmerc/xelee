@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fetch logs a player sent with the launcher's Send logs row (tools/log-drop).
+"""Fetch logs a player sent with the launcher's Send logs row (the XeleeNet
+service's log drop, tools/xeleenet/logs.go; https://xn.xelee.net).
 
   tools/fetch_logs.py XL-7K3QM2              # split into ~/xelee-logs/XL-7K3QM2/
   tools/fetch_logs.py XL-7K3QM2 -o DIR       # into DIR/XL-7K3QM2/
