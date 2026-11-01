@@ -33,6 +33,7 @@ extern void browser_yield(void);
 #include "pc/xr_scene.h"
 #include "pc/widescreen.h"
 #include "pc/net.h"
+#include "pc/input_poll.h"
 #include "pc/slp.h"
 #include "pc/net_chat.h"
 /* gmonlinemode.c (its header pulls in the decomp types) */
@@ -226,8 +227,17 @@ void pc_frame_boundary(void) {
     while (event != NULL && event->type != AURORA_NONE) {
         if (event->type == AURORA_EXIT) {
             pc_exit_requested = true;
-        } else if (event->type == AURORA_CONTROLLER_ADDED) {
-            pc_xr_gamepad_added(event->controller);
+        } else if (event->type == AURORA_CONTROLLER_ADDED ||
+                   event->type == AURORA_CONTROLLER_REMOVED) {
+            if (event->type == AURORA_CONTROLLER_ADDED)
+                pc_xr_gamepad_added(event->controller);
+            /* Which device holds which port, for Send logs: a lone pad
+             * off port 1 plays nothing online (net.c reads pad 1). */
+            char census[1536];
+            pc_pad_census(census, sizeof census);
+            pc_log_line("pads: %s %d\n%s",
+                event->type == AURORA_CONTROLLER_ADDED ? "added" : "removed", event->controller,
+                census);
         } else if (event->type == AURORA_SDL_EVENT) {
             if (event->sdl.type == SDL_EVENT_KEY_DOWN &&
                 event->sdl.key.scancode == SDL_SCANCODE_F1 && !event->sdl.key.repeat)

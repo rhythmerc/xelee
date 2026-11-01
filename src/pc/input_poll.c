@@ -210,3 +210,38 @@ void pc_input_latency_record(void) {
     polls0 = polls;
     reports0 = reports;
 }
+
+size_t pc_pad_census(char* out, size_t cap) {
+    size_t n = 0;
+#define CENSUS(...)                                                        \
+    do {                                                                   \
+        if (n < cap) {                                                     \
+            int w = snprintf(out + n, cap - n, __VA_ARGS__);               \
+            n = w < 0 ? n : (n + (size_t)w < cap ? n + (size_t)w : cap - 1); \
+        }                                                                  \
+    } while (0)
+    if (cap == 0)
+        return 0;
+    out[0] = '\0';
+    int count = 0;
+    SDL_JoystickID* ids = SDL_GetJoysticks(&count);
+    CENSUS("SDL devices: %d\n", count);
+    for (int i = 0; ids != NULL && i < count; i++) {
+        const SDL_JoystickID id = ids[i];
+        const char* name = SDL_GetJoystickNameForID(id);
+        const char* path = SDL_GetJoystickPathForID(id);
+        CENSUS("  instance %u: '%s' vid %04x pid %04x %s, SDL slot %d, type %d, path %s\n", (unsigned)id,
+            name != NULL ? name : "?", SDL_GetJoystickVendorForID(id), SDL_GetJoystickProductForID(id),
+            SDL_IsGamepad(id) ? "gamepad" : "joystick only", SDL_GetJoystickPlayerIndexForID(id),
+            (int)SDL_GetGamepadTypeForID(id), path != NULL ? path : "-");
+    }
+    SDL_free(ids);
+    for (u32 port = 0; port < PAD_CHANMAX; port++) {
+        const s32 index = PADGetIndexForPort(port);
+        const char* name = PADGetName(port);
+        CENSUS("  port %u: %s%s%s\n", (unsigned)port + 1, index < 0 ? "no pad" : "'",
+            index < 0 ? "" : (name != NULL ? name : "?"), index < 0 ? "" : "'");
+    }
+#undef CENSUS
+    return n;
+}

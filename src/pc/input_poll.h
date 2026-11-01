@@ -3,6 +3,7 @@
 #define PC_INPUT_POLL_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -25,6 +26,12 @@ uint64_t pc_input_poll_get_count(void);
 
 /* Smoothed poll-thread rate (Hz) for the diagnostic HUD. */
 float pc_input_poll_hz(void);
+
+/* Every joystick SDL sees (gamepad or not, opened or skipped) with its SDL
+ * player slot, then which pad each game port reads: a line each into `out`.
+ * For the log when pads come and go and for Send logs, to tell why a lone
+ * pad isn't on port 1. Returns the length written. */
+size_t pc_pad_census(char* out, size_t cap);
 
 #ifdef __cplusplus
 }

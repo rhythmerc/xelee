@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "log_report.hpp"
 #include "pc.h"
+#include "input_poll.h"
 #include "version.hpp"
 #include "slippi/slp_user.h"
 
@@ -322,6 +323,13 @@ Bundle build() {
         std::string body;
         if (room > 4096 && read_file(path, body))
             append(base_name(path), std::move(body));
+    }
+    {
+        // Pads as SDL and the ports see them now; the game's log has them
+        // each time one came or went ("pads:").
+        std::string census(4096, '\0');
+        census.resize(pc_pad_census(census.data(), census.size()));
+        append("pads.txt", std::move(census));
     }
 #if defined(__ANDROID__)
     if (room > 4096)
