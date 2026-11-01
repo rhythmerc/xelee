@@ -13,6 +13,10 @@
 #include <melee/lb/lbtime.h>
 #include <melee/ty/toy.h>
 #include <sysdolphin/baselib/memory.h>
+#ifdef TARGET_PC
+#include <melee/if/ifprize.h>
+#include "pc/settings.h"
+#endif
 
 enum {
     state_approach,
@@ -144,6 +148,19 @@ static UNK_T* gm_801BFC60(u32 arg0, s32 arg1, u32 arg2, u32 arg3, UNK_T* arg4)
 
 static u8 gm_8049E558[0x170];
 
+#ifdef TARGET_PC
+static bool xn_notice_queued;
+
+bool gm_PrizeQueueXnNotice(void)
+{
+    if (pc_settings_xn_notice_seen()) {
+        return false;
+    }
+    xn_notice_queued = true;
+    return true;
+}
+#endif
+
 void gm_ModeState_Prize_OnEnter(GameModeState* arg0)
 {
     u8* var_r28;
@@ -169,6 +186,15 @@ void gm_ModeState_Prize_OnEnter(GameModeState* arg0)
     Toy_803124BC();
 #ifdef MUST_MATCH
     var_r27_2_s11 = var_r27_2;
+#endif
+#ifdef TARGET_PC
+    /* Ours first, then any of the game's own. */
+    if (xn_notice_queued) {
+        xn_notice_queued = false;
+        var_r31 = gm_801BFC60(IF_PRIZE_XELEENET, var_r30, 0,
+                              lbTime_GetTimeInSeconds(), var_r31);
+        var_r30 += 1;
+    }
 #endif
     p3 = gm_8049E558;
     {

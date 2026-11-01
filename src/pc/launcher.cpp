@@ -2884,6 +2884,17 @@ extern "C" void pc_settings_set_gameplay(const PcGameplaySettings* s) {
     if (!launcher::save_preferences(config_path, prefs, error))
         SDL_Log("settings: not saved: %s", error.c_str());
 }
+extern "C" bool pc_settings_xn_notice_seen(void) {
+    return prefs.xn_notice_seen;
+}
+extern "C" void pc_settings_set_xn_notice_seen(void) {
+    if (prefs.xn_notice_seen)
+        return;
+    prefs.xn_notice_seen = true;
+    std::string error;
+    if (!launcher::save_preferences(config_path, prefs, error))
+        SDL_Log("settings: not saved: %s", error.c_str());
+}
 /* As the F1 menu applies each (PortMenu::action); the rest take effect at
  * the next launch, or are read live (the HUD layout, the FPS counter). */
 extern "C" void pc_settings_set_graphics(const PcGraphicsSettings* s) {

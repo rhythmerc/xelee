@@ -71,6 +71,11 @@ void pc_settings_gameplay(PcGameplaySettings* out);
 void pc_settings_set_gameplay(const PcGameplaySettings* s);
 void pc_settings_gameplay_defaults(PcGameplaySettings* out);
 
+/* The one-time "XeleeNet unlocked" special message (ifprize.c): whether it
+ * has shown, and marking it shown (saved). */
+bool pc_settings_xn_notice_seen(void);
+void pc_settings_set_xn_notice_seen(void);
+
 /* The headset cameras, for Roomtone: allowed; ask (the system's dialog);
  * the answer, -1 while none (0 refused, 1 allowed, 2 won't ask again). Off
  * Android, allowed. */

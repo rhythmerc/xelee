@@ -29,6 +29,8 @@
 #include <sysdolphin/baselib/sislib.h>
 #include <sysdolphin/baselib/synth.h>
 #include "pc/music_stream.h"
+#include "pc/region.h"
+#include "pc/settings.h"
 
 /// .data
 /* 3F9A00 */ static int un_803F9A00[] = {
@@ -90,6 +92,15 @@ struct un_803F9D48 {
 /* 4D6D98 */ static HSD_Archive* un_804D6D98;
 /* 4D6D9C */ static SceneDesc* un_804D6D9C;
 
+#ifdef TARGET_PC
+/* IF_PRIZE_XELEENET: the picture (a frame of the card's picture animation, as
+ * un_803F9A00 gives the game's own; 3 is the one new modes show) and the
+ * message. */
+#define XN_PICTURE 3
+static const char xn_message[] = "You've unlocked XeleeNet!\n"
+                                 "Fight online in Online Mode -> XeleeNet";
+#endif
+
 void un_802FE3F8(int a, int b, u16* c, u16* d)
 {
     struct un_803F9B30* x;
@@ -113,6 +124,11 @@ static inline int lookupX4(int a)
 {
     struct un_803F9B30* x;
 
+#ifdef TARGET_PC
+    if (a == IF_PRIZE_XELEENET) {
+        return XN_PICTURE;
+    }
+#endif
     for (x = &un_803F9B30[0]; x->x0 != 66; x++) {
         if (x->x0 == a) {
             return un_803F9A00[x->x4];
@@ -252,6 +268,55 @@ void un_802FE8CC(void)
     HSD_SisLib_803A5F50(2);
 }
 
+#ifdef TARGET_PC
+/* The XeleeNet message as a disc message is written (SdPrize's strings):
+ * proportional spacing (0x16), white (0x0C), glyphs, 0x1A for a space, 0x03
+ * for a new line. The message box centres and fits it as it does theirs.
+ * Glyphs come from the ASCII encoder one at a time, without the fixed-width
+ * codes (0x0A and its four bytes, 0x0B) it puts around them. */
+static void ifPrize_XeleeNetText(HSD_Text* box)
+{
+    static u8 sis[sizeof xn_message * 2 + 8];
+    const char* c;
+    int n = 0;
+
+    sis[n++] = 0x16;
+    sis[n++] = 0x0C;
+    sis[n++] = 0xFF;
+    sis[n++] = 0xFF;
+    sis[n++] = 0xFF;
+    for (c = xn_message; *c != '\0'; c++) {
+        if (*c == ' ') {
+            sis[n++] = 0x1A;
+        } else if (*c == '\n') {
+            sis[n++] = 0x03;
+        } else {
+            u8 one[2] = { (u8) *c, 0 };
+            u8 enc[16];
+            const int len = HSD_SisLib_803A67EC(enc, one);
+            int i = 0;
+            while (i < len) {
+                if (enc[i] == 0x0A) {
+                    i += 5;
+                } else if (enc[i] == 0x0B) {
+                    i += 1;
+                } else {
+                    /* A glyph: two bytes, one on PAL (sislib's encoder). */
+                    const int g = pc_region_pal ? 1 : 2;
+                    int k;
+                    for (k = 0; k < g && i < len; k++) {
+                        sis[n++] = enc[i++];
+                    }
+                }
+            }
+        }
+    }
+    sis[n] = 0;
+    HSD_SisLib_803A6368(box, 0); /* resets the box's layout state */
+    box->sis_buffer = (SIS*) sis;
+}
+#endif
+
 /// @note Needed for @c .data ordering
 static void setArchive(void)
 {
@@ -301,7 +366,12 @@ void un_802FE918(int a, int b, int c)
     lbAudioAx_80023F28(un_803F9D48.x30[*x3_ptr]);
     r = HSD_Randi(2);
     un_802FE918_update_x3(x3_ptr, &r);
-    gmMainLib_8015D8B0(a);
+#ifdef TARGET_PC
+    if (a != IF_PRIZE_XELEENET)
+#endif
+    {
+        gmMainLib_8015D8B0(a);
+    }
     un_803F9D48.x4 = lookupX4(a);
     if (a == 0x3E) {
         u16 v_x6;
@@ -312,6 +382,11 @@ void un_802FE918(int a, int b, int c)
         HSD_SisLib_803A660C(2, 0x4A, Toy_803063D4(b, 0x4E, 0x174));
         HSD_SisLib_803A660C(2, 0x4A, r);
         HSD_SisLib_803A6368(un_803F9D48.x20, 0x4A);
+#ifdef TARGET_PC
+    } else if (a == IF_PRIZE_XELEENET) {
+        ifPrize_XeleeNetText(un_803F9D48.x20);
+        pc_settings_set_xn_notice_seen();
+#endif
     } else {
         un_802FE3F8(a, 2, &un_803F9D48.x6, NULL);
         HSD_SisLib_803A6368(un_803F9D48.x20, un_803F9D48.x6);

@@ -3,6 +3,7 @@
 #include "gm_1601.h"
 #include "gm_16F1.h"
 #include "gm_1A3F.h"
+#include "gm_1BFA.h"
 #include "gmevent.h"
 #include "gmmain_lib.h"
 #include "gmregclear.h"
@@ -35,7 +36,14 @@ void gm_InitChallengerData(u8 human_ckind, u8 human_color, u8 human_slot,
 
 bool gm_80173754(u8 gameMode, u8 arg1)
 {
+#ifdef TARGET_PC
+    /* On the way to the menu, the one-time XeleeNet message takes the
+     * special-message scene the game's own unlocks show in (ifprize.c). */
+    const bool xn = gameMode == GM_MENU && gm_PrizeQueueXnNotice();
+    if (gm_801721EC() || xn) {
+#else
     if (gm_801721EC()) {
+#endif
         memzero(&challenger_data, sizeof(challenger_data));
         challenger_data.human_ckind = ChKind_None;
         challenger_data.human_slot = arg1;

@@ -5,6 +5,12 @@
 
 #include <sysdolphin/baselib/forward.h>
 
+#ifdef TARGET_PC
+/* A special message of our own, past the game's unlock ids (0..0x41): the
+ * one-time "XeleeNet unlocked" notice (gm_PrizeQueueXnNotice). */
+#define IF_PRIZE_XELEENET 0x100
+#endif
+
 /* 2FE3F8 */ void un_802FE3F8(int a, int b, u16* c, u16* d);
 /* 2FE470 */ void fn_802FE470(HSD_GObj* gobj);
 /* 2FE6A8 */ void un_802FE6A8(void);
