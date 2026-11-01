@@ -28,10 +28,10 @@
 #include <sys/utsname.h>
 #endif
 
-/* The log drop's base URL (tools/log-drop/README.md), compiled in from the
+/* The log drop's base URL (the XeleeNet service, tools/xeleenet/logs.go), compiled in from the
  * configure environment's XELEE_LOGS_URL (CMakeLists.txt; CI: a repository
  * secret). Without one Send logs saves the bundle instead; MELEE_LOGS_URL
- * overrides it at run time, e.g. for a local `wrangler dev`. */
+ * overrides it at run time, e.g. for a local `xeleenet -logs DIR`. */
 #ifndef PC_LOGS_URL_BUILTIN
 #define PC_LOGS_URL_BUILTIN ""
 #endif

@@ -3,7 +3,7 @@
 #include <string>
 
 /* The launcher's Send logs row: the last sessions' logs as one text bundle,
- * uploaded to the Xelee log drop (tools/log-drop), which answers with a short
+ * uploaded to the Xelee log drop (tools/xeleenet/logs.go), which answers with a short
  * code the player posts in Discord or on a GitHub issue. The bundle format is
  * read back by tools/fetch_logs.py. */
 namespace pc::log_report {

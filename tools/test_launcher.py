@@ -20,7 +20,7 @@ parser.add_argument("--binary", type=Path, help="Path to executable or AppImage 
 parser.add_argument("--screenshots", type=Path)
 parser.add_argument("--case", action="append", help="Run only this named case (repeatable)")
 parser.add_argument("--native-picker", action="store_true", help="Also test the desktop's Zenity file picker (requires working GTK/X11)")
-parser.add_argument("--logs-url", help="A log drop (tools/log-drop, e.g. a local `wrangler dev`) for the send-logs case")
+parser.add_argument("--logs-url", help="A log drop (tools/xeleenet -logs DIR, run locally) for the send-logs case")
 parser.add_argument("--send-event", action="store_true",
                     help="Deliver keys with XSendEvent instead of XTest (XTest keys never reach the window under KWin's Xwayland)")
 args = parser.parse_args()

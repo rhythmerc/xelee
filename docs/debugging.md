@@ -39,9 +39,12 @@ internet addresses as `ip-1`, `ip-2`, ... with one number per address across
 the bundle, while loopback and LAN addresses stay) and on
 Android the app's own logcat into one text bundle (`src/pc/log_report.cpp`).
 The first press says how much it holds and what is in it, the second uploads
-it to the log drop (`tools/log-drop`), which answers with a code such as
+it to the log drop (the XeleeNet service's `/logs`, `tools/xeleenet/logs.go`),
+which answers with a code such as
 `XL-7K3QM2` for the player to post. `tools/fetch_logs.py <code>` fetches and
-splits it; `tools/log-drop/README.md` has the setup. When the upload fails, or
+splits it (URL in `~/.config/xelee/logdrop-url`, read token in
+`~/.config/xelee/logdrop-token`, from `XELEENET_LOGS_TOKEN` in the server's
+`/etc/xeleenet.env`). When the upload fails, or
 the build has no log drop URL (compiled in from `XELEE_LOGS_URL` in the
 configure environment, which CI takes from the repository secret; overridden
 at run time by `MELEE_LOGS_URL`), the bundle is saved as `xelee-logs-<time>.txt` in
@@ -82,7 +85,7 @@ only; none of them fixes anything. User-facing knobs (`MELEE_BACKEND`,
 |---|---|
 | `MELEE_DEBUG=1` | Debug-level aurora logging. |
 | `MELEE_LOG_FILE=<path>` | Log file sink (defaults under [Log files](#log-files); empty disables). |
-| `MELEE_LOGS_URL=<url>` | Where Send logs uploads, instead of the built-in log drop (e.g. a local `wrangler dev`). |
+| `MELEE_LOGS_URL=<url>` | Where Send logs uploads, instead of the built-in log drop (e.g. a local `xeleenet -logs DIR`). |
 | `MELEE_FPS=1` | Print frame rate once a second. |
 | `MELEE_HEAP_CHECK=1` | Canaries on every heap allocation, checked each frame; aborts at the first stomp. |
 | `MELEE_SEED=<n>` | Deterministic RNG for the attract demo. |

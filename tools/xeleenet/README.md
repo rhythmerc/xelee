@@ -94,11 +94,22 @@ copy the same way.
 | `-ip-header` | | The header a trusted proxy puts the client address in. Only set this behind that proxy |
 | `-expire`, `-join-wait`, `-roster-grace` | 30s, 20s, 20s | Lobby timings |
 | `-limit-ip`, `-limit-host`, `-limit-join` | 120, 6, 20 | Per minute: calls per address, lobbies per player, joins per address (0 turns one off) |
+| `-logs` | | Keep Send logs uploads in this folder: the log drop (below). Off without it |
+| `-logs-cap` | 1 GiB | Bytes of logs kept in all; uploads past it are refused until some expire |
 
 | Environment | |
 |---|---|
 | `XELEENET_TOKEN_KEY` | Required. Signs session tokens: any long random string (`openssl rand -hex 32`). Changing it signs everyone out. |
 | `XELEENET_NAME_BLOCKLIST` | Optional. Comma-separated words refused in names. |
+| `XELEENET_LOGS_TOKEN` | Reads of the log drop (`tools/fetch_logs.py`). Without it nothing can be read back. `provision.sh` makes one. |
+| `XELEENET_LOGS_WEBHOOK` | Optional. A Discord webhook: a line per upload. |
+
+**The log drop** (`logs.go`): the launcher's Send logs row posts a bundle to
+`POST /logs` and shows the player the `XL-` code it gets back. `GET /logs` lists
+uploads and `GET /logs/<code>` returns one, both with
+`Authorization: Bearer $XELEENET_LOGS_TOKEN`. Bundles are kept 30 days, 3
+uploads a minute per address. The game's builds get the URL from
+`XELEE_LOGS_URL` at configure time (CI: the repository secret).
 
 The DB-IP Lite database is CC BY 4.0: anywhere the country shows, the credits
 must say "IP Geolocation by DB-IP" with a link to https://db-ip.com.

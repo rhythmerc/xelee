@@ -93,9 +93,9 @@ macro(melee_env_url name default help)
     endif ()
 endmacro()
 
-# Send logs' log drop (src/pc/log_report.cpp, tools/log-drop), from
+# Send logs' log drop (src/pc/log_report.cpp, tools/xeleenet/logs.go), from
 # XELEE_LOGS_URL. Unset, Send logs saves the bundle as a file.
-melee_env_url(XELEE_LOGS_URL "" "Send logs' log drop (tools/log-drop)")
+melee_env_url(XELEE_LOGS_URL "" "Send logs' log drop (tools/xeleenet/logs.go)")
 if (NOT "${XELEE_LOGS_URL}" STREQUAL "")
     set_source_files_properties(src/pc/log_report.cpp PROPERTIES
         COMPILE_DEFINITIONS "PC_LOGS_URL_BUILTIN=\"${XELEE_LOGS_URL}\"")

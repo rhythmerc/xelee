@@ -93,7 +93,7 @@ jobs:
           # Slippi's in-app login, compiled in (CMakeLists.txt).
           MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
           MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
-          # Where Send logs uploads (CMakeLists.txt, tools/log-drop).
+          # Where Send logs uploads (CMakeLists.txt, tools/xeleenet/logs.go).
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
           # The XeleeNet lobby service (CMakeLists.txt, tools/xeleenet).
           XELEENET_URL: ${{ vars.XELEENET_URL }}

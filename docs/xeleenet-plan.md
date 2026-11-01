@@ -268,8 +268,9 @@ but not scheduled.
 > (alarms, wall-clock billing) no longer apply. The README is current; the
 > rest of this section is the original Worker design.
 
-**Cloudflare Worker + Durable Objects.** We already deploy a Worker (the log
-drop, `tools/log-drop`, `.github/workflows/log-drop.yml`). The lobby service
+**Cloudflare Worker + Durable Objects.** We already had a Worker (the log
+drop, `tools/log-drop`, since removed: the log drop is now `/logs` on the Go
+service). The lobby service
 is `tools/xeleenet/`, deployed the same way (`.github/workflows/xeleenet.yml`).
 
 As built in XN0 (`tools/xeleenet`; its README has the details):
