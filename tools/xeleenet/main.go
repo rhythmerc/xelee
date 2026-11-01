@@ -53,7 +53,7 @@ type Service struct {
 	byHost  map[string]*Lobby // host key -> lobby
 	limits  limiter
 	geodb   *maxminddb.Reader
-	seen    seenSet // players' recent signed-in calls (stats.go)
+	seen    seenSet  // players' recent signed-in calls (stats.go)
 	logs    *LogDrop // Send logs uploads (logs.go); nil without -logs
 }
 
