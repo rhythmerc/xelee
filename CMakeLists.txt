@@ -346,6 +346,7 @@ set(PC_SOURCES
         src/pc/gcadapter.c
         src/pc/gx.c
         src/pc/input_poll.c
+        src/pc/pad_promote.c
         src/pc/keyboard.c
         src/pc/pad_rumble.c
         src/pc/main.c

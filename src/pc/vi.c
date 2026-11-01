@@ -224,6 +224,11 @@ void pc_frame_boundary(void) {
             pc_log_line("net timing: aurora_update %.1f ms at retrace %u frame %d", elapsed / 1e6,
                 s_retrace_count, pc_net_frame());
     }
+    /* Pads that connected under the launcher sent their events there: the
+     * first frame logs them too. */
+    static bool pads_logged;
+    bool pads_changed = !pads_logged;
+    pads_logged = true;
     while (event != NULL && event->type != AURORA_NONE) {
         if (event->type == AURORA_EXIT) {
             pc_exit_requested = true;
@@ -231,13 +236,7 @@ void pc_frame_boundary(void) {
                    event->type == AURORA_CONTROLLER_REMOVED) {
             if (event->type == AURORA_CONTROLLER_ADDED)
                 pc_xr_gamepad_added(event->controller);
-            /* Which device holds which port, for Send logs: a lone pad
-             * off port 1 plays nothing online (net.c reads pad 1). */
-            char census[1536];
-            pc_pad_census(census, sizeof census);
-            pc_log_line("pads: %s %d\n%s",
-                event->type == AURORA_CONTROLLER_ADDED ? "added" : "removed", event->controller,
-                census);
+            pads_changed = true;
         } else if (event->type == AURORA_SDL_EVENT) {
             if (event->sdl.type == SDL_EVENT_KEY_DOWN &&
                 event->sdl.key.scancode == SDL_SCANCODE_F1 && !event->sdl.key.repeat)
@@ -256,6 +255,14 @@ void pc_frame_boundary(void) {
         }
         ++event;
     }
+    if (pads_changed) {
+        /* Which device holds which port, for Send logs: a lone pad off
+         * port 1 plays nothing online (net.c reads pad 1). */
+        char census[1536];
+        pc_pad_census(census, sizeof census);
+        pc_log_line("pads:\n%s", census);
+    }
+    pc_pad_promote_frame();
     pc_xr_poll_control();
     pc_menu_update();
     mnPage_Update(); /* the Options pages' screens */

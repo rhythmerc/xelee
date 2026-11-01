@@ -33,6 +33,10 @@ float pc_input_poll_hz(void);
  * pad isn't on port 1. Returns the length written. */
 size_t pc_pad_census(char* out, size_t cap);
 
+/* Per frame, after the events (pad_promote.c): on Android, the first pad to
+ * press a button takes port 1 from a pad that never has. */
+void pc_pad_promote_frame(void);
+
 #ifdef __cplusplus
 }
 #endif

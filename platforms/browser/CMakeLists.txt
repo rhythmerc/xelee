@@ -26,7 +26,7 @@ target_compile_options(aurora_gd PRIVATE ${MELEE_FP_FLAGS})
 # GameCube adapter and file cache (pc_stubs.c). Keep in step with PC_SOURCES in
 # the top-level CMakeLists.txt.
 set(BROWSER_PC_SOURCES
- audio.c discfont.c gx.c input_poll.c keyboard.c pad_rumble.c misc.c os.c region.c stb_vorbis.c thp.c touch.c vi.c widescreen.c
+ audio.c discfont.c gx.c input_poll.c pad_promote.c keyboard.c pad_rumble.c misc.c os.c region.c stb_vorbis.c thp.c touch.c vi.c widescreen.c
  android_compat.cpp music_stream.cpp textures.cpp
  net.c net_chat.c net_dht.c net_dht_item.c net_handshake.c net_identity.c net_disc.c net_match.c net_rank.c
  net_rank_session.c net_rank_store.c net_reliable.c net_sfx.c net_sim.c net_snapshot.c net_sync.c net_watchdog.c net_wire.c
