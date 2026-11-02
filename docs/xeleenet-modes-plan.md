@@ -335,6 +335,53 @@ XeleeNet mode row in the wireframe.
 - **Captures:** window screenshots go stale under Xwayland after the first.
   Record with ffmpeg x11grab instead (see the memory on menu frame capture).
 
+## 6c. M2 results (2026-11-01)
+
+**The rules** (`gmctf.c`, statics of the game library, so they roll back):
+- **Sending a flag home** is always destroy-and-respawn on the stand. A holder
+  lets go through `ftLib_ReleaseItem`. It happens on:
+  - a capture;
+  - your own team picking it up away from home (any pickup path, then the
+    next tick);
+  - the return timer;
+  - leaving the stage (`gmCtf_FlagDestroyed`, then a respawn);
+  - being shoved more than 12 units off its stand while home.
+- **Pickup gate:** `gmCtf_PickupBlocked` in both of `ftpickupitem.c`'s range
+  checks.
+- **Capture:** the enemy flag's position (its holder's while held) inside
+  your zone, with your own flag home if that rule is on.
+- **Start:** a hook at the top of `gmvs.c`'s `getSpawnPoint`.
+- **Respawn:** `gmCtf_Respawn` after `fn_8016719C`. It keeps Melee's revival
+  point and offsets it (`Player_SetSomePos`): a descent to a bare position
+  collides with the stage and stopped on the roof of red's cave.
+- **Match end:** `gm_GetMatchOutcome` reports a team win once a team reaches
+  its captures (GAME!, then the red or blue team wins). A tie at time is no
+  contest. The results score (`fn_8016588C`) is the team's captures.
+- **Rules carriage:** `GmCtfRules` is set after `gm_SetupRulesDefaults`, which
+  clears it, so no other match inherits it. The debug match is
+  `MELEE_DEBUG_CTF=1` plus `_WIN`, `_HOME`, `_RETURN`, `_SWAP`, `_BASES` and
+  `_FREE`.
+- **Checksum:** `frame_checksum` folds in `gmCtf_Checksum` during CTF only, so
+  every other match's checksum is unchanged.
+
+**Tests:**
+- `tools/ctf_test.py` runs 15 scenarios unpaced; all pass: carry, drop,
+  capture, throw, gate, own, timer, blast, needhome, nohome, win, tie, start,
+  respawn, swap.
+- **Two-peer net tests,** 2 min at 50 ms and 2% loss, CPUs at level 9; both
+  PASS with no DESYNC and about 1,500 rollbacks a side.
+  - On the real layout the CPUs never touched the flags.
+  - On the close test layout there were 10+ pickups: carried and thrown
+    captures, timers and knock-offs, all under rollback.
+
+**Seen on the way:**
+- **Item reach is long.** A CPU grabbed a flag about 18 units away while
+  standing in its own zone. Base zones on future maps must sit well clear of
+  the enemy stand.
+- **No contest shows GAME!,** not TIME!, even when time ran out (Melee's
+  outcome banner). The results screen says NO CONTEST. Revisit with M3.
+- **Duplicated log lines** in netplay logs are rollback re-runs of the tick.
+
 ## 7. Open questions
 
 All seven from the first draft were answered 2026-11-01 (decisions 10-17).

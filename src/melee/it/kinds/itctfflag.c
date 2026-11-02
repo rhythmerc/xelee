@@ -12,6 +12,7 @@
 #include <melee/it/itmaplib.h>
 #include <melee/it/types.h>
 #include <melee/cm/camera.h>
+#include <melee/gm/gmctf.h>
 #include <melee/ft/ftlib.h>
 #include <melee/lb/lb_00B0.h>
 #include <melee/lb/lbcollision.h>
@@ -111,6 +112,7 @@ static void flag_spawned(Item_GObj* gobj)
 static void flag_destroyed(Item_GObj* gobj)
 {
     OSReport("ctf: flag destroyed\n");
+    gmCtf_FlagDestroyed(gobj);
 }
 
 static void flag_picked_up(Item_GObj* gobj)

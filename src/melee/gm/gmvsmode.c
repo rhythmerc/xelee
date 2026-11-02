@@ -2,6 +2,8 @@
 #include "pc/slp.h"
 #include "gmvsmode.h"
 
+#include <melee/gm/gmctf.h>
+
 #include <stdlib.h>
 #include <string.h>
 #include <melee/lb/forward.h>
@@ -319,6 +321,39 @@ static void fillDebugVs(GameModeState* state, UNUSED bool dummy)
                 start->players[i].stocks = stocks;
             }
         }
+    }
+    /* MELEE_DEBUG_CTF=1: a Capture the Flag match (src/melee/gm/gmctf.c):
+     * Temple unless MELEE_DEBUG_VS_STAGE says otherwise, red/blue teams by
+     * port parity, 8:00 unless MELEE_DEBUG_VS_TIME says otherwise.
+     * MELEE_DEBUG_CTF_WIN=<n> captures to win (3), MELEE_DEBUG_CTF_HOME=0
+     * scoring without your own flag home, MELEE_DEBUG_CTF_RETURN=<frames>
+     * the free flag's return time (600; 0 never), MELEE_DEBUG_CTF_SWAP=1
+     * the sides swapped. */
+    if (getenv("MELEE_DEBUG_CTF") != NULL) {
+        GmCtfRules ctf = { 3, 1, 1, 0, 600 };
+        if (getenv("MELEE_DEBUG_CTF_WIN") != NULL) {
+            const int n = atoi(getenv("MELEE_DEBUG_CTF_WIN"));
+            ctf.captures_to_win = (u8) (n < 1 ? 1 : n > 9 ? 9 : n);
+        }
+        if (getenv("MELEE_DEBUG_CTF_HOME") != NULL) {
+            ctf.home_required = atoi(getenv("MELEE_DEBUG_CTF_HOME")) != 0;
+        }
+        if (getenv("MELEE_DEBUG_CTF_RETURN") != NULL) {
+            ctf.return_frames = (u16) atoi(getenv("MELEE_DEBUG_CTF_RETURN"));
+        }
+        ctf.swap_sides = getenv("MELEE_DEBUG_CTF_SWAP") != NULL;
+        if (getenv("MELEE_DEBUG_VS_STAGE") == NULL) {
+            start->rules.stkind = St_Kind_Shrine;
+        }
+        start->rules.is_teams = true;
+        for (i = 0; i < Gm_Player_NumMax; i++) {
+            start->players[i].team = (u8) (i & 1);
+        }
+        if (!start->rules.timer_enabled) {
+            start->rules.timer_enabled = 1;
+            start->rules.time_limit = 8 * 60;
+        }
+        gmCtf_SetRules(&ctf);
     }
     /* MELEE_SLP_PLAY=<file.slp>: the replay's match instead (src/pc/slp_play.c). */
     pc_slp_play_setup(start);

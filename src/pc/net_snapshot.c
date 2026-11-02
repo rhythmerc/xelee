@@ -15,6 +15,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wscalar-storage-order" /* disc-struct unions in lb/types.h */
 #include <melee/ft/fighter.h>
+#include <melee/gm/gmctf.h>
 #include <melee/ft/inlines.h>
 #include <melee/pl/player.h>
 #pragma GCC diagnostic pop
@@ -330,6 +331,14 @@ uint32_t frame_checksum(const PADStatus* head) {
         ck = fnv1a(ck, &stocks, sizeof stocks);
         ck = fnv1a(ck, &fp->self_vel, sizeof fp->self_vel);
         ck = fnv1a(ck, &fp->x8c_kb_vel, sizeof fp->x8c_kb_vel);
+    }
+    if (in_fight()) {
+        /* Capture the Flag: the flags, captures and winner (0 outside CTF,
+         * which leaves every other match's checksum as it was). */
+        const u32 ctf = gmCtf_Checksum();
+        if (ctf != 0) {
+            ck = fnv1a(ck, &ctf, sizeof ctf);
+        }
     }
     return ck;
 }

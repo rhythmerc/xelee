@@ -1,6 +1,7 @@
 #include "gmvs.h"
 
 #include <melee/gm/gmctf.h>
+#include <dolphin/os.h>
 
 #include <Runtime/platform.h>
 
@@ -888,6 +889,18 @@ MatchOutcome gm_GetTeamBattleOutcome(void)
     return OUTCOME_NONE;
 }
 
+/* Time ran out: Melee's TIME!, or a CTF tie's no contest. */
+static MatchOutcome gm_TimeoutOutcome(void)
+{
+#ifdef TARGET_PC
+    if (gmCtf_Tied()) {
+        OSReport("ctf: time up tied, no contest\n");
+        return OUTCOME_NO_CONTEST;
+    }
+#endif
+    return OUTCOME_TIMEOUT;
+}
+
 MatchOutcome gm_GetMatchOutcome(void)
 {
     MatchOutcome team_battle_outcome;
@@ -909,19 +922,25 @@ MatchOutcome gm_GetMatchOutcome(void)
     if (controller.start.x5_0) {
         return OUTCOME_NONE;
     }
+#ifdef TARGET_PC
+    /* CTF: a team reached its captures (GAME!); a tie at time is no contest. */
+    if (gmCtf_Winner() >= 0) {
+        return OUTCOME_TEAM_ELIMINATION;
+    }
+#endif
     if (tmp->start.timer_enabled) {
         if (tmp->start.timer_counts_up) {
             if (controller.state.timer_seconds ==
                     controller.start.time_limit &&
                 controller.state.unk_2C == 0)
             {
-                return OUTCOME_TIMEOUT;
+                return gm_TimeoutOutcome();
             }
         } else {
             if (controller.state.timer_seconds == 0 &&
                 controller.state.unk_2C == 0x3B)
             {
-                return OUTCOME_TIMEOUT;
+                return gm_TimeoutOutcome();
             }
         }
     }
@@ -2075,6 +2094,9 @@ static inline void getSpawnPoint(int i, Vec3* v)
 {
     VsSceneController* tmp = &controller;
 #ifdef TARGET_PC
+    if (gmCtf_SpawnPoint(i, v)) { /* CTF: everyone starts at their base */
+        return;
+    }
     if (neutralSpawn(i, v)) {
         return;
     }
