@@ -1,13 +1,12 @@
 # Xelee
 
-A mixed reality port of Super Smash Bros. Melee to the Quest 3 platform.
-This is Smash like you've never seen it before, with fighters and stages floating
-in your room. Full Slippi support means that you can play online, and all 1-P content
-has been tailored to work great in MR.
+An independent expansion of Melee featuring XeleeNet (online rollback multiplayer with customizable 2-4 player lobbies!) and full mixed reality support on Quest 3/Quest 3S.
 
 You need your own disc image. **No game data ships here.** The decompiled game
 code is not licensed and is not relicensed by this project; only the port code
 is GPL-3.0-or-later. Details under [License](#license).
+
+[Discord](https://discord.gg/X4ZQjGTHj)
 
 ## Features
 
