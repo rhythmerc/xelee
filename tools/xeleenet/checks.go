@@ -225,6 +225,11 @@ type Settings struct {
 	Format      string `json:"format"`
 	FirstTo     int    `json:"first_to"`
 	PlaceSecs   int    `json:"place_secs"`
+	// The game mode (docs/xeleenet-modes-plan.md): vs or ctf (Capture the
+	// Flag), with CTF's captures to win. Missing reads as vs, from games
+	// before it.
+	GameMode string `json:"game_mode"`
+	CtfCaps  int    `json:"ctf_caps,omitempty"`
 	// The lists themselves, for a lobby's Details page
 	// (docs/xeleenet-lobby-details-plan.md): a bit per CharacterKind, and a
 	// bit per Random Stage Switch id. Missing reads as the named list's.
@@ -244,6 +249,8 @@ const (
 	fightersLow       = fightersAll &^ fightersHigh
 	stagesAll         = uint32(1)<<stageBits - 1
 	stagesCompetitive = uint32(1)<<24 | 1<<25 | 1<<26 | 1<<4 | 1<<5 | 1<<7
+	// Capture the Flag's maps: Hyrule Temple (src/pc/xeleenet_menu.cpp kCtfStages).
+	stagesCtf = uint32(1) << 14
 )
 
 var fighterLists = map[string]uint32{"all": fightersAll, "high": fightersHigh, "low": fightersLow}
@@ -320,6 +327,22 @@ func settings(v any) Settings {
 	case 10, 15, 20, 30, 45, 60:
 	default:
 		fail(400, "bad_settings", "Bad placement time")
+	}
+	gameMode := m["game_mode"]
+	if gameMode == nil {
+		gameMode = "vs"
+	}
+	out.GameMode = pick(gameMode, []string{"vs", "ctf"}, "game mode")
+	if out.GameMode == "ctf" {
+		caps := m["ctf_caps"]
+		if caps == nil {
+			caps = float64(3)
+		}
+		out.CtfCaps = intIn(caps, 1, 9, "captures to win")
+		// The mode decides these: red against blue, on time, on its maps.
+		if out.Mode != "teams" || out.Win != "time" || out.StageMask&^stagesCtf != 0 {
+			fail(400, "bad_settings", "Capture the Flag plays teams, on time, on its maps")
+		}
 	}
 	// Loser picks needs a loser: one side in a 1v1, or a team.
 	if out.Pick == "loser" && out.Mode == "ffa" && out.Seats > 2 {

@@ -237,6 +237,23 @@ def run(url):
         refused(lambda: a.settings(lobby, "Friday netplay", dict(four, **bad)), "bad_settings", what)
     a.settings(lobby, "Friday netplay", four)
 
+    print("-- the game mode")
+    row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
+    check(row and row[0]["settings"].get("game_mode") == "vs", "a game that sends no mode lists VS")
+    temple = 1 << 14
+    ctf = dict(four, game_mode="ctf", ctf_caps=3, mode="teams", win="time", stage_list="custom", stage_mask=temple)
+    a.settings(lobby, "CTF night", ctf)
+    row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
+    check(row and row[0]["settings"].get("game_mode") == "ctf" and row[0]["settings"].get("ctf_caps") == 3,
+          "the listing carries Capture the Flag and its captures to win")
+    for bad, what in ((dict(ctf, game_mode="koth"), "a game mode that doesn't exist"),
+                      (dict(ctf, ctf_caps=10), "ten captures to win"),
+                      (dict(ctf, mode="ffa"), "Capture the Flag without teams"),
+                      (dict(ctf, win="stock"), "Capture the Flag on stocks"),
+                      (dict(ctf, stage_mask=temple | 1 << 25), "Capture the Flag off its maps")):
+        refused(lambda: a.settings(lobby, "CTF night", bad), "bad_settings", what)
+    a.settings(lobby, "Friday netplay", four)
+
     print("-- leaving, removing")
     b.leave(lobby)
     check(e.join(code, ["203.0.113.5:41000"])["port"] == 1, "a leaver's seat (P2) goes to the next joiner")

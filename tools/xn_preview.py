@@ -4,7 +4,7 @@ look (src/pc/xeleenet_menu.cpp, resources/xeleenet*.rcss).
 
     tools/xn_preview.py [PAGE ...] [--share] [--out build/xn-preview]
 
-PAGE is host, more, stages, fighters, lobbies, details, code, joining, progress, failed,
+PAGE is host, host-ctf (the Host page in Capture the Flag), more, stages, fighters, lobbies, details, code, joining, progress, failed,
 banner, css-ready, css-countdown, css-waiting, css-leaving, css-left, css-N (a full
 lobby of N seats, for the doors and the names in them), Lobby Settings'
 css-settings, css-settings-fighters, css-settings-guest and css-settings-seats,
@@ -29,7 +29,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-PAGES = ["host", "more", "stages", "fighters", "lobbies", "details", "code", "joining", "progress", "failed",
+PAGES = ["host", "host-ctf", "more", "stages", "fighters", "lobbies", "details", "code", "joining", "progress", "failed",
          "banner", "css-ready", "css-countdown", "css-waiting", "css-leaving", "css-left", "css-2", "css-3", "css-4",
          "css-settings", "css-settings-fighters", "css-settings-guest", "css-settings-seats", "css-changed",
          "css-offlist", "css-editing",

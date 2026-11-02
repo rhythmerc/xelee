@@ -228,8 +228,20 @@ struct HostSettings {
     unsigned fighters = XN_FIGHTERS_ALL;
     bool frozen = true;
     bool hide_code = false;
+    // The game mode (docs/xeleenet-modes-plan.md): VS, or Capture the Flag
+    // with its own rules. CTF decides teams (on), stock/time (time) and the
+    // stages (the CTF maps) itself.
+    int mode = 0; // 0 VS, 1 CTF
+    int ctf_caps = 3;
+    bool ctf_home = true;
+    int ctf_return = 10; // seconds, 0 never
+    bool ctf_slow = true;
 };
 HostSettings s_host;
+
+// Capture the Flag's maps, as stage-switch bits: Hyrule Temple (bit 14) for now.
+constexpr unsigned kCtfStages = 1u << 14;
+const int kCtfReturns[] = {0, 5, 10, 15, 20, 30, 45, 60};
 bool s_host_loaded;
 // What the pages change: the host's own settings, or the Lobby Settings
 // overlay's draft of them while it's open.
@@ -243,9 +255,11 @@ void host_save() {
     const HostSettings& h = s_host;
     std::fprintf(f,
                  "preset=%d\nname=%s\nopen=%d\nseats=%d\nteams=%d\nstock=%d\nstocks=%d\nminutes=%d\nitems=%d\n"
-                 "ff=%d\nhandicap=%d\ndamage=%d\npause=%d\nstages=%u\nfighters=%u\nfrozen=%d\nhide=%d\n",
+                 "ff=%d\nhandicap=%d\ndamage=%d\npause=%d\nstages=%u\nfighters=%u\nfrozen=%d\nhide=%d\n"
+                 "mode=%d\nctf_caps=%d\nctf_home=%d\nctf_return=%d\nctf_slow=%d\n",
                  h.preset, h.name.c_str(), h.open, h.seats, h.teams, h.stock, h.stocks, h.minutes, h.items,
-                 h.friendly_fire, h.handicap, h.damage, h.pause, h.stages, h.fighters, h.frozen, h.hide_code);
+                 h.friendly_fire, h.handicap, h.damage, h.pause, h.stages, h.fighters, h.frozen, h.hide_code,
+                 h.mode, h.ctf_caps, h.ctf_home, h.ctf_return, h.ctf_slow);
     std::fclose(f);
 }
 
@@ -297,6 +311,16 @@ bool host_read(const char* path, HostSettings& h) {
             h.frozen = n != 0;
         else if (k == "hide")
             h.hide_code = n != 0;
+        else if (k == "mode")
+            h.mode = std::clamp(n, 0, 1);
+        else if (k == "ctf_caps")
+            h.ctf_caps = std::clamp(n, 1, 9);
+        else if (k == "ctf_home")
+            h.ctf_home = n != 0;
+        else if (k == "ctf_return")
+            h.ctf_return = std::clamp(n, 0, 60);
+        else if (k == "ctf_slow")
+            h.ctf_slow = n != 0;
     }
     std::fclose(f);
     if (h.stages == 0)
@@ -350,6 +374,10 @@ template <size_t N> int step(const int (&values)[N], int v, int dir) {
 
 std::string on_off(bool on) { return tr(on ? "xeleenet.host.values.on" : "xeleenet.host.values.off"); }
 
+std::string ctf_return_label(int s) {
+    return s == 0 ? tr("xeleenet.host.values.off") : tr("xeleenet.host.values.seconds", {{"n", s}});
+}
+
 std::string minutes_label(int m) {
     return m == 0 ? tr("xeleenet.host.values.no_limit") : tr("xeleenet.host.values.minutes", {{"n", m}});
 }
@@ -386,11 +414,13 @@ std::string settings_json() {
     std::snprintf(b, sizeof b,
                   "{\"preset\":\"%s\",\"seats\":%d,\"mode\":\"%s\",\"win\":\"%s\",\"stocks\":%d,\"time_min\":%d,"
                   "\"items\":\"%s\",\"stage_list\":\"%s\",\"fighter_list\":\"%s\",\"pick\":\"everyone\","
-                  "\"format\":\"endless\",\"first_to\":2,\"place_secs\":15,\"fighter_mask\":%u,\"stage_mask\":%u}",
-                  kPresetIds[h.preset], h.seats, h.teams ? "teams" : "ffa", h.stock ? "stock" : "time", h.stocks,
-                  h.minutes, kItemIds[h.items + 1],
-                  h.stages == kCompetitive ? "competitive" : h.stages == kAllStages ? "all" : "custom",
-                  fighter_list_id(h.fighters), h.fighters, h.stages);
+                  "\"format\":\"endless\",\"first_to\":2,\"place_secs\":15,\"game_mode\":\"%s\",\"ctf_caps\":%d,"
+                  "\"fighter_mask\":%u,\"stage_mask\":%u}",
+                  kPresetIds[h.preset], h.seats, h.teams || h.mode ? "teams" : "ffa", h.stock && !h.mode ? "stock" : "time",
+                  h.stocks, h.minutes, kItemIds[h.items + 1],
+                  h.mode ? "custom" : h.stages == kCompetitive ? "competitive" : h.stages == kAllStages ? "all" : "custom",
+                  fighter_list_id(h.fighters), h.mode ? "ctf" : "vs", h.ctf_caps, h.fighters,
+                  h.mode ? kCtfStages : h.stages);
     return b;
 }
 
@@ -402,7 +432,9 @@ bool plays_same(const HostSettings& a, const HostSettings& b) {
     return a.seats == b.seats && a.teams == b.teams && a.stock == b.stock && a.stocks == b.stocks &&
            a.minutes == b.minutes && a.items == b.items && (a.teams && a.friendly_fire) == (b.teams && b.friendly_fire) &&
            a.handicap == b.handicap && a.damage == b.damage && a.pause == b.pause && a.stages == b.stages &&
-           a.fighters == b.fighters && a.frozen == b.frozen;
+           a.fighters == b.fighters && a.frozen == b.frozen && a.mode == b.mode &&
+           (a.mode == 0 || (a.ctf_caps == b.ctf_caps && a.ctf_home == b.ctf_home && a.ctf_return == b.ctf_return &&
+                            a.ctf_slow == b.ctf_slow));
 }
 
 bool lan();
@@ -694,6 +726,7 @@ struct Screen : Rml::EventListener {
     std::vector<PcXnListing> rows;
     int others = 0;
     bool showFull = false;
+    int modeFilter = 0; // the lobby list: 0 every mode, 1 VS, 2 Capture the Flag (Z)
     int fetch = 0; // 0 fetching, 1 have rows, -1 failed
     uint64_t fetchedAt = 0, fetchAsked = 0;
     uint64_t touchedAt = 0; // the last button or click; the list stops refreshing itself a while after
@@ -788,33 +821,28 @@ struct Screen : Rml::EventListener {
         r += "<div class=\"grp\"><span>" + enc(tr(name)) + "</span></div>";
     }
 
-    void build_host() {
-        if (overlay) {
-            build_overlay_host();
-            return;
-        }
-        HostSettings& h = *s_edit;
+    // The Mode bar (docs/xeleenet-modes-plan.md, wireframe X1): VS, or
+    // Capture the Flag. Row 0 of the Host page.
+    void mode_bar(std::string& r, const HostSettings& h) {
+        static const char* const kModes[2] = {"xeleenet.host.modes.vs", "xeleenet.host.modes.ctf"};
+        r += std::string("<div id=\"mode\" class=\"pbar") + (h.mode == 0 ? " m2" : "") + "\"><div class=\"k\">" + enc(tr("xeleenet.host.mode")) +
+             "</div><div class=\"pv\"><span class=\"arr\">" + kLeft + "</span>" + enc(tr(kModes[h.mode])) +
+             "<span class=\"arr\">" + kRight + "</span></div><div class=\"pk\">" + enc(tr(kModes[0])) + kDot +
+             enc(tr(kModes[1])) + "</div></div>";
+        Item it{"mode", 0, 0, !readOnly};
+        it.change = [](int) { s_edit->mode = 1 - s_edit->mode; };
+        it.hint = tr("xeleenet.host.hints.mode");
+        items.push_back(std::move(it));
+    }
+
+    void lobby_rows(std::string& r, const HostSettings& h, int o) {
         auto custom = [] { s_edit->preset = kCustom; };
-        std::string r;
-        r += "<div id=\"preset\" class=\"pbar\"><div class=\"k\">" + enc(tr("xeleenet.host.preset")) +
-             "</div><div class=\"pv\"><span class=\"arr\">" + kLeft + "</span>" + enc(tr(kPresetNames[h.preset])) +
-             "<span class=\"arr\">" + kRight + "</span></div><div class=\"pk\">";
-        for (int i = 0; i < kPresetCount; i++)
-            r += (i > 0 ? kDot : "") + enc(tr(kPresetNames[i]));
-        r += "</div></div>";
-        {
-            Item it{"preset", 0, 0, true};
-            it.change = [](int d) { preset((s_edit->preset + d + kPresetCount) % kPresetCount); };
-            it.hint = tr("xeleenet.host.hints.preset");
-            items.push_back(std::move(it));
-        }
-        r += "<div class=\"col left\">";
         group(r, "xeleenet.host.groups.lobby");
         r += "<div id=\"lname\" class=\"xrow link\"><div class=\"n\">" + enc(tr("xeleenet.host.rows.name")) +
              "</div><div class=\"v\">" + enc(lobby_name()) + "<span class=\"type\">" + enc(tr("xeleenet.host.type")) +
              "</span></div></div>";
         {
-            Item it{"lname", 0, 1, true};
+            Item it{"lname", 0, o + 0, true};
             it.act = [] {
                 ask_keyboard(Typing::Lobby, s_edit->name.empty() ? lobby_name() : s_edit->name,
                              tr("xeleenet.host.ask_name"), 20);
@@ -823,62 +851,140 @@ struct Screen : Rml::EventListener {
             items.push_back(std::move(it));
         }
         if (!lan()) // every LAN lobby is listed
-            choice(r, "vis", 0, 2, "xeleenet.host.rows.visibility",
+            choice(r, "vis", 0, o + 1, "xeleenet.host.rows.visibility",
                    tr(h.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private"),
                    [](int) { s_edit->open = !s_edit->open; }, "xeleenet.host.hints.visibility");
-        choice(r, "seats", 0, 3, "xeleenet.host.rows.seats", std::to_string(h.seats),
+        choice(r, "seats", 0, o + 2, "xeleenet.host.rows.seats", std::to_string(h.seats),
                [custom](int d) { s_edit->seats = 2 + (s_edit->seats - 2 + d + 3) % 3, custom(); },
                "xeleenet.host.hints.seats");
-        group(r, "xeleenet.host.groups.rules");
-        choice(r, "teams", 0, 4, "xeleenet.host.rows.teams", on_off(h.teams),
-               [custom](int) { s_edit->teams = !s_edit->teams, custom(); }, "xeleenet.host.hints.teams");
-        if (h.stock)
-            choice(r, "stocks", 0, 5, "xeleenet.host.rows.stocks", std::to_string(h.stocks),
-                   [custom](int d) { s_edit->stocks = step(kStocks, s_edit->stocks, d), custom(); },
-                   "xeleenet.host.hints.stocks");
-        else
-            choice(r, "stocks", 0, 5, "xeleenet.host.rows.win_by", tr("xeleenet.host.values.time"),
-                   [custom](int) { s_edit->stock = true, custom(); }, "xeleenet.host.hints.win_by");
-        choice(r, "time", 0, 6, "xeleenet.host.rows.time", minutes_label(h.minutes),
-               [custom](int d) { s_edit->minutes = step(kMinutes, s_edit->minutes, d), custom(); },
-               "xeleenet.host.hints.time");
-        choice(r, "items", 0, 7, "xeleenet.host.rows.items", tr(kItemNames[h.items + 1]),
-               [custom](int d) { s_edit->items = (s_edit->items + 1 + d + 6) % 6 - 1, custom(); },
-               "xeleenet.host.hints.items");
-        if (h.teams)
-            choice(r, "ff", 0, 8, "xeleenet.host.rows.ff", on_off(h.friendly_fire),
-                   [custom](int) { s_edit->friendly_fire = !s_edit->friendly_fire, custom(); },
-                   "xeleenet.host.hints.ff");
-        link(r, "more", 0, 9, "xeleenet.host.rows.more", tr("xeleenet.host.values.more"), [this] { go(Page::More); },
+    }
+
+    void open_button(std::string& r, int row) {
+        r += "<button id=\"open\" class=\"gold\">" + enc(tr("xeleenet.host.open")) + "</button></div>";
+        Item it{"open", 1, row, true};
+        it.act = [this] { open_lobby(); };
+        it.hint = tr("xeleenet.host.hints.open");
+        items.push_back(std::move(it));
+    }
+
+    // Capture the Flag's Host page: the mode decides teams, stock/time and
+    // the stages; its own rules take the stock rows' place.
+    void build_host_ctf(std::string& r, const HostSettings& h) {
+        const int o = 1;
+        r += "<div class=\"col left\">";
+        lobby_rows(r, h, o);
+        group(r, "xeleenet.host.groups.rules_ctf");
+        choice(r, "teams", 0, o + 3, "xeleenet.host.rows.teams", on_off(true), [](int) {},
+               "xeleenet.host.hints.teams_locked", false, "xeleenet.host.values.locked");
+        choice(r, "caps", 0, o + 4, "xeleenet.host.rows.ctf_caps", std::to_string(h.ctf_caps),
+               [](int d) { s_edit->ctf_caps = 1 + (s_edit->ctf_caps - 1 + d + 9) % 9; }, "xeleenet.host.hints.ctf_caps");
+        choice(r, "time", 0, o + 5, "xeleenet.host.rows.time", minutes_label(h.minutes),
+               [](int d) { s_edit->minutes = step(kMinutes, s_edit->minutes, d); }, "xeleenet.host.hints.time");
+        choice(r, "home", 0, o + 6, "xeleenet.host.rows.ctf_home", on_off(h.ctf_home),
+               [](int) { s_edit->ctf_home = !s_edit->ctf_home; }, "xeleenet.host.hints.ctf_home");
+        choice(r, "ret", 0, o + 7, "xeleenet.host.rows.ctf_return", ctf_return_label(h.ctf_return),
+               [](int d) { s_edit->ctf_return = step(kCtfReturns, s_edit->ctf_return, d); },
+               "xeleenet.host.hints.ctf_return");
+        choice(r, "slow", 0, o + 8, "xeleenet.host.rows.ctf_slow", on_off(h.ctf_slow),
+               [](int) { s_edit->ctf_slow = !s_edit->ctf_slow; }, "xeleenet.host.hints.ctf_slow");
+        link(r, "more", 0, o + 9, "xeleenet.host.rows.more", tr("xeleenet.host.values.more"), [this] { go(Page::More); },
              "xeleenet.host.hints.more");
         r += "</div><div class=\"col right\">";
         group(r, "xeleenet.host.groups.stages");
-        link(r, "flist", 1, 1, "xeleenet.host.rows.fighter_list", fighter_list_label(h.fighters),
+        link(r, "flist", 1, o + 0, "xeleenet.host.rows.fighter_list", fighter_list_label(h.fighters),
              [this] { go(Page::Fighters); }, "xeleenet.host.hints.fighter_list");
-        link(r, "slist", 1, 2, "xeleenet.host.rows.stage_list", stage_list_label(h.stages),
-             [this] { go(Page::Stages); }, "xeleenet.host.hints.stage_list");
-        choice(r, "pick", 1, 3, "xeleenet.host.rows.stage_pick", tr("xeleenet.host.values.stage_pick"), [](int) {},
-               "xeleenet.host.hints.stage_pick", false, "xeleenet.host.soon");
-        choice(r, "frozen", 1, 4, "xeleenet.host.rows.frozen", on_off(h.frozen),
-               [custom](int) { s_edit->frozen = !s_edit->frozen, custom(); }, "xeleenet.host.hints.frozen");
-        choice(r, "place", 1, 5, "xeleenet.host.rows.placement", tr("xeleenet.host.values.placement"), [](int) {},
+        choice(r, "slist", 1, o + 1, "xeleenet.host.rows.stage_list",
+               tr("xeleenet.host.stage_lists.ctf", {{"n", stage_count(kCtfStages)}}), [](int) {},
+               "xeleenet.host.hints.stage_list_ctf", false, "xeleenet.host.values.locked");
+        choice(r, "items", 1, o + 2, "xeleenet.host.rows.items", tr(kItemNames[h.items + 1]),
+               [](int d) { s_edit->items = (s_edit->items + 1 + d + 6) % 6 - 1; }, "xeleenet.host.hints.items");
+        choice(r, "place", 1, o + 3, "xeleenet.host.rows.placement", tr("xeleenet.host.values.placement"), [](int) {},
                "xeleenet.host.hints.placement", false, "xeleenet.host.soon");
         group(r, "xeleenet.host.groups.set");
-        choice(r, "format", 1, 6, "xeleenet.host.rows.format", tr("xeleenet.host.values.format"), [](int) {},
+        choice(r, "format", 1, o + 4, "xeleenet.host.rows.format", tr("xeleenet.host.values.format"), [](int) {},
                "xeleenet.host.hints.format", false, "xeleenet.host.soon");
         group(r, "xeleenet.host.groups.joining");
-        choice(r, "ask", 1, 7, "xeleenet.host.rows.ask", on_off(false), [](int) {}, "xeleenet.host.hints.ask", false,
+        choice(r, "ask", 1, o + 5, "xeleenet.host.rows.ask", on_off(false), [](int) {}, "xeleenet.host.hints.ask", false,
                "xeleenet.host.soon");
         if (!lan()) // no codes on LAN
-            choice(r, "hide", 1, 8, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
+            choice(r, "hide", 1, o + 6, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
                    [](int) { s_edit->hide_code = !s_edit->hide_code; }, "xeleenet.host.hints.hide_code");
-        r += "<button id=\"open\" class=\"gold\">" + enc(tr("xeleenet.host.open")) + "</button></div>";
+        open_button(r, o + 9);
+    }
+
+    void build_host() {
+        if (overlay) {
+            build_overlay_host();
+            return;
+        }
+        HostSettings& h = *s_edit;
+        auto custom = [] { s_edit->preset = kCustom; };
+        std::string r;
+        mode_bar(r, h);
+        if (h.mode == 1) {
+            build_host_ctf(r, h);
+            set_board(r);
+            return;
+        }
+        const int o = 1; // the Mode bar and the preset bar share row 0
+        r += "<div id=\"preset\" class=\"pbar p2\"><div class=\"k\">" + enc(tr("xeleenet.host.preset")) +
+             "</div><div class=\"pv\"><span class=\"arr\">" + kLeft + "</span>" + enc(tr(kPresetNames[h.preset])) +
+             "<span class=\"arr\">" + kRight + "</span></div><div class=\"pk\">";
+        for (int i = 0; i < kPresetCount; i++)
+            r += (i > 0 ? kDot : "") + enc(tr(kPresetNames[i]));
+        r += "</div></div>";
         {
-            Item it{"open", 1, 9, true};
-            it.act = [this] { open_lobby(); };
-            it.hint = tr("xeleenet.host.hints.open");
+            Item it{"preset", 1, 0, true};
+            it.change = [](int d) { preset((s_edit->preset + d + kPresetCount) % kPresetCount); };
+            it.hint = tr("xeleenet.host.hints.preset");
             items.push_back(std::move(it));
         }
+        r += "<div class=\"col left\">";
+        lobby_rows(r, h, o);
+        group(r, "xeleenet.host.groups.rules");
+        choice(r, "teams", 0, o + 3, "xeleenet.host.rows.teams", on_off(h.teams),
+               [custom](int) { s_edit->teams = !s_edit->teams, custom(); }, "xeleenet.host.hints.teams");
+        if (h.stock)
+            choice(r, "stocks", 0, o + 4, "xeleenet.host.rows.stocks", std::to_string(h.stocks),
+                   [custom](int d) { s_edit->stocks = step(kStocks, s_edit->stocks, d), custom(); },
+                   "xeleenet.host.hints.stocks");
+        else
+            choice(r, "stocks", 0, o + 4, "xeleenet.host.rows.win_by", tr("xeleenet.host.values.time"),
+                   [custom](int) { s_edit->stock = true, custom(); }, "xeleenet.host.hints.win_by");
+        choice(r, "time", 0, o + 5, "xeleenet.host.rows.time", minutes_label(h.minutes),
+               [custom](int d) { s_edit->minutes = step(kMinutes, s_edit->minutes, d), custom(); },
+               "xeleenet.host.hints.time");
+        choice(r, "items", 0, o + 6, "xeleenet.host.rows.items", tr(kItemNames[h.items + 1]),
+               [custom](int d) { s_edit->items = (s_edit->items + 1 + d + 6) % 6 - 1, custom(); },
+               "xeleenet.host.hints.items");
+        if (h.teams)
+            choice(r, "ff", 0, o + 7, "xeleenet.host.rows.ff", on_off(h.friendly_fire),
+                   [custom](int) { s_edit->friendly_fire = !s_edit->friendly_fire, custom(); },
+                   "xeleenet.host.hints.ff");
+        link(r, "more", 0, o + 8, "xeleenet.host.rows.more", tr("xeleenet.host.values.more"), [this] { go(Page::More); },
+             "xeleenet.host.hints.more");
+        r += "</div><div class=\"col right\">";
+        group(r, "xeleenet.host.groups.stages");
+        link(r, "flist", 1, o + 0, "xeleenet.host.rows.fighter_list", fighter_list_label(h.fighters),
+             [this] { go(Page::Fighters); }, "xeleenet.host.hints.fighter_list");
+        link(r, "slist", 1, o + 1, "xeleenet.host.rows.stage_list", stage_list_label(h.stages),
+             [this] { go(Page::Stages); }, "xeleenet.host.hints.stage_list");
+        choice(r, "pick", 1, o + 2, "xeleenet.host.rows.stage_pick", tr("xeleenet.host.values.stage_pick"), [](int) {},
+               "xeleenet.host.hints.stage_pick", false, "xeleenet.host.soon");
+        choice(r, "frozen", 1, o + 3, "xeleenet.host.rows.frozen", on_off(h.frozen),
+               [custom](int) { s_edit->frozen = !s_edit->frozen, custom(); }, "xeleenet.host.hints.frozen");
+        choice(r, "place", 1, o + 4, "xeleenet.host.rows.placement", tr("xeleenet.host.values.placement"), [](int) {},
+               "xeleenet.host.hints.placement", false, "xeleenet.host.soon");
+        group(r, "xeleenet.host.groups.set");
+        choice(r, "format", 1, o + 5, "xeleenet.host.rows.format", tr("xeleenet.host.values.format"), [](int) {},
+               "xeleenet.host.hints.format", false, "xeleenet.host.soon");
+        group(r, "xeleenet.host.groups.joining");
+        choice(r, "ask", 1, o + 6, "xeleenet.host.rows.ask", on_off(false), [](int) {}, "xeleenet.host.hints.ask", false,
+               "xeleenet.host.soon");
+        if (!lan()) // no codes on LAN
+            choice(r, "hide", 1, o + 7, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
+                   [](int) { s_edit->hide_code = !s_edit->hide_code; }, "xeleenet.host.hints.hide_code");
+        open_button(r, o + 8);
         set_board(r);
     }
 
@@ -1068,6 +1174,14 @@ struct Screen : Rml::EventListener {
             rows[3].fighter_mask = 1u << 0x0E, rows[3].stage_mask = 1u << 22;
             rows[4].fighter_mask = 1u << 0x09;
             rows[5].fighter_mask = XN_FIGHTERS_LOW;
+            {
+                // A Capture the Flag lobby: teams, Temple only, as the
+                // service requires of every one.
+                PcXnListing ctf = sample("F4LG9T", "Flag runners", "PENNANT", "7CTF", "US", 2, 4, true, false, 4, 8,
+                                         false, false, false);
+                ctf.ctf = true, ctf.ctf_caps = 3, ctf.teams = true, ctf.stage_mask = kCtfStages;
+                rows.insert(rows.begin() + 1, ctf);
+            }
             others = 2, fetch = 1, fetchedAt = SDL_GetTicks() - 4000;
             if (lan()) {
                 rows.resize(s_preview == "lan-lobbies" ? 3 : 0);
@@ -1118,7 +1232,7 @@ struct Screen : Rml::EventListener {
                     detailsRow = static_cast<int>(rows.size());
                     found = true;
                 }
-                if (showFull || out[i].taken < out[i].seats)
+                if ((showFull || out[i].taken < out[i].seats) && mode_shown(out[i]))
                     rows.push_back(out[i]);
             }
             if (page == Page::Details)
@@ -1132,10 +1246,17 @@ struct Screen : Rml::EventListener {
         }
     }
 
+    bool mode_shown(const PcXnListing& x) const {
+        return modeFilter == 0 || (modeFilter == 2) == x.ctf;
+    }
+
     void build_lobbies() {
+        static const char* const kModeFilters[3] = {"xeleenet.lobbies.mode_filter.all", "xeleenet.lobbies.mode_filter.vs",
+                                                    "xeleenet.lobbies.mode_filter.ctf"};
         std::string r = "<div class=\"bhead\"><div id=\"full\" class=\"chipx" + std::string(showFull ? " on" : "") +
                         "\">" + enc(tr(showFull ? "xeleenet.lobbies.show_full.on" : "xeleenet.lobbies.show_full.off")) +
-                        "</div><div class=\"upd\">";
+                        "</div><div id=\"mfilter\" class=\"chipx" + std::string(modeFilter ? " on" : "") + "\">" +
+                        enc(tr(kModeFilters[modeFilter])) + "</div><div class=\"upd\">";
         const bool looking = fetch == 0 || (lan() && rows.empty() && SDL_GetTicks() - lookFrom < kLanLookMs);
         if (looking)
             r += enc(tr("xeleenet.lobbies.looking"));
@@ -1171,12 +1292,16 @@ struct Screen : Rml::EventListener {
             const PcXnListing& x = rows[i];
             const std::string id = "lb" + std::to_string(i);
             const bool full = x.taken >= x.seats;
-            const char* mode = x.teams        ? "xeleenet.lobbies.modes.doubles"
+            const char* mode = x.ctf          ? "xeleenet.lobbies.modes.ctf"
+                               : x.teams      ? "xeleenet.lobbies.modes.doubles"
                                : x.seats == 2 ? "xeleenet.lobbies.modes.1v1"
                                               : "xeleenet.lobbies.modes.ffa";
             const std::string base =
                 std::string(x.host) + (x.tag[0] ? "#" + std::string(x.tag).substr(0, 4) : "") + kDot +
-                (x.stock ? tr("xeleenet.lobbies.stocks", {{"n", x.stocks}}) : tr("xeleenet.lobbies.time")) + kDot +
+                (x.ctf     ? tr("xeleenet.lobbies.ctf_caps", {{"n", x.ctf_caps}})
+                 : x.stock ? tr("xeleenet.lobbies.stocks", {{"n", x.stocks}})
+                           : tr("xeleenet.lobbies.time")) +
+                kDot +
                 minutes_label(x.time_min) + kDot +
                 (x.first_to ? tr("xeleenet.lobbies.first_to", {{"n", x.first_to_n}}) : tr("xeleenet.lobbies.endless"));
             // Then the lists, when they aren't the defaults; the stages go
@@ -1198,8 +1323,8 @@ struct Screen : Rml::EventListener {
             if (static_cast<int>(i) < scrollTop || static_cast<int>(i) >= scrollTop + kListRows)
                 continue;
             r += "<div id=\"" + id + "\" class=\"lrow" + (full ? " full" : "") + "\"><div class=\"lw\"><div class=\"ln\">" +
-                 enc(x.name) + "</div><div class=\"ls\">" + sub + "</div></div><div class=\"lm\">" +
-                 enc(tr(mode)) + "</div><div class=\"lb\">" +
+                 enc(x.name) + "</div><div class=\"ls\">" + sub + "</div></div><div class=\"lm" +
+                 (x.ctf ? " ctf" : "") + "\">" + enc(tr(mode)) + "</div><div class=\"lb\">" +
                  (x.playing ? "<span class=\"badge game\">" + enc(tr("xeleenet.lobbies.in_game")) + "</span>"
                   : x.xr    ? "<span class=\"badge\">" + enc(tr("xeleenet.lobbies.xr")) + "</span>"
                             : std::string()) +
@@ -1735,7 +1860,7 @@ struct Screen : Rml::EventListener {
             r += lan() ? key("x", "xeleenet.legend.join_address")
                        : key("y", "xeleenet.legend.enter_code") + key("x", "xeleenet.legend.refresh");
             r += key("start", showFull ? "xeleenet.legend.hide_full" : "xeleenet.legend.show_full") +
-                 key("b", "xeleenet.legend.back");
+                 key("z", "xeleenet.legend.mode_filter") + key("b", "xeleenet.legend.back");
             break;
         case Page::Code:
             if (lan()) { // X deletes; B is Back
@@ -2044,6 +2169,14 @@ struct Screen : Rml::EventListener {
                 join();
             } else if (page == Page::Lobbies) {
                 showFull = !showFull;
+                sfx(SFX_CONFIRM);
+                browse();
+                refresh();
+            }
+            break;
+        case PC_XN_IN_Z:
+            if (page == Page::Lobbies && !overlay) {
+                modeFilter = (modeFilter + 1) % 3;
                 sfx(SFX_CONFIRM);
                 browse();
                 refresh();
@@ -2402,6 +2535,8 @@ HostSettings from_rules(const PcXnRules& r) {
     h.seats = r.seats, h.teams = r.teams, h.stock = r.stock, h.stocks = r.stocks, h.minutes = r.minutes;
     h.items = r.items, h.friendly_fire = r.friendly_fire, h.handicap = r.handicap, h.damage = r.damage_ratio;
     h.pause = r.pause, h.stages = r.stage_mask, h.fighters = r.fighter_mask, h.frozen = r.frozen_stadium;
+    h.mode = r.game_mode, h.ctf_caps = r.ctf_caps, h.ctf_home = r.ctf_home, h.ctf_return = r.ctf_return;
+    h.ctf_slow = r.ctf_slow;
     return h;
 }
 
@@ -2418,6 +2553,14 @@ std::vector<std::string> rule_changes(const HostSettings& a, const HostSettings&
         std::snprintf(b, sizeof b, "%.1f", d / 10.f);
         return tr("xeleenet.rules.values.damage", {{"n", b}});
     };
+    add("xeleenet.host.mode", tr(a.mode ? "xeleenet.host.modes.ctf" : "xeleenet.host.modes.vs"),
+        tr(b.mode ? "xeleenet.host.modes.ctf" : "xeleenet.host.modes.vs"));
+    if (a.mode == 1 && b.mode == 1) {
+        add("xeleenet.host.rows.ctf_caps", std::to_string(a.ctf_caps), std::to_string(b.ctf_caps));
+        add("xeleenet.host.rows.ctf_home", on_off(a.ctf_home), on_off(b.ctf_home));
+        add("xeleenet.host.rows.ctf_return", ctf_return_label(a.ctf_return), ctf_return_label(b.ctf_return));
+        add("xeleenet.host.rows.ctf_slow", on_off(a.ctf_slow), on_off(b.ctf_slow));
+    }
     add("xeleenet.host.rows.teams", on_off(a.teams), on_off(b.teams));
     if (a.stock != b.stock)
         add("xeleenet.rules.rows.win_by", tr(a.stock ? "xeleenet.rules.values.stock" : "xeleenet.rules.values.time"),
@@ -2526,9 +2669,18 @@ std::string rules_line_rml(const HostSettings& h, unsigned lit) {
     const auto part = [&](unsigned bit, const std::string& text) {
         return (lit & bit) ? "<span class=\"lit\">" + enc(text) + "</span>" : enc(text);
     };
-    std::string r = part(1, tr(h.teams        ? "xeleenet.rules_line.doubles"
-                               : h.seats == 2 ? "xeleenet.rules_line.1v1"
-                                              : "xeleenet.rules_line.ffa"));
+    std::string r;
+    if (h.mode == 1) { // "Capture the Flag · First to 3 · 8:00"
+        r = part(1, tr("xeleenet.rules_line.ctf"));
+        r += enc(kDot) + part(2, tr("xeleenet.rules_line.ctf_caps", {{"n", h.ctf_caps}}));
+        r += enc(kDot) + part(4, minutes_label(h.minutes));
+        if (h.items >= 0)
+            r += enc(kDot) + part(8, tr("xeleenet.rules_line.items"));
+        return r;
+    }
+    r = part(1, tr(h.teams        ? "xeleenet.rules_line.doubles"
+                   : h.seats == 2 ? "xeleenet.rules_line.1v1"
+                                  : "xeleenet.rules_line.ffa"));
     r += enc(kDot) + part(2, h.stock ? tr("xeleenet.rules_line.stocks", {{"n", h.stocks}}) : tr("xeleenet.rules_line.time"));
     r += enc(kDot) + part(4, minutes_label(h.minutes));
     if (h.items >= 0)
@@ -3112,6 +3264,28 @@ void Screen::build_overlay_host() {
     const bool host = !readOnly;
     const auto was = [&](const std::string& now, const std::string& before) { return host && now != before ? before : ""; };
     std::string r = "<div class=\"col left\">";
+    if (h.mode == 1) { // Capture the Flag: its own rules; the mode stays the Host page's
+        group(r, "xeleenet.host.groups.rules_ctf");
+        choice(r, "caps", 0, 0, "xeleenet.host.rows.ctf_caps", std::to_string(h.ctf_caps),
+               [](int d) { s_edit->ctf_caps = 1 + (s_edit->ctf_caps - 1 + d + 9) % 9; }, "xeleenet.host.hints.ctf_caps",
+               true, nullptr, was(std::to_string(h.ctf_caps), std::to_string(o.ctf_caps)));
+        choice(r, "time", 0, 1, "xeleenet.host.rows.time", minutes_label(h.minutes),
+               [](int d) { s_edit->minutes = step(kMinutes, s_edit->minutes, d); }, "xeleenet.host.hints.time", true,
+               nullptr, was(minutes_label(h.minutes), minutes_label(o.minutes)));
+        choice(r, "home", 0, 2, "xeleenet.host.rows.ctf_home", on_off(h.ctf_home),
+               [](int) { s_edit->ctf_home = !s_edit->ctf_home; }, "xeleenet.host.hints.ctf_home", true, nullptr,
+               was(on_off(h.ctf_home), on_off(o.ctf_home)));
+        choice(r, "ret", 0, 3, "xeleenet.host.rows.ctf_return", ctf_return_label(h.ctf_return),
+               [](int d) { s_edit->ctf_return = step(kCtfReturns, s_edit->ctf_return, d); },
+               "xeleenet.host.hints.ctf_return", true, nullptr,
+               was(ctf_return_label(h.ctf_return), ctf_return_label(o.ctf_return)));
+        choice(r, "slow", 0, 4, "xeleenet.host.rows.ctf_slow", on_off(h.ctf_slow),
+               [](int) { s_edit->ctf_slow = !s_edit->ctf_slow; }, "xeleenet.host.hints.ctf_slow", true, nullptr,
+               was(on_off(h.ctf_slow), on_off(o.ctf_slow)));
+        choice(r, "items", 0, 5, "xeleenet.host.rows.items", tr(kItemNames[h.items + 1]),
+               [](int d) { s_edit->items = (s_edit->items + 1 + d + 6) % 6 - 1; }, "xeleenet.host.hints.items", true,
+               nullptr, was(tr(kItemNames[h.items + 1]), tr(kItemNames[o.items + 1])));
+    } else {
     group(r, "xeleenet.host.groups.rules");
     choice(r, "teams", 0, 0, "xeleenet.host.rows.teams", on_off(h.teams), [](int) { s_edit->teams = !s_edit->teams; },
            "xeleenet.host.hints.teams", true, nullptr, was(on_off(h.teams), on_off(o.teams)));
@@ -3138,6 +3312,7 @@ void Screen::build_overlay_host() {
          "xeleenet.host.hints.more", host && more_changed ? tr("xeleenet.settings.changed") : "");
     choice(r, "place", 0, 6, "xeleenet.host.rows.placement", tr("xeleenet.host.values.placement"), [](int) {},
            "xeleenet.host.hints.placement", false, "xeleenet.host.soon");
+    }
     group(r, "xeleenet.settings.groups.links");
     r += "<div class=\"links\">";
     for (const std::string& line : links_lines())
@@ -3153,12 +3328,19 @@ void Screen::build_overlay_host() {
     group(r, "xeleenet.settings.groups.right");
     link(r, "flist", 1, 0, "xeleenet.host.rows.fighter_list", fighter_list_label(h.fighters), [this] { go(Page::Fighters); },
          "xeleenet.host.hints.fighter_list", was(fighter_list_label(h.fighters), fighter_list_label(o.fighters)));
-    link(r, "slist", 1, 1, "xeleenet.host.rows.stage_list", stage_list_label(h.stages), [this] { go(Page::Stages); },
-         "xeleenet.host.hints.stage_list", was(stage_list_label(h.stages), stage_list_label(o.stages)));
+    if (h.mode == 1)
+        choice(r, "slist", 1, 1, "xeleenet.host.rows.stage_list",
+               tr("xeleenet.host.stage_lists.ctf", {{"n", stage_count(kCtfStages)}}), [](int) {},
+               "xeleenet.host.hints.stage_list_ctf", false, "xeleenet.host.values.locked");
+    else
+        link(r, "slist", 1, 1, "xeleenet.host.rows.stage_list", stage_list_label(h.stages), [this] { go(Page::Stages); },
+             "xeleenet.host.hints.stage_list", was(stage_list_label(h.stages), stage_list_label(o.stages)));
     choice(r, "pick", 1, 2, "xeleenet.host.rows.stage_pick", tr("xeleenet.host.values.stage_pick"), [](int) {},
            "xeleenet.host.hints.stage_pick", false, "xeleenet.host.soon");
-    choice(r, "frozen", 1, 3, "xeleenet.host.rows.frozen", on_off(h.frozen), [](int) { s_edit->frozen = !s_edit->frozen; },
-           "xeleenet.host.hints.frozen", true, nullptr, was(on_off(h.frozen), on_off(o.frozen)));
+    if (h.mode != 1)
+        choice(r, "frozen", 1, 3, "xeleenet.host.rows.frozen", on_off(h.frozen),
+               [](int) { s_edit->frozen = !s_edit->frozen; }, "xeleenet.host.hints.frozen", true, nullptr,
+               was(on_off(h.frozen), on_off(o.frozen)));
     choice(r, "format", 1, 4, "xeleenet.host.rows.format", tr("xeleenet.host.values.format"), [](int) {},
            "xeleenet.host.hints.format", false, "xeleenet.host.soon");
     const int least = settings_seats_min();
@@ -3692,6 +3874,10 @@ extern "C" void pc_xn_menu_begin(int what) {
     s_preview = preview != nullptr ? preview : "";
     if (s_preview.rfind("lan-", 0) == 0)
         pc_xn_set_network(PC_XN_NET_LAN);
+    if (s_preview == "host-ctf") // tools/xn_preview.py: the Host page in Capture the Flag
+        s_host.mode = 1;
+    else if (s_preview == "host")
+        s_host.mode = 0;
     s_what = what;
     s_result = PC_XN_MENU_STAY;
     s_active = true;
@@ -3790,6 +3976,11 @@ extern "C" int pc_xn_menu_result(void) {
 
 extern "C" void pc_xn_menu_rules(PcXnRules* out) {
     const HostSettings& h = s_host;
+    out->game_mode = h.mode;
+    out->ctf_caps = h.ctf_caps;
+    out->ctf_home = h.ctf_home;
+    out->ctf_return = h.ctf_return;
+    out->ctf_slow = h.ctf_slow;
     out->seats = h.seats;
     out->teams = h.teams;
     out->stock = h.stock;
@@ -3803,6 +3994,12 @@ extern "C" void pc_xn_menu_rules(PcXnRules* out) {
     out->stage_mask = h.stages;
     out->fighter_mask = h.fighters;
     out->frozen_stadium = h.frozen;
+    if (h.mode == 1) { // Capture the Flag decides these
+        out->teams = true;
+        out->stock = false;
+        out->stage_mask = kCtfStages;
+        out->friendly_fire = false;
+    }
 }
 
 extern "C" const char* pc_xn_menu_title(void) {

@@ -47,7 +47,7 @@ extern "C" {
  * gains an xports byte, and the pads of those ports follow the primary
  * port's (docs/lan-multipad-plan.md). A peer on 12 reads every packet as
  * malformed. */
-#define PC_NET_PROTO_VERSION 13
+#define PC_NET_PROTO_VERSION 14 /* 14: Rules carries the game mode */
 void pc_net_init(void);
 void pc_net_set_input_delay(int frames);
 bool pc_net_active(void);
@@ -234,6 +234,22 @@ uint32_t pc_net_fighters(void);
  *   - pc_net_rules_take_wanted: those in force at once, the host alone;
  *   - pc_net_rules_seats: the seats in force (the wanted ones before a
  *     session), 0 when never set. */
+/* A lobby's game mode and its own rules, carried in RULES (protocol 14):
+ * every player sets the match up from the copy in force. */
+typedef struct PcNetMode {
+    uint8_t mode;     /* 0 VS, 1 Capture the Flag */
+    uint8_t caps;     /* CTF: captures to win, 1-9 */
+    uint8_t home;     /* CTF: your own flag must be home to score */
+    uint8_t return_s; /* CTF: a free flag's return, seconds; 0 never */
+    uint8_t slow;     /* CTF: carriers slowed */
+} __attribute__((packed)) PcNetMode;
+#define PC_NET_MODE_VS 0
+#define PC_NET_MODE_CTF 1
+/* What the host's RULES will carry, and the mode in force (the wanted one
+ * before a session). */
+void pc_net_set_mode(const PcNetMode* mode);
+void pc_net_rules_mode(PcNetMode* out);
+
 struct GameRules;
 void pc_net_set_rules_staging(bool on);
 bool pc_net_rules_commit(void);

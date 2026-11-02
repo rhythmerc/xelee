@@ -276,6 +276,7 @@ typedef struct Rules {
     uint8_t teams;        /* XeleeNet: the CSS opens with Teams on (pc_net_set_teams) */
     uint32_t fighter_mask; /* XeleeNet's fighter list: bit = CharacterKind (xeleenet_fighters.h) */
     uint8_t seats;        /* XeleeNet: the lobby's seats, 2-4, which lay the CSS's doors out */
+    PcNetMode mode;       /* XeleeNet: the game mode and its rules (Capture the Flag) */
     uint32_t unlock_hash; /* unlock_hash_now() after the sender forced its masks */
     uint32_t hash;        /* rules_hash() of the wire image above; the guest recomputes it */
 } __attribute__((packed)) Rules;
@@ -337,7 +338,7 @@ _Static_assert(sizeof(Ack) == 13, "wire layout");
 _Static_assert(sizeof(FwdHdr) == 8 && sizeof(FwdAck) == 12, "wire layout");
 _Static_assert(sizeof(Rel) == 11 + REL_MAX, "wire layout");
 _Static_assert(sizeof(RelAck) == 8 && sizeof(Bye) == 8, "wire layout");
-_Static_assert(sizeof(Rules) == 16 + sizeof(GameRules) + 28, "wire layout");
+_Static_assert(sizeof(Rules) == 16 + sizeof(GameRules) + 33, "wire layout"); /* 33: +5, the game mode (protocol 14) */
 _Static_assert(sizeof(Ready) == 28, "wire layout");
 _Static_assert(sizeof(Nonces) == 36, "wire layout");
 _Static_assert(sizeof(Resume) == 20 && sizeof(Resume) % 4 == 0, "wire layout");

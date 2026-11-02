@@ -57,6 +57,8 @@ typedef struct PcXnListing {
     char items[12];
     char stage_list[12];
     char fighter_list[8]; /* all, high, low or custom (docs/xeleenet-fighter-list-plan.md) */
+    bool ctf;             /* game_mode "ctf": Capture the Flag (docs/xeleenet-modes-plan.md) */
+    int ctf_caps;         /* its captures to win */
     bool first_to; /* else endless */
     int first_to_n;
     bool playing, xr;

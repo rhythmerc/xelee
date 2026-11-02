@@ -95,6 +95,10 @@ xeleenet:
   host:
     title: Host
     preset: PRESET
+    mode: MODE
+    modes:
+      vs: VS
+      ctf: Capture the Flag
     presets:
       1v1: 1v1
       doubles: Doubles
@@ -103,6 +107,7 @@ xeleenet:
     groups:
       lobby: LOBBY
       rules: RULES
+      rules_ctf: RULES · CAPTURE THE FLAG
       stages: FIGHTERS · STAGES
       set: SET
       joining: JOINING
@@ -125,6 +130,10 @@ xeleenet:
       format: Format
       ask: Ask before joining
       hide_code: Hide code
+      ctf_caps: Captures to win
+      ctf_home: Flag must be home
+      ctf_return: Auto-return
+      ctf_slow: Carrying slows you
     values:
       "on": "On"
       "off": "Off"
@@ -137,6 +146,8 @@ xeleenet:
       stage_pick: Everyone picks
       placement: 15 s
       format: Endless
+      seconds: "{n} s"
+      locked: MODE                   # a row the mode decides
     items:
       "off": "Off"
       very_low: Very low
@@ -153,6 +164,7 @@ xeleenet:
       competitive: Competitive ({n})
       all: All ({n})
       custom: Custom ({n})
+      ctf: CTF maps ({n})
     lobby_name: "{name}'s lobby"     # when none was typed; also the CSS banner
     type: TYPE                       # the Name row's tag
     soon: SOON                       # a row that doesn't work yet
@@ -162,6 +174,13 @@ xeleenet:
     # In the hint box, for the row under the cursor (Melee-drawn).
     hints:
       preset: 1v1, Doubles or Free-for-all set every rule at once.
+      mode: "The game the lobby plays. Capture the Flag: two teams, Hyrule Temple."
+      ctf_caps: How many captures win the match. The first team to get there wins at once.
+      ctf_home: "On: your own flag must be on its stand for a capture to count."
+      ctf_return: A dropped flag nobody picks up goes home after this long.
+      ctf_slow: Whoever carries a flag walks and runs a little slower.
+      teams_locked: Capture the Flag is always red against blue.
+      stage_list_ctf: Capture the Flag plays on its maps. Hyrule Temple is the first.
       name: The lobby's name in Join's list.
       visibility: Public lobbies are listed in Join. Private ones open only with their code.
       seats: How many players the lobby takes, you included.
@@ -294,6 +313,10 @@ xeleenet:
     show_full:
       "on": "SHOW FULL: ON"
       "off": "SHOW FULL: OFF"
+    mode_filter:                       # Z cycles them
+      all: "MODE: ALL"
+      vs: "MODE: VS"
+      ctf: "MODE: CTF"
     looking: Looking for lobbies...
     count:
       one: "{n} lobby"
@@ -307,9 +330,11 @@ xeleenet:
       1v1: 1V1
       doubles: DOUBLES
       ffa: FFA
+      ctf: CTF
     in_game: IN GAME
     xr: XR
     stocks: "{n} stocks"
+    ctf_caps: "First to {n} caps"
     time: Time
     first_to: First to {n}
     endless: Endless
@@ -398,6 +423,8 @@ xeleenet:
     fighters_high: High tiers        # a lobby's fighter list, when it isn't All
     fighters_low: Low tiers
     fighters_custom: Custom fighters
+    ctf: Capture the Flag
+    ctf_caps: First to {n}
 
   # Joining failed (J3): why, and what to do.
   failed:
@@ -455,6 +482,7 @@ xeleenet:
     join_address: Join by address    # LAN's list
     refresh: Refresh
     show_full: Show full
+    mode_filter: Mode
     hide_full: Hide full
     type: Type
     delete: Delete

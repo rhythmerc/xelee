@@ -784,11 +784,13 @@ FIGHTERS_HIGH = sum(1 << b for b in (0x02, 0x09, 0x0F, 0x14, 0x12, 0x13, 0x00, 0
 FIGHTERS_LOW = FIGHTERS_ALL & ~FIGHTERS_HIGH
 
 
-def set_rules(ident, seats, teams=False, fighters=FIGHTERS_ALL, stages=COMPETITIVE):
+def set_rules(ident, seats, teams=False, fighters=FIGHTERS_ALL, stages=COMPETITIVE, ctf=False):
     with open(os.path.join(ident, "xeleenet-lobby.txt"), "w") as f:
         f.write(f"preset=3\nname=Set test\nopen=1\nseats={seats}\nteams={int(teams)}\nstock=0\nstocks=4\n"
                 f"minutes=1\nitems=-1\nff=0\nhandicap=0\ndamage=10\npause=0\nstages={stages}\n"
                 f"fighters={fighters}\nfrozen=1\nhide=0\n")
+        if ctf:  # --scenario ctf: Capture the Flag (docs/xeleenet-modes-plan.md)
+            f.write("mode=1\nctf_caps=3\nctf_home=1\nctf_return=10\nctf_slow=1\n")
 
 
 # --scenario details: the host's lobby (2 seats, Low tiers, Final Dest. only).
@@ -1504,6 +1506,8 @@ def run(args):
                       fighters=FIGHTERS_LOW if args.scenario == "fighters" else FIGHTERS_ALL)
         if args.scenario == "details" and k == 0:
             set_rules(ident, 2, fighters=FIGHTERS_LOW, stages=FINAL_DEST)
+        if args.scenario == "ctf" and k == 0:
+            set_rules(ident, args.players, ctf=True)
         if args.scenario == "settings-teams" and k == 0:
             # Teams off, 4 seats: the scenario turns Teams on from Lobby Settings.
             with open(os.path.join(ident, "xeleenet-lobby.txt"), "w") as f:
@@ -1551,8 +1555,9 @@ def run(args):
         walk(host, [("X", 7)])
         nap(1.5)
         if (args.players > 2 or args.scenario == "multipad") and \
-                args.scenario not in ("set", "teams", "fighters", "details", "settings-teams"):
+                args.scenario not in ("set", "teams", "fighters", "details", "settings-teams", "ctf"):
             # (their rules file has the seats)
+            nt.press((host,), "Down", 7, 0.4)  # from the Mode bar to the Preset bar
             nt.press((host,), "Right", 7, 0.6)  # Preset: 1v1 (2 seats) -> Doubles (4)
         shot(host, shots, "3-host-page")
         nt.press((host,), "Return", 9, 1.0)  # START: open the lobby
@@ -1724,6 +1729,17 @@ def run(args):
         if lan and not all("xeleenet: network LAN" in t for t in texts):
             print("FAIL: an instance never switched to LAN")
             ok = False
+        if args.scenario == "ctf":
+            # Every player's match is Capture the Flag on Temple from the
+            # lobby's RULES, its HUD up, and its sides as set (game 1).
+            for i, t in zip(insts, texts):
+                want = (r"game_mode=1/3/1/10/1", r"online: Capture the Flag, game 1 of the session",
+                        r"ctf: match on stage 14, first to 3, home required 1, return 600 frames, swap 0",
+                        r"ctf-hud: timer 1")
+                missing = [w for w in want if not nt.re.search(w, t)]
+                if missing:
+                    print(f"FAIL: [{i.name}] no {missing}")
+                    ok = False
         if any("net: quick chat on" in t for t in texts):
             print("FAIL: quick chat came on in a XeleeNet lobby")
             ok = False
@@ -1749,7 +1765,7 @@ def main():
                              "sss-same", "css-b-hold", "leave-host-alone", "set", "teams", "multipad",
                              "multipad-full", "fighters", "details", "settings-engine", "settings-hold",
                              "settings-open", "settings", "settings-cancel", "settings-seats", "settings-teams",
-                             "settings-alone", "settings-race", "settings-list"),
+                             "settings-alone", "settings-race", "settings-list", "ctf"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
@@ -1759,6 +1775,7 @@ def main():
                          "sss-same: everyone picks Battlefield, no draw; "
                          "css-b-hold: B held over the grid leaves the token and the pick alone; "
                          "leave-host-alone: the host alone holds B and leaves its lobby; "
+                         "ctf: the host's lobby plays Capture the Flag; every player's match is CTF on Temple; "
                          "set: 1-minute matches, the results, back to the CSS and a rematch; "
                          "teams: Teams with a seat per player (doors moved unless 4), the host turns "
                          "its team on its door's button; "

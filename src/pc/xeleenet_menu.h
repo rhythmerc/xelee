@@ -33,6 +33,7 @@ enum {
 #define PC_XN_IN_START 100
 #define PC_XN_IN_X 101
 #define PC_XN_IN_Y 102
+#define PC_XN_IN_Z 103 /* the lobby list's mode filter */
 
 /* What a visit ended with, once (pc_xn_menu_result). */
 enum {
@@ -68,6 +69,11 @@ typedef struct PcXnRules {
     unsigned stage_mask; /* GamePrefs.stage_mask: bit = Random Stage Switch id */
     unsigned fighter_mask; /* the fighter list: bit = CharacterKind (xeleenet_fighters.h) */
     bool frozen_stadium;
+    int game_mode;      /* 0 VS, 1 Capture the Flag (docs/xeleenet-modes-plan.md) */
+    int ctf_caps;       /* CTF: captures to win, 1-9 */
+    bool ctf_home;      /* CTF: your flag must be home to score */
+    int ctf_return;     /* CTF: a free flag's return, seconds; 0 never */
+    bool ctf_slow;      /* CTF: carriers slowed */
 } PcXnRules;
 void pc_xn_menu_rules(PcXnRules* out);
 

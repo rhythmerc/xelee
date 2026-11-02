@@ -26,6 +26,7 @@
 #include <melee/mn/mnnamenew.h>
 #include <melee/mn/mnslippi.h>
 #include <melee/mn/mnxeleenet.h>
+#include <melee/gm/gmctf.h>
 #include <melee/lb/lbdvd.h>
 #include <melee/lb/types.h>
 #include <melee/mn/inlines.h>
@@ -366,6 +367,40 @@ static void rankedRules(StartMeleeData* start, UNUSED StartMeleeData* previous)
     start->rules.stkind = pc_rank_session_stage();
 }
 
+/* XeleeNet's game mode (docs/xeleenet-modes-plan.md): Capture the Flag
+ * from the RULES in force, the same on every peer. Teams and time come from
+ * the rules already; the sides swap every game of a session (each player
+ * set's session counts its own games, from the seed every peer shares). */
+static u32 xn_mode_seed;
+static int xn_mode_games;
+
+static void xnModeRules(StartMeleeData* start)
+{
+    PcNetMode m;
+    GmCtfRules ctf;
+    if (!gmOnline_XnFlow() || !pc_net_active()) {
+        return;
+    }
+    pc_net_rules_mode(&m);
+    if (m.mode != PC_NET_MODE_CTF) {
+        return;
+    }
+    if (xn_mode_seed != pc_net_seed()) {
+        xn_mode_seed = pc_net_seed();
+        xn_mode_games = 0;
+    }
+    ctf.captures_to_win = m.caps;
+    ctf.home_required = m.home;
+    ctf.carry_slow = m.slow;
+    ctf.swap_sides = (u8) (xn_mode_games & 1);
+    ctf.return_frames = (u16) (m.return_s * 60);
+    xn_mode_games++;
+    start->rules.is_teams = true;
+    gmCtf_SetRules(&ctf);
+    pc_log_line("online: Capture the Flag, game %d of the session (sides %s)", xn_mode_games,
+                ctf.swap_sides ? "swapped" : "as set");
+}
+
 /* Pausing is local to a peer and the other never sees it, so it is off in
  * every Slippi match (Slippi itself allows it in Direct only: that needs the
  * pause synced, which is not built). */
@@ -380,6 +415,7 @@ static void slippiOrRankedRules(StartMeleeData* start, StartMeleeData* previous)
         start->rules.disable_pausing = true;
     }
     rankedRules(start, previous);
+    xnModeRules(start);
 }
 
 static void rankedPlayer(PlayerInitData* start, PlayerInitData* previous)
@@ -1662,6 +1698,16 @@ static void xnApplyRules(bool now)
     pc_net_set_fighters(r.fighter_mask);
     pc_net_set_teams(r.teams);
     pc_net_set_frozen_stadium(r.frozen_stadium ? 1 : 0);
+    {
+        PcNetMode m;
+        memset(&m, 0, sizeof m);
+        m.mode = (u8) (r.game_mode == 1 ? PC_NET_MODE_CTF : PC_NET_MODE_VS);
+        m.caps = (u8) r.ctf_caps;
+        m.home = r.ctf_home;
+        m.return_s = (u8) r.ctf_return;
+        m.slow = r.ctf_slow;
+        pc_net_set_mode(&m);
+    }
     if (now) {
         pc_net_rules_take_wanted();
     }
@@ -1694,6 +1740,15 @@ static void xnRulesInForce(PcXnRules* r)
     r->fighter_mask = pc_net_fighters();
     pc_net_rules(&unlock, &frozen);
     r->frozen_stadium = frozen;
+    {
+        PcNetMode m;
+        pc_net_rules_mode(&m);
+        r->game_mode = m.mode == PC_NET_MODE_CTF ? 1 : 0;
+        r->ctf_caps = m.caps;
+        r->ctf_home = m.home != 0;
+        r->ctf_return = m.return_s;
+        r->ctf_slow = m.slow != 0;
+    }
 }
 
 /* The handshake of the session now running, once per session (each roster

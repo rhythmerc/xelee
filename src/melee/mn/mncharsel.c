@@ -2648,6 +2648,19 @@ static inline void updateGrabbedSlider(struct CSSCursorData* cursor,
     }
 }
 
+#ifdef TARGET_PC
+/* Capture the Flag is red against blue: its lobbies' doors cycle the two. */
+static int cssTeamCount(void)
+{
+    PcNetMode m;
+    if (!gmOnline_XnFlow()) {
+        return 3;
+    }
+    pc_net_rules_mode(&m);
+    return m.mode == PC_NET_MODE_CTF ? 2 : 3;
+}
+#endif
+
 /// Advances the door's team colour when the cursor clicks its team box.
 static inline void cycleTeam(struct CSSCursorData* cursor, CSSDoor* dp, s32 di)
 {
@@ -2656,7 +2669,11 @@ static inline void cycleTeam(struct CSSCursorData* cursor, CSSDoor* dp, s32 di)
         f32 cy5 = cursor->x10;
         if (cy5 < -0.9999999046325683 && cy5 > -5.800000095367432) {
             cursor->x10 = -3.4f;
+#ifdef TARGET_PC
+            dp->team = (u8) ((dp->team + 1) % cssTeamCount());
+#else
             dp->team = (u8) ((dp->team + 1) % 3);
+#endif
             mnCharSel_804D6CB0->vs.start.players[di].team = dp->team;
             mnCharSel_8025DB34((u8) di);
             sfxMove();

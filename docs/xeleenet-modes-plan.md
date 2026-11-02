@@ -472,6 +472,36 @@ The approved design (§6e) is in the game.
 - **Tests:** `tools/ctf_test.py` 15/15, and the CPU net test passes (5
   captures, no desync).
 
+## 6g. M4 results (2026-11-02)
+
+CTF is a XeleeNet (and LAN) lobby mode.
+- **Host page:** a Mode bar beside the Preset bar (VS / Capture the Flag).
+  The CTF page shows captures to win (1-9, default 3), flag must be home,
+  return time (never, 5-60 s, default 10), carrying slows, plus the usual
+  seats, minutes, and fighters. Up/Down walks Mode, then Preset, then the
+  rows; Left/Right on a bar changes it. The stage list is locked to Temple ("Temple only in Capture
+  the Flag").
+- **Forced by the mode:** teams on, a timed match, and the Temple stage
+  mask. Forced everywhere: the menu (`pc_xn_menu_rules`), the RULES the
+  host sends, and the service (`checks.go` refuses a CTF lobby without
+  them). The CSS allows only two teams in a CTF lobby (`cssTeamCount`).
+- **Wire:** `PcNetMode {mode, caps, home, return_s, slow}` rides at the end
+  of RULES (+5 bytes, Rules is 33). `PC_NET_PROTO_VERSION` is 14, so a
+  13 peer can't join a 14 lobby.
+- **Match start** (`xnModeRules` in `gmonlinemode.c`): the RULES in force
+  set `gmCtf_SetRules`. The sides swap every other game of a session. The
+  count restarts when the session seed changes, so every peer agrees.
+- **Lobby list:** a red "CTF" tag and "First to N caps" on CTF rows. Z
+  filters the list by mode (all / VS / CTF).
+- **Service:** `game_mode` and `ctf_caps` in the listing JSON.
+  `test_service.py` covers both: a CTF lobby without teams, time, or the
+  Temple mask is refused.
+- **Tests:** `net_test_xn_menu.py --scenario ctf` (a 3-player lobby through
+  the real menus and the local service: every player's match is CTF on
+  Temple from the host's rules) passes (no desync; a
+  scoreless 1-minute match ends No Contest). The default scenario still
+  passes; its Preset press now steps Down from the Mode bar first. `tools/ctf_test.py` is 15/15.
+
 ## 7. Open questions
 
 All seven from the first draft were answered 2026-11-01 (decisions 10-17).
