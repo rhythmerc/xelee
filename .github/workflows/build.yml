@@ -305,6 +305,55 @@ jobs:
           path: dist/Xelee-Windows-x86_64.zip
           if-no-files-found: error
 
+  macos:
+    # Run by hand only (playtest builds): not part of a push or a release yet.
+    if: github.event_name == 'workflow_dispatch'
+    name: macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-26
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    # macos-15-intel is on GitHub's deprecation path: Intel never fails the run.
+    continue-on-error: ${{ matrix.arch == 'x86_64' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          # The tags and the history: an untagged build's version is the newest
+          # tag and the commits since (cmake/AppVersion.cmake).
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          xcodebuild -version
+          # Apple clang builds the C++; the decomp's C needs GCC for
+          # scalar_storage_order, so tools/gcc_launcher.py routes melee_game
+          # through Homebrew's gcc. package_macos.sh bundles the dylibs.
+          brew install gcc cmake ninja zstd libpng freetype
+
+      - name: Build and package
+        env:
+          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
+          MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
+          XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
+          XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
+        run: |
+          # Info.plist wants a version; an untagged build uses git describe's.
+          MELEE_VERSION="${MELEE_VERSION:-$(git describe --tags)}" tools/package_macos.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xelee-macos-${{ matrix.arch }}
+          path: dist/Xelee-macOS-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
   release:
     name: Publish release
     needs: [quest, linux, android, windows]
