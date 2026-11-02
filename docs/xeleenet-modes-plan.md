@@ -1,0 +1,263 @@
+# Game modes, starting with Capture the Flag (plan)
+
+Status: draft, 2026-11-01. Nothing is built. This is for review before the
+wireframes and the build.
+
+A **game mode** changes how a match is played and won. Modes are offered in
+XeleeNet lobbies, LAN lobbies and offline VS. A mode can narrow the lobby's
+settings: which stages, whether teams are on, and what wins. The first mode is
+**Capture the Flag (CTF)**, on Hyrule Temple only until custom maps exist
+(`docs/custom-content-report.md`).
+
+Related: `docs/xeleenet-plan.md`, `docs/xeleenet-ready-plan.md`,
+`docs/adding-menu-pages.md`.
+
+## 1. Decisions
+
+User decisions, 2026-11-01:
+
+1. **The flag is a real item,** picked up like any other. Touching it does
+   nothing for either team.
+2. **No attacks while holding it.** Throwing is the only attack, and a throw
+   can hand the flag to the enemy.
+3. **Bases on Temple:** bottom-left and top-right corners.
+4. **You respawn at your base.** The respawn delay is the only cost of a KO;
+   KOs don't score.
+5. **A capture** is the enemy flag reaching your base, held or thrown. A
+   thrown flag that lands in your base counts.
+6. **Your own dropped flag:** when your team picks it up, it goes home at once.
+7. **Your own flag at your base stays put.** Your team can't lift it; only the
+   enemy can.
+8. **"Your flag must be home to score"** is a setting.
+9. **Offline too,** not only XeleeNet and LAN. Its setup needs a wireframe.
+10. **Specials are blocked while carrying.**
+11. **Getting hit:** Melee's chance roll, biased higher than for a stock light
+    item.
+12. **Teams swap bases each game of a set.**
+13. **Auto-return:** a free flag nobody picks up for 10 s goes home. It blinks
+    for the last 3 s as a warning.
+14. **Win, for now:** first to 3 captures, 8 min limit. A tie at time is **No
+    Contest**, with no sudden death. To be tuned by playtesting.
+15. **Carrying slows you,** on by default.
+16. **Other items off** by default in CTF.
+17. **The stage select is never skipped.** Stages the mode can't use are
+    dimmed and disabled with the existing off-list logic, which leaves room for
+    more CTF maps later.
+18. **A capture is a sound only,** with no on-screen banner. The score strip
+    ticks up.
+19. **The wireframe** (`game-modes-ctf-wireframe.html` on the share) was
+    approved with every recommended choice: a Game Modes row in VS Mode, a
+    rules page before the CSS, a Mode bar above the VS presets, a Z mode filter
+    on the lobby list, red/blue only, a top-centre score strip, an outline on an
+    empty stand, and a sides card at the start of every game.
+
+## 2. The mode framework
+
+### 2.1 What a mode declares
+
+A mode is a static table entry in the sim (`src/melee/gm/gmmode.c`, new):
+
+| Field | CTF |
+|---|---|
+| id, name key | `ctf`, `mode.ctf` (lang YAML) |
+| Required stage capability | a CTF layout (§3.2) |
+| Teams | forced on, exactly 2 teams (red, blue) |
+| Seats | 2-4, any split (1v1, 2v1, 2v2) |
+| Win | captures, plus a time limit |
+| Stocks | none: endless respawns (Melee's time mode underneath) |
+| Its own settings | §3.6 |
+| Hooks | match start, per-tick update, item pickup gate, respawn position, match end |
+
+**Stages are a capability, not a list.** A stage is legal for a mode when it
+provides that mode's layout data. Today only Temple has a CTF layout, so CTF is
+Temple-only. A custom map that ships a CTF layout later becomes legal with no
+change to the mode.
+
+**The stage select always runs** (decision 17), even with one legal stage.
+The mode's legal set is ANDed with the lobby's stage list. Everything outside
+it uses the existing off-list path: dimmed, can't be picked, never drawn by
+Random (`sss_off_list`, `mnstagesel.c:218`). Today that path is gated on
+`gmOnline_XnFlow()`. It becomes "XeleeNet, or a mode is in force", so offline
+CTF dims the same way. The picks card, timer and host FINAL are unchanged; with
+Temple the only legal stage, every pick lands on Temple. When the mode is on,
+the host's stage list row shows the mode's legal stages only.
+
+### 2.2 How the mode travels
+
+| Layer | Change |
+|---|---|
+| Host settings | `HostSettings` gains `game_mode` (`xeleenet_menu.cpp:213`). Mode is the first row, above the preset bar. Picking CTF locks Teams on, hides Stocks, limits the stage list to the mode's legal stages (Temple today), and shows CTF's rows. `plays_same()`, `from_rules()`, `rule_changes()` and `xeleenet-lobby.txt` learn the field. |
+| Game rules | `PcXnRules` gains the mode and its settings (`xeleenet_menu.h:57`). `xnApplyRules` (`gmonlinemode.c:1648`) sets the mode on the match. The match start goes through a `start_cb` like `rankedRules` (`gmonlinemode.c:351`). |
+| Wire | The RULES `Rules` payload gains the mode byte plus the CTF settings, before `unlock_hash`, so `rules_content_hash` covers them (`net_internal.h:265`). This bumps `PC_NET_PROTO_VERSION`. |
+| Service | `"mode"` already means teams/ffa, so the new key is **`game_mode`**: `vs` or `ctf`, checked by `pick()` (`checks.go:289`). It goes before the masks, which LAN truncates (`xeleenet_lan.c:325`). The listing carries it, and the browser shows a mode tag and can filter by mode. |
+| Version gate | Nothing new needed: `Compat` is an exact match on build (`checks.go:150`), so older clients never see a CTF lobby. |
+
+### 2.3 Offline
+
+VS Mode gets a 6th row, **Game Modes**. It goes to a mode picker (CTF only at
+first), then a CTF rules page, then the CSS with teams forced, then the stage select (Temple only lit). It
+is a new `GM_*` mode modelled on `gmgiant.c`, reusing `gmVsMelee_*` with a
+`start_cb`. The stage select runs with the mode's off-list dimming (§2.1). It is not a Special Melee entry, because
+Special Melee already uses all 10 row joints (to be confirmed). The screens
+need a wireframe (§6, M5).
+
+## 3. CTF
+
+### 3.1 The flag item
+
+- **Template: the Poké Ball** (`it/kinds/itmball.c`), a light throwable
+  (`x0_78 == 0`) with simple states: ground idle, fall, held, thrown, air.
+  Drop its opening states (5/6), and make landing return to ground idle. Bob-omb
+  and Mr. Saturn carry far more logic.
+- **Heavy items don't fit.** A heavy item blocks jumping, and going from the
+  bottom-left to the top-right on Temple needs jumps.
+- **New kind, with no ItCo.dat article.** It gets a slot appended to the logic
+  and render tables (`it_803F14C4`, `it_803F1418`). It reuses the Poké Ball
+  article for attributes and hurtbox. Drawing is our own: a pole and a cloth in
+  the team colour, drawn by a PC-side draw callback.
+- **Actions while holding** (`ftCo_Wait.c:44-66`):
+  - A, smash, Z, C-stick and air A throw it (LightThrow*,
+    `ftCo_ItemThrow.c`). That's Melee's behaviour already.
+  - Jump, shield and dodges stay. Throwing out of an air dodge stays possible
+    (`ftCo_EscapeAir.c:84`).
+  - **Specials are blocked** (decision 10). Melee doesn't block them for
+    light items, so we gate the four ground special checks and
+    `ftCo_SpecialAir_CheckInput` on `itGetKind(fp->item_gobj) == flag`. A
+    carrier knocked off stage has no up-B: throw the flag back on stage, or
+    lose it to the blast zone (it goes home).
+- **Getting hit** (decision 11): Melee drops a light item when
+  `HSD_Randi(x418) < this hit's damage` (`Fighter_8006CDA4`, `fighter.c:2749`;
+  the damage is `dmg.x1838_percentTemp`; x418 is from PlCo.dat, value not yet
+  read). For the flag, the hit's damage is multiplied by a bias before the roll
+  (start at ×3, tuned by play), and nothing else changes. The roll draws from
+  the seeded HSD RNG, so it is deterministic.
+- **Traps to avoid** (from the survey):
+  - The pickup despawn timer (`it_2725.c:960`). The flag sets `xDD0_flag.b3`.
+  - The random destroy after N throws (`it_8026DDFC`, `itgroundcoll.c:320`).
+    The flag lands through `it_8026E414`, which skips that check.
+- **Items: Off.** ItCo.dat loads in VS regardless (`gmvs.c:2371`), so the mode
+  spawns its flags with random items off. Not yet tested at runtime. Whether
+  other items spawn in CTF is a CTF setting (§3.6).
+
+### 3.2 The layout (per stage)
+
+The CTF layout for a stage is data in a table keyed by stage id. Later, custom
+maps provide it as a file. For each team:
+
+- **Flag stand:** a position. The flag spawns there and returns there.
+- **Base zone:** an axis-aligned box. A capture is the enemy flag's position
+  inside this box.
+- **Respawn points:** up to 2. Override per port after `fn_8016719C`
+  (`gm_1601.c:3489`) with `Player_80032FA4(slot, -1)` and
+  `Player_SetSpawnPlatformPos`.
+
+The Temple numbers come from a survey (M0 below): run Temple with the debug
+camera and log positions at the two corners. Temple isn't symmetric, which is
+why the proposal is to swap bases each game (§7 Q3).
+
+### 3.3 Rules, tick by tick
+
+All of this runs in the sim, once per tick, after fighters and items.
+
+- **Pickup gate:** a team can't pick up its own flag while it's on its stand.
+  This hooks the item pickup check; where Melee decides pickup eligibility is
+  still to be found.
+- **Return:** your team picks up its own flag anywhere else, and it teleports
+  to its stand (in `picked_up`, before the fighter really holds it).
+- **Capture:** the enemy flag's position is inside your base zone, either held
+  by your teammate or as a free item (thrown, dropped, or landed). If "Flag
+  must be home" is on, your own flag must also be on its stand. On a capture,
+  the team scores, the flag returns to its stand, and a sound plays (no banner: decision 18).
+- **Blast zone / off stage:** if the flag goes past the blast zone or falls
+  below the stage, it returns to its stand.
+- **Auto-return:** a free flag that stays free for 10 s returns to its stand.
+  The timer resets when someone picks it up. For the last 3 s the flag blinks;
+  the draw reads the timer, and the sim is unaffected.
+- **Win:** first to N captures ends the match at once. When time runs out,
+  most captures wins; a tie is **No Contest** (no winner; in a set it doesn't
+  count for either side).
+- **Bases swap each game of a set:** the team that had bottom-left gets
+  top-right next game.
+
+### 3.4 State, rollback and desync checks
+
+- **CTF state lives in statics under `src/melee`** (`gmctf.c`): flag item
+  handles, stand/free/held state, captures, timers. Those statics are in
+  `libmelee_game.a`'s `.data`/`.bss`, which the rollback snapshot saves
+  (`net_snapshot.c:694`). Nothing in `src/pc/*`.
+- **The per-frame checksum** (`frame_checksum`, `net_snapshot.c:308`) covers
+  fighters only. Fold in the captures and each flag's state and holder, so a CTF
+  split shows the frame it happens. This is part of the same protocol bump as
+  §2.2.
+- **The draw callback and HUD only read state;** they never write it.
+
+### 3.5 HUD and results
+
+- **The HUD is an overlay outside the sim,** like the XeleeNet overlays. It
+  shows captures per team and each flag's state (home, carried, free, with the
+  return countdown). In 3D it sits on the stage frame; flat, it's a top strip.
+- **The results screen:** Melee's time-mode results rank by KOs. CTF sets the
+  winning team from captures; the captures column is still to be designed. In
+  a set, the score is games won.
+- **The camera:** on a flat screen, Temple from corner to corner zooms far
+  out. In 3D, the tabletop view of the whole map suits it. Flat camera tweaks
+  wait for real play.
+
+### 3.6 CTF settings
+
+| Setting | Default | Range |
+|---|---|---|
+| Captures to win | 3 | 1-9 |
+| Time limit | 8 min | 3-15, or none |
+| Flag must be home to score | on | on / off |
+| Auto-return | 10 s (blinks the last 3 s) | 5-30, or off |
+| Respawn delay | Melee's default | proposal: a setting later, if play says so |
+| Carrying slows you | on | off / on (walk and run speed ×0.8 to start, tuned by play) |
+| Other items | off | off, or the lobby's item settings |
+
+## 4. Tests
+
+- **Frame-script scenarios** with `MELEE_DEBUG_VS_STAGE=14`, unpaced
+  (`docs/fast-tests-plan.md`): pick up the enemy flag, carry it home, capture;
+  throw it into base, capture; get hit, drop; teammate picks up own flag,
+  returns; own flag on stand, can't pick up; off stage, returns; auto-return;
+  first to N ends the match.
+- **Determinism:** `MELEE_NET_SYNCTEST` over a scripted CTF match, then
+  `tools/net_test_n.py --players 4` with a CTF preset at 50 ms / 2%.
+- **Service:** `test_service.py` checks for `game_mode` (valid, invalid,
+  listed, filtered).
+
+## 5. Risks
+
+- **Adding an item kind past ItCo.dat's articles.** Loops are bounded by
+  `It_Kind_L_Gun_Ray` or by 238 (`itspawn.c:56`, :212, :255). This is the first
+  spike.
+- **Melee's results and stats** assume KOs or stocks. CTF match end may hit
+  paths that look up stock winners.
+- **No up-B while carrying** may make Temple's edges too punishing. Watch it
+  in playtests; the fix would be letting up-B through only.
+- **Temple's camera on flat screens** may be unplayable at corner-to-corner
+  distances. Play first, then decide.
+- **Snapshot coverage:** a mode static in a translation unit excluded by
+  `melee_state.ld` would silently not roll back. Check `gmctf.c`'s placement.
+
+## 6. Milestones
+
+| | What | Done when |
+|---|---|---|
+| M0 | Spikes: a new item kind spawns, is held, thrown and lands (Poké Ball clone); the Temple survey (corner positions, captures shared) | the clone flies on Temple; base numbers proposed |
+| M1 | The flag item: states, no despawn, no random destroy, specials gate, drop rule, team-colour draw | frame-script pickup/throw/drop pass |
+| M2 | CTF rules in the sim: stands, pickup gate, return, capture (held and thrown), blast zone, auto-return, win, respawn at base, checksum | §4 scenarios and synctest pass |
+| M3 | HUD and results | screenshots flat and in 3D |
+| M4 | The mode in XeleeNet and LAN: host row, wire, service `game_mode`, browser tag, SSS off-list dims by mode | 4P CTF net test; service checks |
+| M5 | Offline: Game Modes row, mode picker, CTF rules page (wireframe first) | wireframe approved, then a played match |
+| M6 | Headset and real play, then tuning (camera, defaults) | a played set across the network |
+
+M5's wireframe can be done in parallel with M0-M2. M4 also needs the
+XeleeNet mode row in the wireframe.
+
+## 7. Open questions
+
+All seven from the first draft were answered 2026-11-01 (decisions 10-17).
+Left for playtesting: the drop bias, the carry slowdown, the win defaults,
+and the flat camera.
