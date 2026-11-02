@@ -349,8 +349,8 @@ static void fillDebugVs(GameModeState* state, UNUSED bool dummy)
         for (i = 0; i < Gm_Player_NumMax; i++) {
             start->players[i].team = (u8) (i & 1);
         }
-        if (!start->rules.timer_enabled) {
-            start->rules.timer_enabled = 1;
+        if (!start->rules.timer_enabled && getenv("MELEE_DEBUG_CTF_NOTIME") == NULL) {
+            start->rules.timer_enabled = 1; /* MELEE_DEBUG_CTF_NOTIME: no time limit */
             start->rules.time_limit = 8 * 60;
         }
         gmCtf_SetRules(&ctf);
