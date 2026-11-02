@@ -40,6 +40,8 @@
 #include <melee/mn/types.h>
 #include <melee/if/ifctf.h>
 #include <melee/cm/camera.h>
+#include <melee/cm/forward.h>
+#include <melee/cm/types.h>
 #include <melee/mp/mplib.h>
 #include <melee/mp/types.h>
 #include <melee/pl/player.h>
@@ -98,6 +100,7 @@ static struct {
     bool carry[4][2];  /* attributes last built carrying a flag (slowdown) */
     int frame;
     HSD_GObj* stray;   /* MELEE_DEBUG_CTF_FLAG's flag */
+    CmSubject* cam[2]; /* READY: the camera frames both bases too */
     bool stray_spawned;
 } ctf;
 
@@ -467,9 +470,42 @@ static void ctf_draw_stands(HSD_GObj* gobj, intptr_t pass)
     }
 }
 
+/* Through READY the camera frames both bases as well as the players, so
+ * everyone sees where each team defends; at GO the subjects go and the
+ * camera eases back onto the players. */
+#define CTF_READY_FRAMES 150
+
+static void ctf_ready_camera(void)
+{
+    int team;
+    for (team = 0; team < 2; team++) {
+        if (ctf.frame == 1) {
+            const CtfBase* base = ctf_base(team);
+            CmSubject* s = Camera_80029044(CmSubjectState_Active);
+            if (s != NULL) {
+                s->pos.x = base->stand.x;
+                s->pos.y = base->stand.y;
+                s->pos.z = 0.0f;
+                s->target_ext.h.x = s->target_ext.h.y = 12.0f;
+                s->target_ext.v.x = 26.0f; /* the flag above the stand */
+                s->target_ext.v.y = 4.0f;
+                s->target_ext.v.z = 0.0f;
+                s->ext = s->target_ext;
+            }
+            ctf.cam[team] = s;
+        } else if (ctf.frame == CTF_READY_FRAMES && ctf.cam[team] != NULL) {
+            Camera_800290D4(ctf.cam[team]);
+            ctf.cam[team] = NULL;
+        }
+    }
+}
+
 static void ctf_tick(HSD_GObj* gobj)
 {
     ctf.frame++;
+    if (gmCtf_Active()) {
+        ctf_ready_camera();
+    }
     if (ctf.frame == 1 && gmCtf_Active() && getenv("MELEE_DEBUG_CTF_NOHUD") == NULL) {
         ifCtf_Create(); /* MELEE_DEBUG_CTF_NOHUD: clean frames for HUD mockups */
     }
