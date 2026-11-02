@@ -62,20 +62,21 @@ for name, col, (l, r, b, t), stand, spawns in BASES:
         px, py = P(x, y)
         d.ellipse([px - 6, py - 6, px + 6, py + 6], outline=col, width=3)
     d.text((P(l, t)[0], P(l, t)[1] - 20), name, fill=col, font=fb)
-for i, (x, y) in pts.items():
-    px, py = P(x, y)
-    d.line([px - 6, py, px + 6, py], fill="#fff"); d.line([px, py - 6, px, py + 6], fill="#fff")
-    if i < 4:
-        d.text((px + 6, py - 16), f"P{i+1} start", fill="#d0d0d0", font=f)
-x, y = pts.get(4, (0, 0))
-d.text((P(x, y)[0] + 8, P(x, y)[1] + 2), "Melee respawn (all ports)", fill="#d0d0d0", font=f)
+# The stage's own VS start and respawn points (pts) are not drawn: CTF
+# starts and respawns every player at their team's base (--melee-points shows them).
+if "--melee-points" in sys.argv:
+    for i, (x, y) in pts.items():
+        px, py = P(x, y)
+        d.line([px - 6, py, px + 6, py], fill="#666"); d.line([px, py - 6, px, py + 6], fill="#666")
+        d.text((px + 6, py - 16), f"VS {'start P%d' % (i + 1) if i < 4 else 'respawn'} (unused in CTF)",
+               fill="#666", font=f)
 leg = [("floor", "#7ed957"), ("ceiling", "#f0a040"), ("wall", "#8fa3c0"), ("flag stand", "#e9e3cf"),
-       ("○ base respawn", "#e9e3cf")]
+       ("start + respawn (circles)", "#e9e3cf")]
 x = 14
 for name, col in leg:
     d.rectangle([x, H + 22, x + 22, H + 34], fill=col)
     d.text((x + 28, H + 20), name, fill="#d0d0d0", font=f)
-    x += 150
+    x += 165
 d.text((14, H + 44), "Hyrule Temple collision, from the game (units). Boxes are proposed base zones.", fill="#9aa1ad", font=f)
 im.save(sys.argv[2])
 print(sys.argv[2], im.size)

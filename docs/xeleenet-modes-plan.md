@@ -45,7 +45,9 @@ User decisions, 2026-11-01:
     more CTF maps later.
 18. **A capture is a sound only,** with no on-screen banner. The score strip
     ticks up.
-19. **The wireframe** (`game-modes-ctf-wireframe.html` on the share) was
+20. **Players start the match at their base** too, not only respawn there.
+    Melee's own start points for the stage are not used in CTF.
+21. **The wireframe** (`game-modes-ctf-wireframe.html` on the share) was
     approved with every recommended choice: a Game Modes row in VS Mode, a
     rules page before the CSS, a Mode bar above the VS presets, a Z mode filter
     on the lobby list, red/blue only, a top-centre score strip, an outline on an
@@ -147,9 +149,13 @@ maps provide it as a file. For each team:
 - **Flag stand:** a position. The flag spawns there and returns there.
 - **Base zone:** an axis-aligned box. A capture is the enemy flag's position
   inside this box.
-- **Respawn points:** up to 2. Override per port after `fn_8016719C`
-  (`gm_1601.c:3489`) with `Player_80032FA4(slot, -1)` and
-  `Player_SetSpawnPlatformPos`.
+- **Spawn points:** up to 2. Players start the match there, and respawn
+  there (decision 20). A team's players take them in port order.
+  - **Respawn:** override per port after `fn_8016719C` (`gm_1601.c:3489`)
+    with `Player_80032FA4(slot, -1)` and `Player_SetSpawnPlatformPos`.
+  - **Match start:** each player's start position comes from the stage's
+    points 0-3 (`Stage_80224E64`). CTF puts its own positions there instead
+    (M2).
 
 **Temple (proposed, from the M0 survey, 2026-11-01).**
 `MELEE_DEBUG_CTF_SURVEY=1` dumps the stage's collision lines, bounds and
@@ -161,7 +167,7 @@ named points; `tools/ctf_survey_draw.py` draws them to scale
 | Floor it sits on | lines 14-15, y -88.6, x -134.0 to -75.2 (the cave under the left mass; ceiling at y -28) | lines 36-37, y about -5, x 124 to 225.6 (the main floor's right end; the high platform's lower deck is above, at y 47) |
 | Flag stand | (-105, -88.6) | (200, -5.3) |
 | Base zone | x -134 to -75, y -88.6 to -50 (59 wide) | x 170 to 225.6, y -5.3 to 30 (56 wide) |
-| Respawn points | (-125, -70), (-88, -70) | (182, 22), (214, 22) |
+| Spawn points (start and respawn) | (-125, -70), (-88, -70) | (182, 22), (214, 22) |
 
 The user moved blue from the top-right platform (2026-11-01): from there a red
 flag could be thrown into red's base, but nothing could be thrown up into
@@ -171,10 +177,12 @@ inside the cave. Watch that asymmetry in playtests.
 Others from the dump:
 - **Blast zone:** x ±315, y -257.4 to 207.
 - **Camera bounds:** x ±279, y -201.6 to 180.
-- **Melee's respawn point:** (18, 84.6), the same for every port.
+- **Melee's own VS points (unused in CTF):** starts (-92.7, 21.6), (91.8, 4.5),
+  (-27.0, 74.7), (27.0, -10.8); the respawn (18, 84.6), the same for every port.
 
-Respawning inside the cave needs checking in M2, because Melee's rebirth
-drops in from the camera's top.
+Starting and respawning inside the cave need checking in M2. Melee's rebirth
+drops in from the camera's top, and its match entry may assume open space
+above a start point.
 
 ### 3.3 Rules, tick by tick
 
@@ -268,7 +276,7 @@ All of this runs in the sim, once per tick, after fighters and items.
 |---|---|---|
 | M0 | Spikes: a new item kind spawns, is held, thrown and lands (Poké Ball clone); the Temple survey (corner positions, captures shared) | the clone flies on Temple; base numbers proposed |
 | M1 | The flag item: states, no despawn, no random destroy, specials gate, drop rule, team-colour draw | frame-script pickup/throw/drop pass |
-| M2 | CTF rules in the sim: stands, pickup gate, return, capture (held and thrown), blast zone, auto-return, win, respawn at base, checksum | §4 scenarios and synctest pass |
+| M2 | CTF rules in the sim: stands, pickup gate, return, capture (held and thrown), blast zone, auto-return, win, start and respawn at base, checksum | §4 scenarios and synctest pass |
 | M3 | HUD and results | screenshots flat and in 3D |
 | M4 | The mode in XeleeNet and LAN: host row, wire, service `game_mode`, browser tag, SSS off-list dims by mode | 4P CTF net test; service checks |
 | M5 | Offline: Game Modes row, mode picker, CTF rules page (wireframe first) | wireframe approved, then a played match |
