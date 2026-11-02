@@ -49,6 +49,7 @@ typedef struct GmCtfHud {
     u16 return_left[2];  /* frames, while free and counting */
     bool swap;
     int frame;
+    u16 return_frames;   /* the rule's full return time (the ring's 100 %) */
     const char* base[2]; /* where red and blue defend this game ("BOTTOM LEFT") */
 } GmCtfHud;
 bool gmCtf_GetHud(GmCtfHud* out);

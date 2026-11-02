@@ -3,216 +3,362 @@
 #ifdef TARGET_PC
 #include "forward.h"
 #include "ifall.h"
+#include "ifstatus.h"
+#include "ifstock.h"
+#include "types.h"
 
 #include <dolphin/gx.h>
 #include <dolphin/mtx.h>
 #include <dolphin/os.h>
+#include <melee/gm/gm_1601.h>
 #include <melee/gm/gmctf.h>
+#include <melee/gm/gmvs.h>
+#include <melee/lb/lb_00B0.h>
+#include <melee/lb/lb_00F9.h>
+#include <melee/lb/lbspdisplay.h>
+#include <melee/mn/types.h>
+#include <melee/pl/player.h>
+#include <sysdolphin/baselib/aobj.h>
 #include <sysdolphin/baselib/cobj.h>
+#include <sysdolphin/baselib/dobj.h>
 #include <sysdolphin/baselib/gobj.h>
 #include <sysdolphin/baselib/gobjgxlink.h>
+#include <sysdolphin/baselib/gobjobject.h>
 #include <sysdolphin/baselib/gobjplink.h>
 #include <sysdolphin/baselib/gobjproc.h>
+#include <sysdolphin/baselib/jobj.h>
+#include <sysdolphin/baselib/mobj.h>
 #include <sysdolphin/baselib/pobj.h>
-#include <sysdolphin/baselib/sislib.h>
 #include <sysdolphin/baselib/state.h>
 #include <sysdolphin/baselib/tev.h>
+#include <sysdolphin/baselib/tobj.h>
 
-#include <stdio.h>
+#include "pc/ctf_art.h"
+
+#include <stdlib.h>
 #include <string.h>
 
-/* The text recipe is ifnet.c's: a SIS canvas on font 2 parented to the HUD
- * camera. Entry coordinates are HUD units, origin at the screen's centre,
- * y down, 1 unit = 10 px of the 4:3 frame; an entry's glyph cell bottom sits
- * at y + 32. Entries are centred on their x (alignment 1). */
-#define STRIP_BOTTOM (-12.4f)  /* the strip's text baseline: under the timer */
-#define STATE_X 11.0f           /* red's state left of the score, blue's right */
-#define SCORE_X 2.2f
-#define STATE_SCALE 0.05f
-#define SCORE_SCALE 0.09f
-#define CARD_BOTTOM (9.0f)
-#define CARD_SCALE 0.075f
-#define CARD_SIDE_SCALE 0.052f
-#define CARD_FRAMES 120 /* READY: gone before the GO! graphic, which covers it */
+/* The approved design (docs/xeleenet-modes-plan.md §6e, the hi-fi mockup):
+ * each team's score is Melee's own damage digit with a team-coloured flag
+ * emblem behind it, and beside it the flag's state as an icon: on its plate
+ * (home), with the carrier's stock icon (carried), or tipped inside a gold
+ * ring that drains to the return (free; white and faded, blinking, in the
+ * last 3 s). With a timer the teams sit either side of it on its row, red
+ * mirrored left; without one they meet at the top centre.
+ *
+ * Units are the HUD camera's: 1 unit = 10 px of the 480-line frame, y up,
+ * origin at the screen's centre. */
+
+#define DIGIT_SCALE 1.0f
+#define EMBLEM_SIZE 7.0f
+#define ICON_SIZE 4.5f    /* the art square; the flag fills 84 % of it */
+#define STOCK_SCALE 1.2f
+#define TIMER_GAP 5.7f    /* score centre from the timer's edge */
+#define STATE_STEP 6.3f   /* state icon centre from the score centre */
+#define CENTRE_SCORE 3.0f /* no timer: score centre from the middle */
+#define RING_R 2.0f
+#define RING_W 0.55f
 #define BLINK_FRAMES 180
 
-enum {
-    E_SCORE_R,
-    E_SCORE_B,
-    E_STATE_R,
-    E_STATE_B,
-    E_CARD_TITLE,
-    E_CARD_R,
-    E_CARD_B,
-    E_COUNT,
-};
+static const GXColor kEmblem[2] = { { 0xD6, 0x2C, 0x2C, 0xAF }, { 0x30, 0x56, 0xD6, 0xAF } };
+static const GXColor kWhite = { 0xFF, 0xFF, 0xFF, 0xFF };
+static const GXColor kGold = { 0xF0, 0xC2, 0x26, 0xFF };
+static const GXColor kTrack = { 0x28, 0x28, 0x2E, 0xC8 };
+static const GXColor kRim = { 0x0A, 0x0A, 0x0C, 0xFF };
 
-static const GXColor red = { 0xFF, 0x6A, 0x6A, 0xFF };
-static const GXColor blue = { 0x7F, 0xA6, 0xFF, 0xFF };
-static const GXColor cream = { 0xFF, 0xF4, 0xD8, 0xFF };
+typedef struct TeamHud {
+    HSD_GObj* digits; /* Melee's damage-number model, the ones digit alone */
+    HSD_JObj* ones;
+    int shown_digit;
+    HSD_GObj* stock; /* the carrier's stock icon */
+    HSD_JObj* stock_icon;
+    int stock_slot;         /* whose icon it shows, -1 hidden */
+    float score_x, state_x; /* centres, HUD units */
+} TeamHud;
 
 static struct {
-    HSD_GObj* gobj;  /* the think process and the panel's draw */
-    HSD_Text* text;
-    int entry[E_COUNT];
-    char shown[E_COUNT][48];
-    bool card_up;
+    HSD_GObj* art; /* emblems, flag icons and rings */
+    TeamHud team[2];
+    float y; /* the row's centre */
+    GmCtfHud h;
+    bool have_h;
 } ifCtf;
 
-static void set(int e, const char* s)
+/* ---- Melee's digit and stock models ------------------------------------- */
+
+static HSD_JObj* nth_child(HSD_JObj* j, int n)
 {
-    if (strcmp(ifCtf.shown[e], s) != 0) {
-        HSD_SisLib_803A70A0(ifCtf.text, ifCtf.entry[e], "%s", s);
-        snprintf(ifCtf.shown[e], sizeof ifCtf.shown[e], "%s", s);
+    HSD_JObj* c = j != NULL ? HSD_JObjGetChild(j) : NULL;
+    while (c != NULL && n-- > 0) {
+        c = HSD_JObjGetNext(c);
     }
+    return c;
 }
 
-static void state_line(char* out, size_t n, const GmCtfHud* h, int team)
+/* The ones digit's texture animation (ifstatus.c get_digit_texanim). */
+static HSD_TexAnim* digit_texanim(HudIndex* hud)
 {
-    const u16 left = h->return_left[team];
-    if (!h->present[team] || h->home[team]) {
-        snprintf(out, n, "HOME");
-    } else if (h->holder[team] >= 0) {
-        snprintf(out, n, "P%d HAS IT", h->holder[team] + 1);
-    } else if (left != 0 && left <= BLINK_FRAMES && (left / 6) % 2 == 0) {
-        snprintf(out, n, " "); /* the return warning blinks */
-    } else if (left != 0) {
-        snprintf(out, n, "FREE %d", (left + 59) / 60);
-    } else {
-        snprintf(out, n, "FREE");
-    }
+    HSD_MatAnimJoint* mj = DP(HSD_MatAnimJoint, ((DiscU32*) hud->damage_num_matanims)[0].v);
+    HSD_MatAnimJoint* child = DP(HSD_MatAnimJoint, mj->child);
+    HSD_MatAnim* matanim = DP(HSD_MatAnim, child->matanim);
+    return DP(HSD_TexAnim, matanim->texanim);
 }
 
-static void ifCtf_Think(HSD_GObj* gobj)
+static void set_digit(TeamHud* t, int d)
 {
-    GmCtfHud h;
-    char line[48];
-    (void) gobj;
-    if (ifCtf.text == NULL || !gmCtf_GetHud(&h)) {
+    HSD_TObj* tobj;
+    if (t->ones == NULL || d == t->shown_digit) {
         return;
     }
-    snprintf(line, sizeof line, "%d", h.captures[0]);
-    set(E_SCORE_R, line);
-    snprintf(line, sizeof line, "%d", h.captures[1]);
-    set(E_SCORE_B, line);
-    state_line(line, sizeof line, &h, 0);
-    set(E_STATE_R, line);
-    state_line(line, sizeof line, &h, 1);
-    set(E_STATE_B, line);
+    t->shown_digit = d;
+    tobj = t->ones->u.dobj->mobj->tobj;
+    HSD_TObjReqAnimAll(tobj, 2.0f * (float) (d % 10));
+    HSD_AObjSetRate(tobj->aobj, 0.0f);
+    HSD_TObjAnim(tobj);
+}
 
-    ifCtf.card_up = h.frame < CARD_FRAMES;
-    if (ifCtf.card_up) {
-        set(E_CARD_TITLE, h.swap ? "SIDES SWAPPED" : "CAPTURE THE FLAG");
-        snprintf(line, sizeof line, "RED  %s", h.base[0]);
-        set(E_CARD_R, line);
-        snprintf(line, sizeof line, "BLUE  %s", h.base[1]);
-        set(E_CARD_B, line);
-    } else {
-        set(E_CARD_TITLE, " ");
-        set(E_CARD_R, " ");
-        set(E_CARD_B, " ");
+static void ifCtf_JObjDraw(HSD_GObj* gobj, intptr_t pass)
+{
+    if (!ifAll_IsHUDHidden()) {
+        HSD_GObj_JObjCallback(gobj, pass);
     }
 }
 
-/* A dark panel, in HUD world units (y up). */
-static void panel(float l, float r, float b, float t, u8 alpha)
+static void make_digits(TeamHud* t, float x, float y)
 {
-    GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-    GXPosition3f32(l, t, 0.0f);
-    GXColor4u8(0x0B, 0x0B, 0x10, alpha);
-    GXPosition3f32(r, t, 0.0f);
-    GXColor4u8(0x0B, 0x0B, 0x10, alpha);
-    GXPosition3f32(r, b, 0.0f);
-    GXColor4u8(0x0B, 0x0B, 0x10, alpha);
-    GXPosition3f32(l, b, 0.0f);
-    GXColor4u8(0x0B, 0x0B, 0x10, alpha);
-    GXEnd();
+    HudIndex* hud = ifStatus_GetHUDInfo();
+    HSD_JObj* j;
+    int i;
+
+    t->digits = GObj_Create(0xE, 0xF, 0);
+    j = HSD_JObjLoadJoint(hud->damage_num_joint);
+    HSD_GObjObject_80390A70(t->digits, HSD_GObj_JObjKind, j);
+    GObj_SetupGXLink(t->digits, ifCtf_JObjDraw, 0xB, 0);
+    lb_8000C07C(j, 0, (DiscU32*) hud->damage_num_anims, (DiscU32*) hud->damage_num_matanims,
+                (DiscU32*) hud->damage_num_shapeanims);
+    HSD_JObjReqAnimAll(j, 0.0f);
+    HSD_JObjAnimAll(j);
+    /* Hundreds, tens and % hidden: the ones digit is the score. */
+    for (i = 0; i < HUD_PLACE_MAX; i++) {
+        HSD_JObj* c = nth_child(j, i);
+        if (c != NULL && i != Ones) {
+            HSD_JObjSetFlagsAll(c, JOBJ_HIDDEN);
+        }
+    }
+    t->ones = nth_child(j, Ones);
+    if (t->ones != NULL) {
+        HSD_TObjAddAnimAll(t->ones->u.dobj->mobj->tobj, digit_texanim(hud));
+    }
+    {
+        Vec3 s = { DIGIT_SCALE, DIGIT_SCALE, DIGIT_SCALE };
+        HSD_JObjSetScale(j, &s);
+    }
+    /* Put the ones digit's own origin on (x, y). */
+    HSD_JObjSetTranslateX(j, x - (t->ones != NULL ? HSD_JObjGetTranslationX(t->ones) * DIGIT_SCALE : 0.0f));
+    HSD_JObjSetTranslateY(j, y - (t->ones != NULL ? HSD_JObjGetTranslationY(t->ones) * DIGIT_SCALE : 0.0f));
+    t->shown_digit = -1;
+    set_digit(t, 0);
 }
 
-/* The panels behind the strip and the card; the text draws after them. */
-static void ifCtf_Draw(HSD_GObj* gobj, intptr_t pass)
+/* The carrier's stock icon, built as the HUD's own heads are in a time match
+ * (ifstock.c ifStock_802F98E8 mode 1): the stock model with its animations,
+ * every node but the first icon hidden one by one (not the root), and each
+ * frame the icon's joint animation at 0 and its texture on the character. */
+#define STOCK_NODES 17
+
+static void make_stock(TeamHud* t)
+{
+    DynamicModelDesc* model = ifStock_PcIconModel();
+    HSD_JObj* nodes[STOCK_NODES];
+    HSD_JObj* j;
+    int i;
+
+    t->stock_slot = -1;
+    if (model == NULL) {
+        return;
+    }
+    memset(nodes, 0, sizeof nodes);
+    t->stock = GObj_Create(0xE, 0xF, 0);
+    j = HSD_JObjLoadJoint(DP(HSD_Joint, model->joint));
+    HSD_GObjObject_80390A70(t->stock, HSD_GObj_JObjKind, j);
+    GObj_SetupGXLink(t->stock, ifCtf_JObjDraw, 0xB, 0);
+    gm_8016895C(j, model, 0);
+    HSD_JObjReqAnimAll(j, 0.0f);
+    {
+        Vec3 s = { STOCK_SCALE, STOCK_SCALE, STOCK_SCALE };
+        HSD_JObjSetScale(j, &s);
+    }
+    lb_80011E24(j, nodes, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, -1);
+    t->stock_icon = nodes[1];
+    for (i = 2; i < STOCK_NODES; i++) {
+        if (nodes[i] != NULL) {
+            HSD_JObjSetFlagsAll(nodes[i], JOBJ_HIDDEN);
+        }
+    }
+    if (t->stock_icon != NULL) {
+        HSD_JObjSetFlagsAll(t->stock_icon, JOBJ_HIDDEN);
+    }
+}
+
+static void place_stock(TeamHud* t)
+{
+    HSD_JObj* j = HSD_GObjGetHSDObj(t->stock);
+    /* Bottom-right of the flag, overlapping it, as in the mockup: put the
+     * icon node (not the root) there. */
+    HSD_JObjSetTranslateX(j, t->state_x + ICON_SIZE * 0.2f - HSD_JObjGetTranslationX(t->stock_icon) * STOCK_SCALE);
+    HSD_JObjSetTranslateY(j, ifCtf.y - ICON_SIZE * 0.22f - HSD_JObjGetTranslationY(t->stock_icon) * STOCK_SCALE);
+}
+
+static void set_stock(TeamHud* t, int slot)
+{
+    HSD_TObj* tobj;
+    if (t->stock == NULL || t->stock_icon == NULL) {
+        return;
+    }
+    if (slot < 0) {
+        if (t->stock_slot >= 0) {
+            HSD_JObjSetFlagsAll(t->stock_icon, JOBJ_HIDDEN);
+        }
+        t->stock_slot = -1;
+        return;
+    }
+    t->stock_slot = slot;
+    HSD_JObjClearFlagsAll(t->stock_icon, JOBJ_HIDDEN);
+    HSD_JObjReqAnimAll(t->stock_icon, 0.0f);
+    tobj = t->stock_icon->u.dobj->mobj->tobj;
+    HSD_TObjReqAnimAll(tobj, gm_80168BF8(slot));
+    HSD_AObjSetRate(tobj->aobj, 0.0f);
+    HSD_JObjAnimAll(HSD_GObjGetHSDObj(t->stock));
+    place_stock(t);
+}
+
+/* ---- the art ---------------------------------------------------------------- */
+
+static void draw_state(int team, const GmCtfHud* h, float x, float y)
+{
+    const u16 left = h->return_left[team];
+    const PcCtfArt home = team ? PC_CTF_ART_FLAG_BLUE_HOME : PC_CTF_ART_FLAG_RED_HOME;
+    const PcCtfArt bare = team ? PC_CTF_ART_FLAG_BLUE : PC_CTF_ART_FLAG_RED;
+
+    if (!h->present[team] || h->home[team]) {
+        pc_ctf_art_quad(home, x, y, 0.0f, ICON_SIZE, 0.0f, kWhite);
+    } else if (h->holder[team] >= 0) {
+        pc_ctf_art_quad(bare, x - ICON_SIZE * 0.12f, y + ICON_SIZE * 0.04f, 0.0f, ICON_SIZE * 0.92f, 0.0f, kWhite);
+    } else {
+        const int total = h->return_frames;
+        const float frac = total > 0 && left > 0 ? (float) left / (float) total : 0.0f;
+        const bool blink = left != 0 && left <= BLINK_FRAMES && (left / 6) % 2 == 0;
+        GXColor flag = kWhite;
+        pc_ctf_arc(x, y, 0.0f, RING_R, RING_W + 0.22f, 0.06f, 1.0f, kRim);
+        pc_ctf_arc(x, y, 0.0f, RING_R, RING_W, 0.05f, 1.0f, kTrack);
+        pc_ctf_arc(x, y, 0.0f, RING_R, RING_W, 0.05f, frac, blink ? kWhite : kGold);
+        if (blink) {
+            flag.a = 110;
+        }
+        pc_ctf_art_quad(bare, x + ICON_SIZE * 0.06f, y, 0.0f, ICON_SIZE * 0.8f, 38.0f, flag);
+    }
+}
+
+static void ifCtf_ArtDraw(HSD_GObj* gobj, intptr_t pass)
 {
     Mtx view;
-    const float strip_b = -STRIP_BOTTOM - 0.5f;
+    int team;
     (void) gobj;
     (void) pass;
-    if (ifAll_IsHUDHidden() || ifCtf.text == NULL) {
+    if (ifAll_IsHUDHidden() || !ifCtf.have_h) {
         return;
     }
     HSD_StateInvalidate(-1);
-    GXClearVtxDesc();
-    GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
-    GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
-    GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
-    GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
-    GXSetNumChans(1);
-    GXSetChanCtrl(GX_COLOR0A0, GX_DISABLE, GX_SRC_REG, GX_SRC_VTX, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
-    GXSetNumTexGens(0);
-    GXSetNumTevStages(1);
-    GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
-    GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
-    GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_NOOP);
-    GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_AND, GX_ALWAYS, 0);
-    GXSetZMode(GX_DISABLE, GX_ALWAYS, GX_DISABLE);
-    GXSetCullMode(GX_CULL_NONE);
     HSD_CObjGetViewingMtx(HSD_CObjGetCurrent(), view);
     GXLoadPosMtxImm(view, GX_PNMTX0);
     GXSetCurrentMtx(GX_PNMTX0);
-
-    panel(-STATE_X - 7.5f, STATE_X + 7.5f, strip_b - 0.3f, strip_b + 3.6f, 0xC0);
-    if (ifCtf.card_up) {
-        panel(-22.0f, 22.0f, -CARD_BOTTOM - 1.2f, -CARD_BOTTOM + 6.2f, 0xD0);
+    for (team = 0; team < 2; team++) {
+        const TeamHud* t = &ifCtf.team[team];
+        const float out = team ? 1.0f : -1.0f;
+        pc_ctf_art_quad(PC_CTF_ART_EMBLEM, t->score_x + out * 0.58f, ifCtf.y + 0.13f, 0.0f, EMBLEM_SIZE, 0.0f,
+                        kEmblem[team]);
+        draw_state(team, &ifCtf.h, t->state_x, ifCtf.y);
     }
     HSD_StateInvalidate(-1);
     HSD_StateInitTev();
     HSD_ClearVtxDesc();
 }
 
-static void entry(int e, float x, float bottom, float scale, const GXColor* c)
+/* ---- the process --------------------------------------------------------------- */
+
+static void ifCtf_Think(HSD_GObj* gobj)
 {
-    GXColor col = *c;
-    ifCtf.entry[e] = HSD_SisLib_803A6B98(ifCtf.text, x, bottom - 32.0f, " ");
-    HSD_SisLib_803A7548(ifCtf.text, ifCtf.entry[e], scale, scale);
-    HSD_SisLib_803A74F0(ifCtf.text, ifCtf.entry[e], &col);
-    strcpy(ifCtf.shown[e], " ");
+    int team;
+    (void) gobj;
+    ifCtf.have_h = gmCtf_GetHud(&ifCtf.h);
+    if (!ifCtf.have_h) {
+        return;
+    }
+    for (team = 0; team < 2; team++) {
+        TeamHud* t = &ifCtf.team[team];
+        const bool carried = ifCtf.h.present[team] && !ifCtf.h.home[team] && ifCtf.h.holder[team] >= 0;
+        set_digit(t, ifCtf.h.captures[team]);
+        set_stock(t, carried ? ifCtf.h.holder[team] : -1);
+    }
 }
 
 void ifCtf_Create(void)
 {
-    int canvas;
+    StartMeleeRules* rules = gm_GetStartMeleeRules();
+    const bool timer = rules != NULL && rules->timer_enabled;
+    Vec3* tp = ifAll_GetTimerPosition();
+    int team;
+
     memset(&ifCtf, 0, sizeof ifCtf); /* the last match's were freed with its HUD (ifAll) */
     if (ifAll_GetHUDGObj() == NULL) {
         return;
     }
-    /* The panel first, on the HUD camera's link: it draws before the text's
-     * canvas (priority 19 there). */
-    ifCtf.gobj = GObj_Create(HSD_GOBJ_CLASS_UI, 15, 0);
-    GObj_SetupGXLink(ifCtf.gobj, ifCtf_Draw, 11, 0);
-    canvas = HSD_SisLib_803A611C(2, ifAll_GetHUDGObj(), HSD_GOBJ_CLASS_UI, 15, 0, 11, 0, 19);
-    ifCtf.text = HSD_SisLib_803A6754(2, canvas);
-    ifCtf.text->default_kerning = 1;
-    ifCtf.text->default_alignment = 1; /* centred on each entry's x */
-    entry(E_SCORE_R, -SCORE_X, STRIP_BOTTOM + 0.2f, SCORE_SCALE, &red);
-    entry(E_SCORE_B, SCORE_X, STRIP_BOTTOM + 0.2f, SCORE_SCALE, &blue);
-    entry(E_STATE_R, -STATE_X, STRIP_BOTTOM - 0.4f, STATE_SCALE, &red);
-    entry(E_STATE_B, STATE_X, STRIP_BOTTOM - 0.4f, STATE_SCALE, &blue);
-    entry(E_CARD_TITLE, 0.0f, CARD_BOTTOM - 2.8f, CARD_SCALE, &cream);
-    entry(E_CARD_R, -11.0f, CARD_BOTTOM + 0.9f, CARD_SIDE_SCALE, &red);
-    entry(E_CARD_B, 11.0f, CARD_BOTTOM + 0.9f, CARD_SIDE_SCALE, &blue);
-    HSD_GObj_SetupProc(ifCtf.gobj, ifCtf_Think, 17);
+    /* The row: the timer's. With a timer the teams flank it (its box runs
+     * from about 6.9 units left of its anchor to 8.7 right, centiseconds
+     * included). */
+    ifCtf.y = tp->y;
+    for (team = 0; team < 2; team++) {
+        TeamHud* t = &ifCtf.team[team];
+        const float side = team ? 1.0f : -1.0f;
+        if (timer) {
+            const float edge = team ? tp->x + 8.7f : tp->x - 6.9f;
+            t->score_x = edge + side * TIMER_GAP;
+        } else {
+            t->score_x = side * CENTRE_SCORE;
+        }
+        t->state_x = t->score_x + side * STATE_STEP;
+    }
+    /* Draw order: the art (emblems behind the digits), then the digits,
+     * then the stock icons (over the carried flag). */
+    ifCtf.art = GObj_Create(0xE, 0xF, 0);
+    GObj_SetupGXLink(ifCtf.art, ifCtf_ArtDraw, 0xB, 0);
+    HSD_GObj_SetupProc(ifCtf.art, ifCtf_Think, 0x11);
+    for (team = 0; team < 2; team++) {
+        make_digits(&ifCtf.team[team], ifCtf.team[team].score_x, ifCtf.y);
+    }
+    for (team = 0; team < 2; team++) {
+        make_stock(&ifCtf.team[team]);
+    }
+    OSReport("ctf-hud: timer %d at %.2f %.2f; red %.2f/%.2f blue %.2f/%.2f\n", timer, tp->x, tp->y,
+             ifCtf.team[0].score_x, ifCtf.team[0].state_x, ifCtf.team[1].score_x, ifCtf.team[1].state_x);
     ifCtf_Think(NULL);
 }
 
 void ifCtf_Free(void)
 {
-    if (ifCtf.gobj != NULL) {
-        HSD_GObjFree(ifCtf.gobj);
-        ifCtf.gobj = NULL;
+    int team;
+    if (ifCtf.art != NULL) {
+        HSD_GObjFree(ifCtf.art);
     }
-    if (ifCtf.text != NULL) {
-        HSD_SisLib_803A5CC4(ifCtf.text);
-        ifCtf.text = NULL;
+    for (team = 0; team < 2; team++) {
+        if (ifCtf.team[team].digits != NULL) {
+            HSD_GObjFree(ifCtf.team[team].digits);
+        }
+        if (ifCtf.team[team].stock != NULL) {
+            HSD_GObjFree(ifCtf.team[team].stock);
+        }
     }
+    memset(&ifCtf, 0, sizeof ifCtf);
 }
 
 #else

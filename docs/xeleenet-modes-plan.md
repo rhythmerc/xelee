@@ -444,6 +444,34 @@ approved as shown:
   - `MELEE_DEBUG_CTF_NOHUD=1` gives clean frames, and
     `MELEE_DEBUG_CTF_NOTIME=1` a match without a timer.
 
+## 6f. The HUD build (2026-11-02)
+
+The approved design (§6e) is in the game.
+- **Score** (`ifctf.c`): Melee's damage-number model (`damage_num_joint`)
+  per team, with only the ones digit showing, set by its texture animation
+  (frame 2 × digit).
+- **Carrier icon:** the stock model, built as the HUD's own heads are in a
+  time match (`ifStock_802F98E8` mode 1). The other nodes are hidden one by
+  one, and only the icon's texture is animated, since the joint animation's
+  visibility tracks would hide it again. `ifStock_802F96D0` doesn't draw
+  here.
+- **New art** (`tools/gen_ctf_art.py` → `src/pc/ctf_art_data.c`, GX RGBA8,
+  160 px): the flags with and without the plate, and the white emblem.
+  Drawn as textured quads (`pc_ctf_art_quad`).
+- **The ring:** feathered arcs (`pc_ctf_arc`).
+- **The beams** (`pc_ctf_beam`): a coloured body, an additive core, a floor
+  ring and rising rings, drawn in the stage's pass during READY with depth
+  testing.
+- **Layout:** A when the match has a timer, B otherwise. The row is the
+  timer's (17.65 HUD units up).
+- **Traps:**
+  - Linking a GObj that is already linked (`GObj_SetupGXLink` twice) makes
+    a cycle in the draw list, and the game hangs.
+  - `src/pc` files can't include `cobj.h` (they don't get the game's compat
+    header).
+- **Tests:** `tools/ctf_test.py` 15/15, and the CPU net test passes (5
+  captures, no desync).
+
 ## 7. Open questions
 
 All seven from the first draft were answered 2026-11-01 (decisions 10-17).

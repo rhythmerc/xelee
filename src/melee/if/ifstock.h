@@ -34,4 +34,9 @@
 /* 2FB650 */ void ifStock_802FB650(int);
 /* 2FB6AC */ void ifStock_802FB6AC(int);
 
+#ifdef TARGET_PC
+struct DynamicModelDesc;
+struct DynamicModelDesc* ifStock_PcIconModel(void);
+#endif
+
 #endif
