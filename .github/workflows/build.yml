@@ -17,6 +17,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      xeleenet_url:
+        description: "XeleeNet service these builds talk to (empty: the XELEENET_URL variable), e.g. a playtest service behind Tailscale Funnel"
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -96,7 +101,7 @@ jobs:
           # Where Send logs uploads (CMakeLists.txt, tools/xeleenet/logs.go).
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
           # The XeleeNet lobby service (CMakeLists.txt, tools/xeleenet).
-          XELEENET_URL: ${{ vars.XELEENET_URL }}
+          XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
         run: |
           # A release without them would say "Online login is not configured".
           if [[ "${GITHUB_REF_TYPE}" == tag && ( -z "${MELEE_SLIPPI_FIREBASE_KEY}" || -z "${MELEE_SLIPPI_GRAPHQL_ENDPOINT}" ) ]]; then
@@ -167,7 +172,7 @@ jobs:
           MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
           MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
-          XELEENET_URL: ${{ vars.XELEENET_URL }}
+          XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
         run: |
           # The quest job checks the secrets a release needs.
           ccache --zero-stats
@@ -233,7 +238,7 @@ jobs:
           MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
           MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
-          XELEENET_URL: ${{ vars.XELEENET_URL }}
+          XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
         run: |
           # The quest job checks the secrets a release needs.
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/26.3.11579264"
@@ -288,7 +293,7 @@ jobs:
           MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
           MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
-          XELEENET_URL: ${{ vars.XELEENET_URL }}
+          XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
         run: |
           ccache --zero-stats
           tools/package_windows.sh
