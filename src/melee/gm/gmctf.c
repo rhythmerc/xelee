@@ -470,8 +470,8 @@ static void ctf_draw_stands(HSD_GObj* gobj, intptr_t pass)
 static void ctf_tick(HSD_GObj* gobj)
 {
     ctf.frame++;
-    if (ctf.frame == 1 && gmCtf_Active()) {
-        ifCtf_Create();
+    if (ctf.frame == 1 && gmCtf_Active() && getenv("MELEE_DEBUG_CTF_NOHUD") == NULL) {
+        ifCtf_Create(); /* MELEE_DEBUG_CTF_NOHUD: clean frames for HUD mockups */
     }
     if (ctf.frame == 2) {
         ctf_survey();

@@ -787,6 +787,9 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
                                                  SDL_GetPrefPath(NULL, "melee-pc"),
         .msaa = 1,
         .maxTextureAnisotropy = 16,
+        /* MELEE_TEXTURE_DUMPS=1: every texture the game draws, as DDS under
+         * <cache>/texture_dumps (art work: HUD mockups, replacements). */
+        .allowTextureDumps = getenv("MELEE_TEXTURE_DUMPS") != NULL,
         /* MELEE_VSYNC=0 picks Mailbox/Immediate instead of FifoRelaxed; some
          * compositors stop scanning out a FifoRelaxed surface and the window
          * then sits on a stale frame while the game runs on. */
