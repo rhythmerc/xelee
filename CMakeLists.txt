@@ -456,6 +456,10 @@ target_compile_options(melee PRIVATE
         $<$<BOOL:${ANDROID}>:-march=armv8-a+crc+crypto>
         $<$<BOOL:${ANDROID}>:-mtune=cortex-a73>)
 target_link_libraries(melee PRIVATE melee_game aurora::main melee_enet ${MELEE_CRYPTO_LIBS} ${MELEE_NETWORK_LIBS})
+if (WIN32)
+    # setupapi: src/pc/gcadapter.c names the GameCube adapter's driver when SDL can't reach it.
+    target_link_libraries(melee PRIVATE setupapi)
+endif ()
 
 # Positional sound effects (src/pc/spatial_audio.h), with Valve's Steam Audio.
 # On by default where the SDK can be had (cmake/SteamAudio.cmake fetches it);

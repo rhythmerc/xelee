@@ -108,7 +108,7 @@
       A Direct3D 11 fallback is built for the Intel Haswell iGPUs (HD 4000/4400/4600, 2012–2014 laptops) that Dawn refuses on D3D12, but it has not been verified on real hardware, see the <a href="#faq-intel">FAQ</a>.</li>
     <li><strong>CPU/RAM:</strong> any 64-bit x86 or ARM CPU from the last decade; 2 GB of RAM is enough (the asset cache scales itself down on low-memory devices).</li>
     <li><strong>Android:</strong> Android 8.0 (API 26) or newer, 64-bit ARM, Vulkan-capable GPU. Android 9 phones that only expose OpenGL ES are not supported.</li>
-    <li><strong>Controllers:</strong> any gamepad SDL3 knows (Xbox, PlayStation, Switch Pro, …), or the keyboard. An official Wii U / Switch GameCube adapter is read directly for raw stick and trigger values; in PC mode it is just another gamepad.</li>
+    <li><strong>Controllers:</strong> any gamepad SDL3 knows (Xbox, PlayStation, Switch Pro, …), or the keyboard. An official Wii U / Switch GameCube adapter (or a Mayflash in Wii U mode) is read directly for raw stick and trigger values; in PC mode it is just another gamepad. On Windows the adapter needs the WinUSB driver: run <a href="https://zadig.akeo.ie">Zadig</a>, pick <em>WUP-028</em> and install WinUSB, as for Dolphin and Slippi. On Android, allow USB access when asked.</li>
   </ul>
 </section>
 
