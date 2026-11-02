@@ -22,6 +22,8 @@ case "${TARGET_ARCH}" in
         CAB_ARCH="amd64"
         OBJDUMP_BIN="${OBJDUMP:-x86_64-w64-mingw32-objdump}"
         MINGW_DLLS=("libwinpthread-1.dll")
+        LIBUSB_HOST="x86_64-w64-mingw32"
+        LIBUSB_CC="${CC:-x86_64-w64-mingw32-gcc}"
         ;;
     arm64|aarch64)
         TARGET_ARCH="arm64"
@@ -41,6 +43,8 @@ case "${TARGET_ARCH}" in
             OBJDUMP_BIN="aarch64-w64-mingw32-objdump"
         fi
         MINGW_DLLS=("libwinpthread-1.dll" "libc++.dll" "libunwind.dll")
+        LIBUSB_HOST="aarch64-w64-mingw32"
+        LIBUSB_CC="${CC:-aarch64-w64-mingw32-clang}"
         ;;
     *)
         echo "error: unsupported TARGET_ARCH: ${TARGET_ARCH}" >&2
@@ -48,13 +52,26 @@ case "${TARGET_ARCH}" in
         ;;
 esac
 
+echo "=== Building libusb for SDL (GameCube adapter) ==="
+# Without libusb, SDL hides the GameCube adapter on Windows (build_libusb.sh).
+LIBUSB_DIR="${BUILD_DIR}/libusb"
+"${SCRIPT_DIR}/windows/build_libusb.sh" "${LIBUSB_HOST}" "${LIBUSB_CC}" "${LIBUSB_DIR}"
+
 echo "=== Building Windows release (${TARGET_ARCH}) ==="
 cmake -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
     -DAURORA_SDL3_PROVIDER="${SDL3_PROVIDER}" \
     -DAURORA_DAWN_PROVIDER="${DAWN_PROVIDER}" \
-    -DAURORA_NOD_PROVIDER="${NOD_PROVIDER}"
+    -DAURORA_NOD_PROVIDER="${NOD_PROVIDER}" \
+    -DSDL_HIDAPI_LIBUSB=ON \
+    -DSDL_HIDAPI_LIBUSB_SHARED=OFF \
+    -DLibUSB_INCLUDE_PATH="${LIBUSB_DIR}/install/include/libusb-1.0" \
+    -DLibUSB_LIBRARY="${LIBUSB_DIR}/install/lib/libusb-1.0.a"
+if ! grep -q "^#define HAVE_LIBUSB 1" "${BUILD_DIR}"/_deps/sdl-build/include-config-*/build_config/SDL_build_config.h; then
+    echo "error: SDL was configured without libusb; the GameCube adapter would be invisible" >&2
+    exit 1
+fi
 ninja -C "${BUILD_DIR}" melee
 
 echo "=== Staging Windows package ==="
