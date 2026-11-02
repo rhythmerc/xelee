@@ -17,6 +17,7 @@
 #include <melee/lb/lb_00B0.h>
 #include <melee/lb/lbcollision.h>
 #include <melee/mp/mpcoll.h>
+#include <melee/mp/mplib.h>
 #include <dolphin/gx.h>
 #include <dolphin/mtx.h>
 #include <dolphin/os.h>
@@ -282,7 +283,17 @@ void itCtfFlag_Draw(HSD_GObj* gobj, intptr_t pass)
         bottom.y -= FLAG_POLE_LEN * 0.33f;
         trail = -ftLib_GetFacingDir(ip->owner);
     } else {
+        /* The item's position is the middle of its collision box, about
+         * 2.8 units up: stand the pole on the floor it landed on (xC30),
+         * or in the air, at the box's bottom. */
+        float dy;
         bottom = ip->pos;
+        bottom.y -= ip->xC1C.bottom * ip->scl;
+        if (ip->msid == FLAG_GROUND && ip->xC30 >= 0 &&
+            mpLib_8004DD90_Floor(ip->xC30, &ip->pos, &dy, NULL, NULL) != -1)
+        {
+            bottom.y = ip->pos.y + dy;
+        }
         trail = ip->facing_dir;
     }
     top = bottom;
