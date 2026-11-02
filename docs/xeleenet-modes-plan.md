@@ -406,6 +406,44 @@ XeleeNet mode row in the wireframe.
 - **Left:** the GAME!-for-no-contest banner (Melee's), a look on the headset,
   and the blink and countdown on a real flag in a long match.
 
+## 6e. The HUD, redesigned (approved 2026-11-02)
+
+The M3 HUD (SIS text and flat panels) wasn't polished enough. A
+high-fidelity mockup on real 4K frames (`ctf-hud-mockup/` on the share) was
+approved as shown:
+
+- **Layout A, either side of the timer, on its row.** Red is mirrored left,
+  blue right: the score nearest the clock, the flag state outermost, 255 px
+  (at 4K) clear of the timer.
+- **Layout B, no timer:** the same two blocks meet at the top centre.
+- **The score:** Melee's own damage digits (the 32x36 IfAll textures), white
+  with a black outline, with a team-coloured flag emblem behind each number,
+  as the series emblem sits behind a damage %. No plate.
+- **Flag states as icons, no text:**
+  - **home:** the flag on its plate;
+  - **carried:** the flag plus the carrier's stock icon (Melee's own, in
+    their costume colours);
+  - **free:** the flag tipped inside a gold ring that drains to the return.
+    In the last 3 s the ring turns white and the flag fades, blinking. No
+    seconds number.
+- **READY:** a light beam rises from each base, a column with team-coloured
+  rings rising up it, with no dark edges. The READY camera frames both bases
+  (6ada59cf), so both beams are on screen.
+- **The capture sound:** the trophy chime, SFX 0xAA.
+- **Replaced:** the M3 strip under the timer and the sides card.
+- **Build notes:**
+  - The digits and stock icons come from Melee's HUD assets (the same models
+    and textures the damage display uses).
+  - The emblem, flag icons, ring and rings-on-beam are new textures, drawn
+    as GX quads on the HUD camera.
+  - The beams are drawn in the stage's 3D pass, so in the headset they stand
+    on the stage.
+- **Mockup tooling:**
+  - `MELEE_TEXTURE_DUMPS=1` dumps textures, red/blue swapped through
+    ImageMagick.
+  - `MELEE_DEBUG_CTF_NOHUD=1` gives clean frames, and
+    `MELEE_DEBUG_CTF_NOTIME=1` a match without a timer.
+
 ## 7. Open questions
 
 All seven from the first draft were answered 2026-11-01 (decisions 10-17).
