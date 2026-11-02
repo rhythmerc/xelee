@@ -1,5 +1,7 @@
 #include "gmvs.h"
 
+#include <melee/gm/gmctf.h>
+
 #include <Runtime/platform.h>
 
 #include <string.h>
@@ -2371,6 +2373,7 @@ void fn_8016E730(StartMeleeData* arg0)
     Item_80266F70();
     Item_80266FCC();
     it_8026D018();
+    gmCtf_MatchInit();
     lbAudioAx_8002785C();
     Stage_8022524C();
     Camera_80030730(Ground_801C20D0());

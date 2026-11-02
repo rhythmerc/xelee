@@ -139,6 +139,10 @@ typedef enum Item_HoldKinds {
 
 #define It_Common_Start It_Kind_Capsule
 #define It_Common_End It_Kind_L_Gun_Ray
+#ifdef TARGET_PC
+/* The first Xelee item kind (see the enum's last block). */
+#define It_PC_Start It_Kind_Ctf_Flag
+#endif
 
 typedef enum ItemKind {
     /// @name COMMON ITEMS
@@ -421,6 +425,15 @@ typedef enum ItemKind {
     It_Kind_GreatFox_Laser,  // Great Fox's Laser
     It_Kind_Kyasarin_Egg,    // Birdo's Egg
     /// @}
+#ifdef TARGET_PC
+    /// @name XELEE (PC) ITEMS
+    /// Past every disc table: no ItCo.dat article of their own (each borrows
+    /// one) and outside the random spawner's 238 kinds. Game modes spawn
+    /// them (docs/xeleenet-modes-plan.md).
+    /// @{
+    It_Kind_Ctf_Flag, // 238: Capture the Flag's flag
+    /// @}
+#endif
 
     It_Kind_Unselected = -1,
     It_Kind_None = -999,

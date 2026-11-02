@@ -215,6 +215,10 @@ void it_80275E98(Item_GObj* item_gobj, SpawnItem* spawn)
         coll->x34_flags.b1234 = 3;
     } else if (kind < 238) {
         coll->x34_flags.b1234 = 4;
+#ifdef TARGET_PC
+    } else if (kind >= It_PC_Start) {
+        coll->x34_flags.b1234 = 2; /* Xelee items collide as common ones */
+#endif
     }
 
     item2 = item_gobj->user_data;

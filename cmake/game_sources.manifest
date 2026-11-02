@@ -494,6 +494,7 @@ src/melee/gm/gmboot.c
 src/melee/gm/gmcamera.c
 src/melee/gm/gmcameramode.c
 src/melee/gm/gmclassic.c
+src/melee/gm/gmctf.c
 src/melee/gm/gmdebugmode.c
 src/melee/gm/gmevent.c
 src/melee/gm/gmfixedcamera.c
@@ -678,6 +679,7 @@ src/melee/it/kinds/itclimbersstring.c
 src/melee/it/kinds/itclinkmilk.c
 src/melee/it/kinds/itcoin.c
 src/melee/it/kinds/itcrazyhandbomb.c
+src/melee/it/kinds/itctfflag.c
 src/melee/it/kinds/itdkinoko.c
 src/melee/it/kinds/itdosei.c
 src/melee/it/kinds/itdrmariopill.c

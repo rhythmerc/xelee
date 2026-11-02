@@ -19,6 +19,8 @@
 #include "itmaplib.h"
 #include "itmaterial.h"
 #include "types.h"
+#include <melee/it/itdraw.h>
+#include <melee/it/kinds/itctfflag.h>
 #include <dolphin/mtx.h>
 #include <melee/cm/camera.h>
 #include <melee/db/db.h>
@@ -347,6 +349,14 @@ static void Item_802674AC(SpawnItem* spawnItem)
         return;
     }
 
+#ifdef TARGET_PC
+    if (kind >= It_PC_Start) {
+        // Xelee items count as common ones
+        spawnItem->hold_kind = 0;
+        return;
+    }
+#endif
+
     spawnItem->hold_kind = 5;
 }
 
@@ -536,6 +546,15 @@ static bool Item_8026784C(enum_t dropItem, int _)
 void Item_80267978(HSD_GObj* gobj)
 {
     Item* item_data = gobj->user_data;
+#ifdef TARGET_PC
+    if (item_data->kind >= It_PC_Start) {
+        // Xelee items: a borrowed article, their own logic
+        item_data->xC4_article_data = itCtfFlag_Article();
+        item_data->xB8_itemLogicTable = &itCtfFlag_LogicTable;
+        item_data->xBC_itemStateContainer = item_data->xB8_itemLogicTable->states;
+        return;
+    }
+#endif
     if (item_data->kind < It_Kind_Kuriboh) {
         // Common items
         item_data->xC4_article_data =
@@ -954,6 +973,11 @@ static HSD_GObj* Item_8026862C(SpawnItem* spawnItem)
         // Common items
         GObj_SetupGXLink(gobj, it_803F1418[spawnItem->kind].x0_renderFunc, 6,
                          0);
+#ifdef TARGET_PC
+    } else if (spawnItem->kind >= It_PC_Start) {
+        // Xelee items: the common items' renderer
+        GObj_SetupGXLink(gobj, it_8026EECC, 6, 0);
+#endif
     } else if (spawnItem->kind < It_PKind_Start) {
         // Character items
         int idx = spawnItem->kind - It_Kind_Kuriboh;

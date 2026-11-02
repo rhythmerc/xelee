@@ -151,9 +151,26 @@ maps provide it as a file. For each team:
   (`gm_1601.c:3489`) with `Player_80032FA4(slot, -1)` and
   `Player_SetSpawnPlatformPos`.
 
-The Temple numbers come from a survey (M0 below): run Temple with the debug
-camera and log positions at the two corners. Temple isn't symmetric, which is
-why the proposal is to swap bases each game (§7 Q3).
+**Temple (proposed, from the M0 survey, 2026-11-01).**
+`MELEE_DEBUG_CTF_SURVEY=1` dumps the stage's collision lines, bounds and
+named points; `tools/ctf_survey_draw.py` draws them to scale
+(`temple-ctf-survey.png` on the share). Units are the game's.
+
+| | Red: bottom-left | Blue: top-right |
+|---|---|---|
+| Floor it sits on | lines 14-15, y -88.6, x -134.0 to -75.2 (the cave under the left mass; ceiling at y -28) | line 22, y 92.2, x 169.1 to 197.1 (the high floating platform) |
+| Flag stand | (-105, -88.6) | (183, 92.2) |
+| Base zone | x -134 to -75, y -88.6 to -50 | x 169 to 197, y 92.2 to 125 |
+| Respawn points | (-125, -70), (-88, -70) | (176, 112), (190, 112) |
+
+Others from the dump:
+- **Blast zone:** x ±315, y -257.4 to 207.
+- **Camera bounds:** x ±279, y -201.6 to 180.
+- **Melee's respawn point:** (18, 84.6), the same for every port.
+
+Blue's platform is 28 wide against red's 59, so the zones differ in size; that
+is the asymmetry the side swap answers. Respawning inside the cave needs
+checking in M2, because Melee's rebirth drops in from the camera's top.
 
 ### 3.3 Rules, tick by tick
 
@@ -255,6 +272,28 @@ All of this runs in the sim, once per tick, after fighters and items.
 
 M5's wireframe can be done in parallel with M0-M2. M4 also needs the
 XeleeNet mode row in the wireframe.
+
+## 6a. M0 results (2026-11-01)
+
+- **The item spike passes on Temple:**
+  - `It_Kind_Ctf_Flag` (238, past every disc table) borrows the Poke Ball's
+    article.
+  - A frame script on port 1 picked it up with A, carried it, jumped and threw
+    it with an air A; it landed back to its ground state.
+- **Facts learned:**
+  - **Pickup:** an item is grabbable while `xDC8 x15` is set (`Item_IsGrabbable`),
+    so every landing sets it (`it_8026B390`).
+  - **No despawn:** the despawn timer and its blink apply only to kinds below
+    `It_Kind_L_Gun_Ray`, so the flag never despawns.
+  - **No random destroy:** landings go through `it_8026E414`, which skips the
+    random-destroy count.
+- **Debug hooks** (`gmctf.c`, only when the variable is set):
+  - `MELEE_DEBUG_CTF_FLAG=1|x,y` spawns a flag.
+  - `MELEE_DEBUG_CTF_LOG=N` logs port 1's and the flag's positions every N
+    frames.
+  - `MELEE_DEBUG_CTF_SURVEY=1` dumps the stage's collision.
+- **Not done in M0:** rollback determinism with a flag in play. It goes with
+  M2's synctest and net test, once the rules exist.
 
 ## 7. Open questions
 
