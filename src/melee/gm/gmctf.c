@@ -36,11 +36,15 @@
 #include <melee/it/item.h>
 #include <melee/it/kinds/itctfflag.h>
 #include <melee/it/types.h>
+#include <melee/lb/lbaudio_ax.h>
 #include <melee/mn/types.h>
+#include <melee/if/ifctf.h>
+#include <melee/cm/camera.h>
 #include <melee/mp/mplib.h>
 #include <melee/mp/types.h>
 #include <melee/pl/player.h>
 #include <sysdolphin/baselib/gobj.h>
+#include <sysdolphin/baselib/gobjgxlink.h>
 #include <sysdolphin/baselib/gobjproc.h>
 
 #ifdef TARGET_PC
@@ -57,7 +61,8 @@ typedef struct CtfBox {
 } CtfBox;
 
 typedef struct CtfBase {
-    Vec2 stand;    /* where the flag stands */
+    const char* name; /* where it is, for the sides card */
+    Vec2 stand;       /* where the flag stands */
     CtfBox zone;   /* the enemy flag in here scores */
     Vec2 spawn[2]; /* start and respawn, in port order within the team */
 } CtfBase;
@@ -71,8 +76,10 @@ static const CtfLayout ctf_layouts[] = {
     /* Hyrule Temple: red in the cave at the bottom left, blue on the right
      * edge of the ground floor (the M0 survey). */
     { St_Kind_Shrine,
-      { { { -105.0f, -88.6f }, { -134.0f, -75.0f, -88.6f, -50.0f }, { { -125.0f, -70.0f }, { -88.0f, -70.0f } } },
-        { { 200.0f, -5.3f }, { 170.0f, 225.6f, -5.3f, 30.0f }, { { 182.0f, 22.0f }, { 214.0f, 22.0f } } } } },
+      { { "BOTTOM LEFT", { -105.0f, -88.6f }, { -134.0f, -75.0f, -88.6f, -50.0f },
+          { { -125.0f, -70.0f }, { -88.0f, -70.0f } } },
+        { "RIGHT EDGE", { 200.0f, -5.3f }, { 170.0f, 225.6f, -5.3f, 30.0f },
+          { { 182.0f, 22.0f }, { 214.0f, 22.0f } } } } },
 };
 
 /* MELEE_DEBUG_CTF_BASES: stands placed by a test, zones and spawns around them. */
@@ -112,6 +119,7 @@ static const CtfLayout* ctf_layout(void)
         ctf_debug_layout.stkind = gm_GetStKind();
         for (i = 0; i < 2; i++) {
             CtfBase* b = &ctf_debug_layout.base[i];
+            b->name = i ? "TEST BLUE" : "TEST RED";
             b->stand.x = v[i * 2];
             b->stand.y = v[i * 2 + 1];
             b->zone.l = b->stand.x - 15.0f;
@@ -306,6 +314,7 @@ static void ctf_check_captures(void)
             continue;
         }
         ctf.captures[team]++;
+        lbAudioAx_800237A8(CTF_CAPTURE_SFX, 0x7F, 0x40);
         OSReport("ctf: f%d capture %s (%s) red %d blue %d\n", ctf.frame, team ? "blue" : "red",
                  holder != NULL ? "carried" : "thrown", ctf.captures[0], ctf.captures[1]);
         ctf_send_home(enemy, "captured");
@@ -440,9 +449,30 @@ static void ctf_debug_log(void)
 
 /* ---- the per-frame process ------------------------------------------------ */
 
+/* The stands, in the stage's draw: a plate under each, and a ghost of the
+ * flag while it is away (itCtfFlag_DrawStand). Reads state, writes none. */
+static void ctf_draw_stands(HSD_GObj* gobj, intptr_t pass)
+{
+    int team;
+    if (!gmCtf_Active() || Camera_80031060() != 0) {
+        return;
+    }
+    for (team = 0; team < 2; team++) {
+        const CtfBase* base = ctf_base(team);
+        Vec3 at;
+        at.x = base->stand.x;
+        at.y = base->stand.y;
+        at.z = 0.0f;
+        itCtfFlag_DrawStand(&at, (u8) team, !ctf.home[team] || ctf.flag[team] == NULL);
+    }
+}
+
 static void ctf_tick(HSD_GObj* gobj)
 {
     ctf.frame++;
+    if (ctf.frame == 1 && gmCtf_Active()) {
+        ifCtf_Create();
+    }
     if (ctf.frame == 2) {
         ctf_survey();
     }
@@ -488,6 +518,9 @@ void gmCtf_MatchInit(void)
     {
         HSD_GObj* g = GObj_Create(4, 7, 0);
         HSD_GObj_SetupProc(g, ctf_tick, 0x14);
+        if (gmCtf_Active()) {
+            GObj_SetupGXLink(g, ctf_draw_stands, 6, 0);
+        }
     }
     if (gmCtf_Active()) {
         OSReport("ctf: match on stage %d, first to %d, home required %d, return %d frames, swap %d\n",
@@ -576,6 +609,32 @@ void gmCtf_FlagDestroyed(HSD_GObj* item)
     if (ctf.stray == item) {
         ctf.stray = NULL;
     }
+#endif
+}
+
+bool gmCtf_GetHud(GmCtfHud* out)
+{
+#ifdef TARGET_PC
+    int team;
+    if (!gmCtf_Active()) {
+        return false;
+    }
+    for (team = 0; team < 2; team++) {
+        HSD_GObj* holder;
+        Vec3 pos;
+        out->captures[team] = ctf.captures[team];
+        out->home[team] = ctf.home[team];
+        out->present[team] = ctf_flag_pos(ctf.flag[team], &pos, &holder);
+        out->holder[team] = holder != NULL ? (s8) GET_FIGHTER(holder)->player_idx : -1;
+        out->return_left[team] =
+            ctf.flag[team] != NULL ? GET_ITEM(ctf.flag[team])->xDD4_itemVar.ctfflag.return_left : 0;
+        out->base[team] = ctf_base(team)->name;
+    }
+    out->swap = ctf_rules.swap_sides != 0;
+    out->frame = ctf.frame;
+    return true;
+#else
+    return false;
 #endif
 }
 

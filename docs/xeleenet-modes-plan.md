@@ -382,6 +382,30 @@ XeleeNet mode row in the wireframe.
   outcome banner). The results screen says NO CONTEST. Revisit with M3.
 - **Duplicated log lines** in netplay logs are rollback re-runs of the tick.
 
+## 6d. M3 results (2026-11-01)
+
+- **The HUD** (`src/melee/if/ifctf.c`) is Melee's own SIS text on the HUD
+  camera (`ifnet.c`'s recipe) plus a GX panel on the same link (0xB), so it
+  draws on the headset's HUD plane too. That's unverified on a headset. An
+  RmlUi overlay was ruled out: RmlUi never draws into XR eye passes.
+  - **The strip,** under the timer: red's flag state, the score in team
+    colours, blue's flag state. A state reads HOME, `P# HAS IT` or
+    `FREE n`; FREE blinks in its last 3 s.
+  - **The sides card** during READY (the first 2 s), below Melee's "Ready"
+    and gone before "GO!" covers it: CAPTURE THE FLAG or SIDES SWAPPED,
+    then RED <base> and BLUE <base>.
+- **The stands** (`itCtfFlag_DrawStand`, drawn from gmctf.c's process on the
+  stage's link): a team-colour plate always, and a translucent ghost pole and
+  knob while the flag is away.
+- **The capture sound** is the trophy chime, SFX `0xAA` (`itcoin.c:368`, the
+  Classic/Adventure trophy catch). It is the user's suggestion; I haven't
+  heard it yet.
+- **Tests:** `tools/ctf_test.py` 15/15. The CPU net test with the close
+  layout passes with 4 captures and the HUD live: no desync, about 1,480
+  rollbacks a side.
+- **Left:** the GAME!-for-no-contest banner (Melee's), a look on the headset,
+  and the blink and countdown on a real flag in a long match.
+
 ## 7. Open questions
 
 All seven from the first draft were answered 2026-11-01 (decisions 10-17).

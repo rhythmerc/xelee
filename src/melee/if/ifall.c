@@ -2,6 +2,7 @@
 #include "pc/xr_scene.h"
 #endif
 #include "ifall.h"
+#include "ifctf.h"
 
 #include "if_2F6E.h"
 #include "if_2F72.h"
@@ -317,5 +318,6 @@ void ifAll_802F3A64(void)
     un_802FF4FC();
 #ifdef TARGET_PC
     ifNet_Free();
+    ifCtf_Free();
 #endif
 }

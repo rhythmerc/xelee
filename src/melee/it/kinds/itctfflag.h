@@ -8,6 +8,7 @@
 
 #include <Runtime/platform.h>
 
+#include <dolphin/mtx.h>
 #include <melee/it/forward.h>
 
 #include <melee/it/kinds/types.h>
@@ -27,6 +28,10 @@ bool itCtfFlag_Is(Item_GObj* gobj);
 /* The flag's look (its GXLink render function): a pole and a cloth in its
  * team's colour, blinking near the end of an auto-return. */
 void itCtfFlag_Draw(HSD_GObj* gobj, intptr_t pass);
+
+/* A team's stand at `at` (the floor point): a plate, and while the flag is
+ * away (`empty`) a translucent ghost of it. Drawn by gmctf.c. */
+void itCtfFlag_DrawStand(const Vec3* at, u8 team, bool empty);
 
 /* The article the flag spawns with (the Poke Ball's, from ItCo.dat). */
 Article* itCtfFlag_Article(void);

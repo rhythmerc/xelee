@@ -299,6 +299,31 @@ void itCtfFlag_Draw(HSD_GObj* gobj, intptr_t pass)
     HSD_ClearVtxDesc();
 }
 
+void itCtfFlag_DrawStand(const Vec3* at, u8 team, bool empty)
+{
+    GXColor plate = flag_cloth[team & 1], plate_amb = flag_shade[team & 1];
+    Vec3 l = *at, r = *at, top = *at;
+
+    /* A plate on the floor under the stand. */
+    l.x -= 4.0f;
+    r.x += 4.0f;
+    l.y += 0.4f;
+    r.y += 0.4f;
+    lbColl_80008FC8(l, r, &plate, &plate_amb, 0.6f);
+    if (empty) {
+        /* The flag's ghost: where it goes back to. */
+        GXColor ghost = flag_cloth[team & 1], ghost_amb = flag_shade[team & 1];
+        ghost.a = 0x50;
+        ghost_amb.a = 0x50;
+        top.y += FLAG_POLE_LEN;
+        lbColl_80008FC8(*at, top, &ghost, &ghost_amb, FLAG_POLE_R);
+        lbColl_80008FC8(top, top, &ghost, &ghost_amb, FLAG_POLE_R * 2.0f);
+    }
+    HSD_StateInvalidate(-1);
+    HSD_StateInitTev();
+    HSD_ClearVtxDesc();
+}
+
 Article* itCtfFlag_Article(void)
 {
     return DP(Article, it_804D6D24[It_Kind_M_Ball].v);

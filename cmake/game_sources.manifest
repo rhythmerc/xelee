@@ -633,6 +633,7 @@ src/melee/if/if_2FFC.c
 src/melee/if/if_3004.c
 src/melee/if/ifall.c
 src/melee/if/ifcoget.c
+src/melee/if/ifctf.c
 src/melee/if/ifhazard.c
 src/melee/if/ifmagnify.c
 src/melee/if/ifnametag.c

@@ -40,6 +40,22 @@ void gmCtf_FlagDestroyed(HSD_GObj* item);
 /* Carriers are slowed in this match. */
 bool gmCtf_CarrySlow(void);
 
+/* What the HUD shows (ifctf.c): read-only, from the sim's state. */
+typedef struct GmCtfHud {
+    u8 captures[2];
+    s8 holder[2];        /* the carrier's port, or -1 */
+    bool home[2];
+    bool present[2];     /* the flag item exists (false for a frame after a loss) */
+    u16 return_left[2];  /* frames, while free and counting */
+    bool swap;
+    int frame;
+    const char* base[2]; /* where red and blue defend this game ("BOTTOM LEFT") */
+} GmCtfHud;
+bool gmCtf_GetHud(GmCtfHud* out);
+
+/* The capture sound (Melee's own SFX id). */
+#define CTF_CAPTURE_SFX 0xAA /* the trophy chime (Classic/Adventure trophy catch, itcoin.c) */
+
 /* The match's end: the winning team (0 red, 1 blue) or -1; a tie. */
 int gmCtf_Winner(void);
 bool gmCtf_Tied(void);
