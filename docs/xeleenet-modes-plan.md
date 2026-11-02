@@ -307,6 +307,34 @@ XeleeNet mode row in the wireframe.
 - **Not done in M0:** rollback determinism with a flag in play. It goes with
   M2's synctest and net test, once the rules exist.
 
+## 6b. M1 results (2026-11-01)
+
+- **The look** (`itCtfFlag_Draw`; the borrowed model is never drawn):
+  - an 18-unit pole (Melee's lit hitbox capsule, `lbColl_80008FC8`) with a
+    gold knob;
+  - a two-tone cloth in the team colour, red or blue. It is unlit, waves on
+    wall time, and trails behind a carrier.
+  - Held, it is drawn at the hand part stored at pickup (`ip->xDC4`). The
+    item's root jobj stays where it was picked up; Melee pins a model bone to
+    the hand instead.
+  - It blinks while the return timer is in its last 3 s (wired up in M2).
+- **Item variables:** `xDD4_itemVar.ctfflag` holds `{team, return_left}`.
+  `MELEE_DEBUG_CTF_TEAM` sets the debug flag's team.
+- **Specials blocked** while carrying. The gate is on `itCtfFlag_Is(fp->item_gobj)`
+  in the six special input checks (`ftCo_SpecialS.c`, `ftCo_Attack100.c` ×4,
+  `ftCo_SpecialAir.c`).
+- **Drop bias:** Melee's roll is `HSD_Randi(60) < hit damage`. The flag
+  multiplies the damage by 3: a 12% hit drops it 60% of the time (20% for a
+  normal light item), and 20% or more always does.
+- **Carry slowdown:** walk max, dash initial and dash max are ×0.8, applied
+  in `ftCo_800D105C`. gmctf.c's tick re-runs it for a fighter when its
+  carrying changes.
+- **Melee's CPUs** pick up and carry the flag like any item.
+- **Tests:** `tools/ctf_test.py` runs `carry` and `drop` unpaced (about 6 s
+  for both); both pass.
+- **Captures:** window screenshots go stale under Xwayland after the first.
+  Record with ffmpeg x11grab instead (see the memory on menu frame capture).
+
 ## 7. Open questions
 
 All seven from the first draft were answered 2026-11-01 (decisions 10-17).

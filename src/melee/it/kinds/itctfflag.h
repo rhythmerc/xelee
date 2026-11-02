@@ -14,6 +14,20 @@
 
 extern struct ItemLogicTable itCtfFlag_LogicTable;
 
+/* Is this item a CTF flag? (NULL is not.) */
+bool itCtfFlag_Is(Item_GObj* gobj);
+
+/* Melee drops a held light item when HSD_Randi(x418) < the hit's damage
+ * (Fighter_8006CDA4); a flag carrier rolls with the damage times this. */
+#define CTF_FLAG_DROP_BIAS 3
+
+/* A flag carrier's walk and dash speeds, as a fraction (ftCo_800D105C). */
+#define CTF_FLAG_CARRY_SPEED 0.8f
+
+/* The flag's look (its GXLink render function): a pole and a cloth in its
+ * team's colour, blinking near the end of an auto-return. */
+void itCtfFlag_Draw(HSD_GObj* gobj, intptr_t pass);
+
 /* The article the flag spawns with (the Poke Ball's, from ItCo.dat). */
 Article* itCtfFlag_Article(void);
 

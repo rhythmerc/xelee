@@ -3,6 +3,8 @@
 
 #include <Runtime/platform.h>
 
+#include <melee/it/kinds/itctfflag.h>
+
 #include <dolphin/mtx.h>
 #include <melee/ft/fighter.h>
 #include <melee/ft/ft_081B.h>
@@ -26,6 +28,11 @@ bool ftCo_SpecialS_HasInput(Fighter* fp)
 bool ftCo_SpecialS_CheckInput(Fighter_GObj* gobj)
 {
     Fighter* fp = gobj->user_data;
+#ifdef TARGET_PC
+    if (itCtfFlag_Is(fp->item_gobj)) {
+        return false; /* no specials while carrying a CTF flag */
+    }
+#endif
     if (ftData_SpecialS[fp->kind] == NULL) {
         return false;
     }

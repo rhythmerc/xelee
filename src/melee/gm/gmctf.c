@@ -9,12 +9,16 @@
 #include <Runtime/platform.h>
 
 #include <dolphin/os.h>
+#include <melee/ft/fighter.h>
+#include <melee/ft/ftchangeparam.h>
 #include <melee/ft/inlines.h>
 #include <melee/ft/types.h>
 #include <melee/gr/ground.h>
 #include <melee/gr/stage.h>
 #include <melee/it/forward.h>
+#include <melee/it/inlines.h>
 #include <melee/it/item.h>
+#include <melee/it/kinds/itctfflag.h>
 #include <melee/it/types.h>
 #include <melee/mp/mplib.h>
 #include <melee/mp/types.h>
@@ -24,6 +28,7 @@
 
 #ifdef TARGET_PC
 #include <stdlib.h>
+#include <string.h>
 #endif
 
 #ifdef TARGET_PC
@@ -32,6 +37,30 @@
 static HSD_GObj* ctf_flag;
 static int ctf_frame;
 static bool ctf_spawned;
+/* Per port and fighter (Nana is index 1): whether its attributes were last
+ * built carrying a flag (the carry slowdown, ftCo_800D105C). */
+static bool ctf_carry[4][2];
+
+/* When a fighter starts or stops carrying a flag, rebuild its attributes,
+ * which applies or removes CTF_FLAG_CARRY_SPEED. */
+static void ctf_update_carriers(void)
+{
+    int slot, idx;
+    for (slot = 0; slot < 4; slot++) {
+        for (idx = 0; idx < 2; idx++) {
+            HSD_GObj* g = Player_GetEntityAtIndex(slot, idx);
+            bool holding;
+            if (g == NULL) {
+                continue;
+            }
+            holding = itCtfFlag_Is(GET_FIGHTER(g)->item_gobj);
+            if (holding != ctf_carry[slot][idx]) {
+                ctf_carry[slot][idx] = holding;
+                ftCo_800D105C(g);
+            }
+        }
+    }
+}
 
 /* MELEE_DEBUG_CTF_FLAG: one flag beside port 1 ("1"), or at "x,y". */
 static void ctf_debug_spawn(void)
@@ -68,6 +97,9 @@ static void ctf_debug_spawn(void)
     spawn.x44_flag.b0 = 1;
     spawn.x40 = 0;
     ctf_flag = Item_80268B18(&spawn);
+    if (ctf_flag != NULL && getenv("MELEE_DEBUG_CTF_TEAM") != NULL) {
+        GET_ITEM(ctf_flag)->xDD4_itemVar.ctfflag.team = (u8) (atoi(getenv("MELEE_DEBUG_CTF_TEAM")) & 1);
+    }
     OSReport("ctf: flag spawn at %.1f %.1f -> %s\n", pos.x, pos.y, ctf_flag != NULL ? "ok" : "refused");
 }
 
@@ -83,6 +115,7 @@ static void ctf_survey(void)
     if (getenv("MELEE_DEBUG_CTF_SURVEY") == NULL || md == NULL) {
         return;
     }
+    OSReport("ctf-survey: light item drop roll HSD_Randi(%d)\n", (int) p_ftCommonData->x418);
     OSReport("ctf-survey: blast %.1f %.1f %.1f %.1f\n", Stage_GetBlastZoneLeftOffset(),
              Stage_GetBlastZoneRightOffset(), Stage_GetBlastZoneTopOffset(), Stage_GetBlastZoneBottomOffset());
     OSReport("ctf-survey: cam %.1f %.1f %.1f %.1f\n", Stage_GetCamBoundsLeftOffset(),
@@ -121,6 +154,7 @@ static void ctf_tick(HSD_GObj* gobj)
         ctf_survey();
     }
     ctf_debug_spawn();
+    ctf_update_carriers();
     if (every <= 0 || ctf_frame % every != 0) {
         return;
     }
@@ -128,8 +162,9 @@ static void ctf_tick(HSD_GObj* gobj)
         HSD_GObj* p1 = Player_GetEntity(0);
         if (p1 != NULL) {
             Fighter* fp = GET_FIGHTER(p1);
-            OSReport("ctf: f%d p1 %.1f %.1f holding=%d\n", ctf_frame, fp->cur_pos.x, fp->cur_pos.y,
-                     fp->item_gobj != NULL);
+            OSReport("ctf: f%d p1 %.1f %.1f holding=%d motion=%d walk=%.3f dash=%.3f\n", ctf_frame,
+                     fp->cur_pos.x, fp->cur_pos.y, fp->item_gobj != NULL, fp->motion_id,
+                     fp->co_attrs.walk_max_vel, fp->co_attrs.dash_max_velocity);
         }
         if (ctf_flag != NULL) {
             Item* ip = ctf_flag->user_data;
@@ -145,6 +180,7 @@ void gmCtf_MatchInit(void)
     ctf_flag = NULL;
     ctf_frame = 0;
     ctf_spawned = false;
+    memset(ctf_carry, 0, sizeof ctf_carry);
     if (getenv("MELEE_DEBUG_CTF_LOG") != NULL || getenv("MELEE_DEBUG_CTF_FLAG") != NULL ||
         getenv("MELEE_DEBUG_CTF_SURVEY") != NULL)
     {

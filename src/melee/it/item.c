@@ -975,8 +975,8 @@ static HSD_GObj* Item_8026862C(SpawnItem* spawnItem)
                          0);
 #ifdef TARGET_PC
     } else if (spawnItem->kind >= It_PC_Start) {
-        // Xelee items: the common items' renderer
-        GObj_SetupGXLink(gobj, it_8026EECC, 6, 0);
+        // Xelee items: their own look
+        GObj_SetupGXLink(gobj, itCtfFlag_Draw, 6, 0);
 #endif
     } else if (spawnItem->kind < It_PKind_Start) {
         // Character items

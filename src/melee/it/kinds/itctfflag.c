@@ -11,8 +11,20 @@
 #include <melee/it/item.h>
 #include <melee/it/itmaplib.h>
 #include <melee/it/types.h>
+#include <melee/cm/camera.h>
+#include <melee/ft/ftlib.h>
+#include <melee/lb/lb_00B0.h>
+#include <melee/lb/lbcollision.h>
 #include <melee/mp/mpcoll.h>
+#include <dolphin/gx.h>
+#include <dolphin/mtx.h>
 #include <dolphin/os.h>
+#include <math.h>
+#include <sysdolphin/baselib/cobj.h>
+#include <sysdolphin/baselib/jobj.h>
+#include <sysdolphin/baselib/pobj.h>
+#include <sysdolphin/baselib/state.h>
+#include <sysdolphin/baselib/tev.h>
 
 /* The states, by index:
  *   0 on the ground
@@ -91,6 +103,8 @@ static ItemStateTable flag_states[] = {
 static void flag_spawned(Item_GObj* gobj)
 {
     Item* ip = GET_ITEM(gobj);
+    ip->xDD4_itemVar.ctfflag.team = 0; /* the spawner sets the real team */
+    ip->xDD4_itemVar.ctfflag.return_left = 0;
     Item_80268E5C(gobj, ip->ground_or_air == GA_Air ? FLAG_FALL : FLAG_GROUND, ITEM_ANIM_UPDATE);
 }
 
@@ -167,6 +181,121 @@ struct ItemLogicTable itCtfFlag_LogicTable = {
     flag_bounce, /* hit_shield */
     flag_evt_unk,
 };
+
+bool itCtfFlag_Is(Item_GObj* gobj)
+{
+    return gobj != NULL && GET_ITEM(gobj)->kind == It_Kind_Ctf_Flag;
+}
+
+/* ---- the look: drawn here, not from the borrowed article's model ---- */
+
+/* Team colours: the cloth, its shaded lower edge. */
+static const GXColor flag_cloth[2] = { { 0xE8, 0x3A, 0x3A, 0xFF }, { 0x3F, 0x6F, 0xF0, 0xFF } };
+static const GXColor flag_shade[2] = { { 0x9A, 0x1E, 0x22, 0xFF }, { 0x22, 0x3E, 0x9A, 0xFF } };
+static const GXColor flag_pole = { 0xE8, 0xE2, 0xCF, 0xFF };
+static const GXColor flag_pole_amb = { 0x60, 0x5C, 0x50, 0xFF };
+static const GXColor flag_knob = { 0xF0, 0xC2, 0x26, 0xFF };
+static const GXColor flag_knob_amb = { 0x70, 0x58, 0x10, 0xFF };
+
+#define FLAG_POLE_LEN 18.0f
+#define FLAG_POLE_R 0.7f
+#define FLAG_CLOTH_W 7.5f
+#define FLAG_CLOTH_H 5.0f
+#define FLAG_CLOTH_SEGS 6
+/* Blink for the last 3 s of an auto-return (gmctf.c counts it down). */
+#define FLAG_BLINK_FRAMES 180
+
+
+static void flag_draw_cloth(const Vec3* top, float trail, u8 team)
+{
+    Mtx view;
+    int i;
+    /* The wave runs on wall time: draws happen several times a frame (more
+     * in the headset), and it is no game state. */
+    const float phase = (float) (OSTicksToMilliseconds(OSGetTime()) % 100000) * 0.0096f;
+
+    GXClearVtxDesc();
+    GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+    GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+    GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+    GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
+    GXSetNumChans(1);
+    GXSetChanCtrl(GX_COLOR0A0, GX_DISABLE, GX_SRC_REG, GX_SRC_VTX, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
+    GXSetNumTexGens(0);
+    GXSetNumTevStages(1);
+    GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+    GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+    GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
+    GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_AND, GX_ALWAYS, 0);
+    GXSetZMode(GX_ENABLE, GX_LEQUAL, GX_ENABLE);
+    GXSetCullMode(GX_CULL_NONE);
+    HSD_CObjGetViewingMtx(HSD_CObjGetCurrent(), view);
+    GXLoadPosMtxImm(view, GX_PNMTX0);
+    GXSetCurrentMtx(GX_PNMTX0);
+
+    /* A strip from the pole out to the free edge: top row, bottom row. */
+    GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, 2 * (FLAG_CLOTH_SEGS + 1));
+    for (i = 0; i <= FLAG_CLOTH_SEGS; i++) {
+        const float u = (float) i / FLAG_CLOTH_SEGS;
+        const float x = top->x + trail * FLAG_CLOTH_W * u;
+        const float wave = sinf(phase - u * 3.0f) * 0.9f * u;
+        const float z = top->z + wave;
+        const float sag = 0.8f * u;
+        GXPosition3f32(x, top->y - sag + wave * 0.3f, z);
+        GXColor4u8(flag_cloth[team].r, flag_cloth[team].g, flag_cloth[team].b, 0xFF);
+        GXPosition3f32(x, top->y - FLAG_CLOTH_H - sag + wave * 0.3f, z);
+        GXColor4u8(flag_shade[team].r, flag_shade[team].g, flag_shade[team].b, 0xFF);
+    }
+    GXEnd();
+}
+
+void itCtfFlag_Draw(HSD_GObj* gobj, intptr_t pass)
+{
+    Item* ip = GET_ITEM(gobj);
+    const u8 team = ip->xDD4_itemVar.ctfflag.team & 1;
+    const bool held = ip->msid == FLAG_HELD;
+    Vec3 at, bottom, top, cloth_top;
+    GXColor pole = flag_pole, pole_amb = flag_pole_amb, knob = flag_knob, knob_amb = flag_knob_amb;
+    float trail;
+
+    if (Camera_80031060() != 0 || !ip->xDAA_flag.b7) {
+        return;
+    }
+    if (held && ip->owner != NULL && ftLib_IsFighter(ip->owner) && !ftLib_IsItemVisible(ip->owner, gobj)) {
+        return;
+    }
+    {
+        const u16 left = ip->xDD4_itemVar.ctfflag.return_left;
+        if (left != 0 && left <= FLAG_BLINK_FRAMES && (left / 6) % 2 == 0) {
+            return; /* the auto-return warning */
+        }
+    }
+
+    if (held && ip->owner != NULL && ftLib_IsFighter(ip->owner)) {
+        /* The held item's root stays put; Melee pins a bone of its model to
+         * the hand (it_80274F48). The hand itself: the part pickup stored. */
+        lb_8000B1CC(ftLib_GetPartJObj(ip->owner, ip->xDC4), NULL, &at);
+        /* Gripped a third of the way up; the cloth trails behind. */
+        bottom = at;
+        bottom.y -= FLAG_POLE_LEN * 0.33f;
+        trail = -ftLib_GetFacingDir(ip->owner);
+    } else {
+        bottom = ip->pos;
+        trail = ip->facing_dir;
+    }
+    top = bottom;
+    top.y += FLAG_POLE_LEN;
+
+    lbColl_80008FC8(bottom, top, &pole, &pole_amb, FLAG_POLE_R);
+    lbColl_80008FC8(top, top, &knob, &knob_amb, FLAG_POLE_R * 2.0f);
+    cloth_top = top;
+    cloth_top.y -= FLAG_POLE_R * 2.0f;
+    flag_draw_cloth(&cloth_top, trail >= 0.0f ? 1.0f : -1.0f, team);
+
+    HSD_StateInvalidate(-1);
+    HSD_StateInitTev();
+    HSD_ClearVtxDesc();
+}
 
 Article* itCtfFlag_Article(void)
 {
