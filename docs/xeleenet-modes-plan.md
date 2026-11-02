@@ -156,21 +156,25 @@ maps provide it as a file. For each team:
 named points; `tools/ctf_survey_draw.py` draws them to scale
 (`temple-ctf-survey.png` on the share). Units are the game's.
 
-| | Red: bottom-left | Blue: top-right |
+| | Red: bottom-left | Blue: right edge of the ground floor |
 |---|---|---|
-| Floor it sits on | lines 14-15, y -88.6, x -134.0 to -75.2 (the cave under the left mass; ceiling at y -28) | line 22, y 92.2, x 169.1 to 197.1 (the high floating platform) |
-| Flag stand | (-105, -88.6) | (183, 92.2) |
-| Base zone | x -134 to -75, y -88.6 to -50 | x 169 to 197, y 92.2 to 125 |
-| Respawn points | (-125, -70), (-88, -70) | (176, 112), (190, 112) |
+| Floor it sits on | lines 14-15, y -88.6, x -134.0 to -75.2 (the cave under the left mass; ceiling at y -28) | lines 36-37, y about -5, x 124 to 225.6 (the main floor's right end; the high platform's lower deck is above, at y 47) |
+| Flag stand | (-105, -88.6) | (200, -5.3) |
+| Base zone | x -134 to -75, y -88.6 to -50 (59 wide) | x 170 to 225.6, y -5.3 to 30 (56 wide) |
+| Respawn points | (-125, -70), (-88, -70) | (182, 22), (214, 22) |
+
+The user moved blue from the top-right platform (2026-11-01): from there a red
+flag could be thrown into red's base, but nothing could be thrown up into
+blue's. The right edge is open to the blast zone (x 315), while red's base is
+inside the cave. Watch that asymmetry in playtests.
 
 Others from the dump:
 - **Blast zone:** x ±315, y -257.4 to 207.
 - **Camera bounds:** x ±279, y -201.6 to 180.
 - **Melee's respawn point:** (18, 84.6), the same for every port.
 
-Blue's platform is 28 wide against red's 59, so the zones differ in size; that
-is the asymmetry the side swap answers. Respawning inside the cave needs
-checking in M2, because Melee's rebirth drops in from the camera's top.
+Respawning inside the cave needs checking in M2, because Melee's rebirth
+drops in from the camera's top.
 
 ### 3.3 Rules, tick by tick
 

@@ -51,7 +51,7 @@ for k, x0, y0, x1, y1 in lines:
 # Proposed bases: (name, colour, zone l r bottom top, stand, respawns)
 BASES = [
     ("RED  bottom-left", "#ff5a5a", (-134, -75, -88.6, -50), (-105, -88.6), [(-125, -70), (-88, -70)]),
-    ("BLUE top-right", "#5a8cff", (169, 197, 92.2, 125), (183, 92.2), [(176, 112), (190, 112)]),
+    ("BLUE right edge", "#5a8cff", (170, 225.6, -5.3, 30), (200, -5.3), [(182, 22), (214, 22)]),
 ]
 for name, col, (l, r, b, t), stand, spawns in BASES:
     d.rectangle([P(l, t), P(r, b)], outline=col, width=3)
