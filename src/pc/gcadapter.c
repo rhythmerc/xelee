@@ -189,6 +189,8 @@ static void publish_snapshot(void) {
 /* Cross-thread snapshot for the HUD: raw[6] | present<<48 | wireless<<49. */
 static _Atomic uint64_t s_raw[GC_SLOTS];
 static _Atomic uint64_t s_reports;
+/* s_dev != NULL, for other threads (the pads census). */
+static atomic_bool s_open;
 
 void pc_gcadapter_init(void) {
     const char* env = getenv("MELEE_GC_ADAPTER");
@@ -276,6 +278,7 @@ static void try_open(void) {
     }
     memset(s_rumble + 1, 0, GC_SLOTS);
     s_warned_open = false;
+    atomic_store_explicit(&s_open, true, memory_order_relaxed);
     pc_log_line(
         "GC adapter: WUP-028 opened, raw 1000 Hz path active (MELEE_GC_ADAPTER=0 to use SDL)");
 }
@@ -284,6 +287,7 @@ static void close_dev(const char* why) {
     pc_log_line("GC adapter: %s", why);
     SDL_hid_close(s_dev);
     s_dev = NULL;
+    atomic_store_explicit(&s_open, false, memory_order_relaxed);
     for (int i = 0; i < GC_SLOTS; i++) {
         clear_slot(i);
     }
@@ -501,4 +505,8 @@ bool pc_gcadapter_raw(int port, uint8_t raw[6], bool* wireless) {
 
 uint64_t pc_gcadapter_report_count(void) {
     return atomic_load_explicit(&s_reports, memory_order_relaxed);
+}
+
+bool pc_gcadapter_is_open(void) {
+    return atomic_load_explicit(&s_open, memory_order_relaxed);
 }
