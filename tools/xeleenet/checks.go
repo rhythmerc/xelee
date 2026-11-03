@@ -336,7 +336,7 @@ func settings(v any) Settings {
 	if out.GameMode == "ctf" {
 		caps := m["ctf_caps"]
 		if caps == nil {
-			caps = float64(3)
+			caps = float64(5) // the game's default
 		}
 		out.CtfCaps = intIn(caps, 1, 9, "captures to win")
 		// The mode decides these: red against blue, on time, on its maps.

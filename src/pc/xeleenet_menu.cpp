@@ -230,14 +230,19 @@ struct HostSettings {
     bool hide_code = false;
     // The game mode (docs/xeleenet-modes-plan.md): VS, or Capture the Flag
     // with its own rules. CTF decides teams (on), stock/time (time) and the
-    // stages (the CTF maps) itself.
+    // stages (the CTF maps) itself. Its time limit is its own (VS keeps
+    // `minutes`): match_minutes() is the one in force.
     int mode = 0; // 0 VS, 1 CTF
-    int ctf_caps = 3;
+    int ctf_caps = 5;
+    int ctf_minutes = 10;
     bool ctf_home = true;
-    int ctf_return = 10; // seconds, 0 never
+    int ctf_return = 0; // seconds, 0 never
     bool ctf_slow = true;
 };
 HostSettings s_host;
+
+// The time limit the lobby plays: Capture the Flag has its own.
+int match_minutes(const HostSettings& h) { return h.mode == 1 ? h.ctf_minutes : h.minutes; }
 
 // Capture the Flag's maps, as stage-switch bits: Hyrule Temple (bit 14) for now.
 constexpr unsigned kCtfStages = 1u << 14;
@@ -256,10 +261,10 @@ void host_save() {
     std::fprintf(f,
                  "preset=%d\nname=%s\nopen=%d\nseats=%d\nteams=%d\nstock=%d\nstocks=%d\nminutes=%d\nitems=%d\n"
                  "ff=%d\nhandicap=%d\ndamage=%d\npause=%d\nstages=%u\nfighters=%u\nfrozen=%d\nhide=%d\n"
-                 "mode=%d\nctf_caps=%d\nctf_home=%d\nctf_return=%d\nctf_slow=%d\n",
+                 "mode=%d\nctf_caps=%d\nctf_home=%d\nctf_return=%d\nctf_slow=%d\nctf_minutes=%d\n",
                  h.preset, h.name.c_str(), h.open, h.seats, h.teams, h.stock, h.stocks, h.minutes, h.items,
                  h.friendly_fire, h.handicap, h.damage, h.pause, h.stages, h.fighters, h.frozen, h.hide_code,
-                 h.mode, h.ctf_caps, h.ctf_home, h.ctf_return, h.ctf_slow);
+                 h.mode, h.ctf_caps, h.ctf_home, h.ctf_return, h.ctf_slow, h.ctf_minutes);
     std::fclose(f);
 }
 
@@ -321,6 +326,8 @@ bool host_read(const char* path, HostSettings& h) {
             h.ctf_return = std::clamp(n, 0, 60);
         else if (k == "ctf_slow")
             h.ctf_slow = n != 0;
+        else if (k == "ctf_minutes")
+            h.ctf_minutes = std::clamp(n, 0, 99);
     }
     std::fclose(f);
     if (h.stages == 0)
@@ -417,7 +424,7 @@ std::string settings_json() {
                   "\"format\":\"endless\",\"first_to\":2,\"place_secs\":15,\"game_mode\":\"%s\",\"ctf_caps\":%d,"
                   "\"fighter_mask\":%u,\"stage_mask\":%u}",
                   kPresetIds[h.preset], h.seats, h.teams || h.mode ? "teams" : "ffa", h.stock && !h.mode ? "stock" : "time",
-                  h.stocks, h.minutes, kItemIds[h.items + 1],
+                  h.stocks, match_minutes(h), kItemIds[h.items + 1],
                   h.mode ? "custom" : h.stages == kCompetitive ? "competitive" : h.stages == kAllStages ? "all" : "custom",
                   fighter_list_id(h.fighters), h.mode ? "ctf" : "vs", h.ctf_caps, h.fighters,
                   h.mode ? kCtfStages : h.stages);
@@ -430,7 +437,8 @@ std::string settings_json() {
 // visibility and the code's hiding, which only the listing shows.
 bool plays_same(const HostSettings& a, const HostSettings& b) {
     return a.seats == b.seats && a.teams == b.teams && a.stock == b.stock && a.stocks == b.stocks &&
-           a.minutes == b.minutes && a.items == b.items && (a.teams && a.friendly_fire) == (b.teams && b.friendly_fire) &&
+           match_minutes(a) == match_minutes(b) && a.items == b.items &&
+           (a.teams && a.friendly_fire) == (b.teams && b.friendly_fire) &&
            a.handicap == b.handicap && a.damage == b.damage && a.pause == b.pause && a.stages == b.stages &&
            a.fighters == b.fighters && a.frozen == b.frozen && a.mode == b.mode &&
            (a.mode == 0 || (a.ctf_caps == b.ctf_caps && a.ctf_home == b.ctf_home && a.ctf_return == b.ctf_return &&
@@ -878,8 +886,8 @@ struct Screen : Rml::EventListener {
                "xeleenet.host.hints.teams_locked", false, "xeleenet.host.values.locked");
         choice(r, "caps", 0, o + 4, "xeleenet.host.rows.ctf_caps", std::to_string(h.ctf_caps),
                [](int d) { s_edit->ctf_caps = 1 + (s_edit->ctf_caps - 1 + d + 9) % 9; }, "xeleenet.host.hints.ctf_caps");
-        choice(r, "time", 0, o + 5, "xeleenet.host.rows.time", minutes_label(h.minutes),
-               [](int d) { s_edit->minutes = step(kMinutes, s_edit->minutes, d); }, "xeleenet.host.hints.time");
+        choice(r, "time", 0, o + 5, "xeleenet.host.rows.time", minutes_label(h.ctf_minutes),
+               [](int d) { s_edit->ctf_minutes = step(kMinutes, s_edit->ctf_minutes, d); }, "xeleenet.host.hints.time");
         choice(r, "home", 0, o + 6, "xeleenet.host.rows.ctf_home", on_off(h.ctf_home),
                [](int) { s_edit->ctf_home = !s_edit->ctf_home; }, "xeleenet.host.hints.ctf_home");
         choice(r, "ret", 0, o + 7, "xeleenet.host.rows.ctf_return", ctf_return_label(h.ctf_return),
@@ -1177,9 +1185,9 @@ struct Screen : Rml::EventListener {
             {
                 // A Capture the Flag lobby: teams, Temple only, as the
                 // service requires of every one.
-                PcXnListing ctf = sample("F4LG9T", "Flag runners", "PENNANT", "7CTF", "US", 2, 4, true, false, 4, 8,
+                PcXnListing ctf = sample("F4LG9T", "Flag runners", "PENNANT", "7CTF", "US", 2, 4, true, false, 4, 10,
                                          false, false, false);
-                ctf.ctf = true, ctf.ctf_caps = 3, ctf.teams = true, ctf.stage_mask = kCtfStages;
+                ctf.ctf = true, ctf.ctf_caps = 5, ctf.teams = true, ctf.stage_mask = kCtfStages;
                 rows.insert(rows.begin() + 1, ctf);
             }
             others = 2, fetch = 1, fetchedAt = SDL_GetTicks() - 4000;
@@ -2532,7 +2540,8 @@ void s_draft_set(bool host) {
 // page's settings, for a guest's read-only overlay and the diffs.
 HostSettings from_rules(const PcXnRules& r) {
     HostSettings h = s_host;
-    h.seats = r.seats, h.teams = r.teams, h.stock = r.stock, h.stocks = r.stocks, h.minutes = r.minutes;
+    h.seats = r.seats, h.teams = r.teams, h.stock = r.stock, h.stocks = r.stocks;
+    (r.game_mode == 1 ? h.ctf_minutes : h.minutes) = r.minutes;
     h.items = r.items, h.friendly_fire = r.friendly_fire, h.handicap = r.handicap, h.damage = r.damage_ratio;
     h.pause = r.pause, h.stages = r.stage_mask, h.fighters = r.fighter_mask, h.frozen = r.frozen_stadium;
     h.mode = r.game_mode, h.ctf_caps = r.ctf_caps, h.ctf_home = r.ctf_home, h.ctf_return = r.ctf_return;
@@ -2567,7 +2576,7 @@ std::vector<std::string> rule_changes(const HostSettings& a, const HostSettings&
             tr(b.stock ? "xeleenet.rules.values.stock" : "xeleenet.rules.values.time"));
     else if (b.stock)
         add("xeleenet.host.rows.stocks", std::to_string(a.stocks), std::to_string(b.stocks));
-    add("xeleenet.host.rows.time", minutes_label(a.minutes), minutes_label(b.minutes));
+    add("xeleenet.host.rows.time", minutes_label(match_minutes(a)), minutes_label(match_minutes(b)));
     add("xeleenet.host.rows.items", tr(kItemNames[a.items + 1]), tr(kItemNames[b.items + 1]));
     add("xeleenet.host.rows.ff", on_off(a.teams && a.friendly_fire), on_off(b.teams && b.friendly_fire));
     add("xeleenet.rules.rows.handicap", tr(kHandicapNames[a.handicap]), tr(kHandicapNames[b.handicap]));
@@ -2670,10 +2679,10 @@ std::string rules_line_rml(const HostSettings& h, unsigned lit) {
         return (lit & bit) ? "<span class=\"lit\">" + enc(text) + "</span>" : enc(text);
     };
     std::string r;
-    if (h.mode == 1) { // "Capture the Flag · First to 3 · 8:00"
+    if (h.mode == 1) { // "Capture the Flag · First to 5 · 10:00"
         r = part(1, tr("xeleenet.rules_line.ctf"));
         r += enc(kDot) + part(2, tr("xeleenet.rules_line.ctf_caps", {{"n", h.ctf_caps}}));
-        r += enc(kDot) + part(4, minutes_label(h.minutes));
+        r += enc(kDot) + part(4, minutes_label(h.ctf_minutes));
         if (h.items >= 0)
             r += enc(kDot) + part(8, tr("xeleenet.rules_line.items"));
         return r;
@@ -2698,7 +2707,7 @@ unsigned rules_line_diff(const HostSettings& a, const HostSettings& b) {
         m |= 1;
     if (a.stock != b.stock || (b.stock && a.stocks != b.stocks))
         m |= 2;
-    if (a.minutes != b.minutes)
+    if (match_minutes(a) != match_minutes(b))
         m |= 4;
     if ((a.items >= 0) != (b.items >= 0))
         m |= 8;
@@ -2782,7 +2791,7 @@ struct Banner : Rml::EventListener {
             rules_all = rules_line_rml(s_rules_now, lit ? rules_line_diff(s_rules_prev, s_rules_now) : 0u);
         } else {
             const std::string rules =
-                host ? rules_line(s_host.teams, s_host.seats, s_host.stock, s_host.stocks, s_host.minutes,
+                host ? rules_line(s_host.teams, s_host.seats, s_host.stock, s_host.stocks, match_minutes(s_host),
                                   kItemIds[s_host.items + 1])
                      : known ? rules_line(info.teams, info.seats, info.stock, info.stocks, info.time_min, info.items) : "";
             // The fighter list, when it isn't All.
@@ -3269,9 +3278,9 @@ void Screen::build_overlay_host() {
         choice(r, "caps", 0, 0, "xeleenet.host.rows.ctf_caps", std::to_string(h.ctf_caps),
                [](int d) { s_edit->ctf_caps = 1 + (s_edit->ctf_caps - 1 + d + 9) % 9; }, "xeleenet.host.hints.ctf_caps",
                true, nullptr, was(std::to_string(h.ctf_caps), std::to_string(o.ctf_caps)));
-        choice(r, "time", 0, 1, "xeleenet.host.rows.time", minutes_label(h.minutes),
-               [](int d) { s_edit->minutes = step(kMinutes, s_edit->minutes, d); }, "xeleenet.host.hints.time", true,
-               nullptr, was(minutes_label(h.minutes), minutes_label(o.minutes)));
+        choice(r, "time", 0, 1, "xeleenet.host.rows.time", minutes_label(h.ctf_minutes),
+               [](int d) { s_edit->ctf_minutes = step(kMinutes, s_edit->ctf_minutes, d); }, "xeleenet.host.hints.time",
+               true, nullptr, was(minutes_label(h.ctf_minutes), minutes_label(o.ctf_minutes)));
         choice(r, "home", 0, 2, "xeleenet.host.rows.ctf_home", on_off(h.ctf_home),
                [](int) { s_edit->ctf_home = !s_edit->ctf_home; }, "xeleenet.host.hints.ctf_home", true, nullptr,
                was(on_off(h.ctf_home), on_off(o.ctf_home)));
@@ -3985,7 +3994,7 @@ extern "C" void pc_xn_menu_rules(PcXnRules* out) {
     out->teams = h.teams;
     out->stock = h.stock;
     out->stocks = h.stocks;
-    out->minutes = h.minutes;
+    out->minutes = match_minutes(h);
     out->items = h.items;
     out->friendly_fire = h.teams && h.friendly_fire;
     out->handicap = h.handicap;

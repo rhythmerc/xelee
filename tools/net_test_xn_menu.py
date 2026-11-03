@@ -790,7 +790,9 @@ def set_rules(ident, seats, teams=False, fighters=FIGHTERS_ALL, stages=COMPETITI
                 f"minutes=1\nitems=-1\nff=0\nhandicap=0\ndamage=10\npause=0\nstages={stages}\n"
                 f"fighters={fighters}\nfrozen=1\nhide=0\n")
         if ctf:  # --scenario ctf: Capture the Flag (docs/xeleenet-modes-plan.md)
-            f.write("mode=1\nctf_caps=3\nctf_home=1\nctf_return=10\nctf_slow=1\n")
+            # Only the mode: its rules are the game's defaults (first to 5,
+            # flag home on, no auto-return, carrying slows, 10:00).
+            f.write("mode=1\n")
 
 
 # --scenario details: the host's lobby (2 seats, Low tiers, Final Dest. only).
@@ -1731,10 +1733,12 @@ def run(args):
             ok = False
         if args.scenario == "ctf":
             # Every player's match is Capture the Flag on Temple from the
-            # lobby's RULES, its HUD up, and its sides as set (game 1).
+            # lobby's RULES (the defaults: first to 5, no auto-return, 10:00),
+            # its HUD up, and its sides as set (game 1).
             for i, t in zip(insts, texts):
-                want = (r"game_mode=1/3/1/10/1", r"online: Capture the Flag, game 1 of the session",
-                        r"ctf: match on stage 14, first to 3, home required 1, return 600 frames, swap 0",
+                want = (r"net: RULES (?:in force|applied) mode=\d+ time=10 .* game_mode=1/5/1/0/1",
+                        r"online: Capture the Flag, game 1 of the session",
+                        r"ctf: match on stage 14, first to 5, home required 1, return 0 frames, swap 0",
                         r"ctf-hud: timer 1")
                 missing = [w for w in want if not nt.re.search(w, t)]
                 if missing:
