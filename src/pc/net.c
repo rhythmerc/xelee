@@ -21,6 +21,7 @@
  *   MELEE_NET_SIM_REORDER=pct    hold that share of packets behind the next one
  *   MELEE_NET_SIM_DUP=pct        send that share of packets twice
  *   MELEE_NET_SIM_BURST=n        every 5 s drop n consecutive outgoing packets
+ *   MELEE_NET_SIM_CUT=a:b@f-t    ports a and b cannot reach each other from frame f to t
  *   (the simulator's PRNG is seeded from MELEE_NET_PORT, so runs repeat)
  *
  * This file is the session, the socket and the rollback loop; the wire
@@ -624,6 +625,16 @@ static Uint32 SDLCALL tx_timer(void* ud, SDL_TimerID id, Uint32 interval) {
  * input packets still do, so a link that comes back is heard: it revives, and
  * the host stops relaying that pair.
  *
+ * Giving a link up takes seconds, and every player stalls on the one input
+ * that cannot arrive meanwhile (the playtest of 2026-11-02 froze 3 s that
+ * way). So long before it does, a guest that has heard nothing on a link for
+ * RELAY_ASK_MS while the host was heard just now puts that port in the same
+ * REL_ROUTE mask, and the host relays as above. The link itself stays up --
+ * its reliable lane keeps retrying, and its input still goes out -- so a
+ * message can land twice, once direct and once relayed: whichever copy lands
+ * second is dropped (relay_twin). Once the link is heard again and the ask is
+ * RELAY_HOLD_MS old, the guest takes the port off the mask.
+ *
  * "While its other links are fresh" is what tells a dead link from a starved
  * process. Four games booting on one machine stalled whole processes for
  * seconds (tools/net_test_n.py, cold caches), and every link looked silent at
@@ -648,8 +659,15 @@ static Uint32 SDLCALL tx_timer(void* ud, SDL_TimerID id, Uint32 interval) {
 #define ROUTE_BACK_MS 500    /* a dead route heard this recently is back */
 #define DROP_SETTLE_MS 500   /* the collected input stopped growing this long */
 #define VOID_LEAD 60         /* frames past the last input the match is void on */
+#define RELAY_ASK_MS 200     /* a working guest link silent this long: ask for the relay */
+#define RELAY_NEVER_MS 1000  /* one never heard, this long after the handshake */
+#define RELAY_HOST_MS 100    /* "the host was heard just now" */
+#define RELAY_HOLD_MS 1500   /* an ask stands at least this long */
+#define TWIN_MS 5000         /* a delivered message's twin is looked for this long */
 
 static uint8_t s_fwd[PORTS];                  /* peers (bit = peer index) port o's input goes on to */
+static uint8_t s_relay_mask;                  /* guest: ports asked for before their link is dead */
+static uint64_t s_relay_t[PORTS];             /* when it asked, then when it stopped */
 static int32_t s_fwd_acked[PORTS][MAX_PEERS]; /* what each of them holds of it (tx_lock) */
 static uint8_t s_route_mask;                  /* guest: ports it cannot hear */
 static bool s_route_told;                     /* the host has that mask */
@@ -677,8 +695,92 @@ static Peer* peer_by_port(int port) {
     return NULL;
 }
 
+/* Twins (game thread): a message a guest asked the host to relay before the
+ * direct link was given up on can land by both paths. Each delivered copy
+ * cancels one identical copy from the same player by the other path, in
+ * order; a player's messages keep their order on each path, so pairing the
+ * oldest match pairs the right two. Direct copies are only remembered while
+ * a relay of that player is asked for (and TWIN_MS after), because only then
+ * can a twin follow. */
+typedef struct Twin {
+    uint64_t t;
+    uint32_t hash;
+    uint16_t len;
+    uint8_t port, type;
+    bool relayed;
+} Twin;
+#define TWINS 32
+static Twin s_twin[TWINS];
+static bool s_rx_relayed; /* the message being dispatched came through the host */
+
+static void relay_twins_reset(void) {
+    memset(s_twin, 0, sizeof s_twin);
+    s_rx_relayed = false;
+}
+
+static uint32_t twin_hash(uint8_t type, const void* payload, int len) {
+    uint32_t h = 2166136261u ^ type;
+    for (int k = 0; k < len; k++) {
+        h = (h ^ ((const uint8_t*)payload)[k]) * 16777619u;
+    }
+    return h;
+}
+
+/* True when this message's copy by the other path has already landed: drop it. */
+bool net_relay_twin(int peer, uint8_t type, const void* payload, int len) {
+    if (net.local == 0 || peer < 0 || peer >= net.npeers) {
+        return false; /* only guests are relayed to */
+    }
+    uint64_t now = SDL_GetTicksNS();
+    uint32_t h = twin_hash(type, payload, len);
+    Twin* best = NULL;
+    for (int k = 0; k < TWINS; k++) {
+        Twin* w = &s_twin[k];
+        if (w->t != 0 && now - w->t < TWIN_MS * 1000000ull && w->port == s_peer[peer].port &&
+            w->relayed != s_rx_relayed && w->type == type && w->len == len && w->hash == h &&
+            (best == NULL || w->t < best->t))
+        {
+            best = w;
+        }
+    }
+    if (best == NULL) {
+        return false;
+    }
+    best->t = 0;
+    pc_log_line("net: type %02x from P%d landed %s first; dropped its twin", type,
+        s_peer[peer].port + 1, s_rx_relayed ? "direct" : "relayed");
+    return true;
+}
+
+/* A message from that player was delivered: remember it if a twin may follow. */
+void net_relay_landed(int peer, uint8_t type, const void* payload, int len) {
+    if (net.local == 0 || peer < 0 || peer >= net.npeers) {
+        return;
+    }
+    const int port = s_peer[peer].port;
+    uint64_t now = SDL_GetTicksNS();
+    const bool watched = ((s_relay_mask | s_route_mask) & (1u << port)) ||
+                         (s_relay_t[port] != 0 && now - s_relay_t[port] < TWIN_MS * 1000000ull);
+    if (!s_rx_relayed && !watched) {
+        return;
+    }
+    Twin* slot = &s_twin[0];
+    for (int k = 0; k < TWINS; k++) {
+        if (s_twin[k].t == 0 || now - s_twin[k].t >= TWIN_MS * 1000000ull) {
+            slot = &s_twin[k];
+            break;
+        }
+        slot = s_twin[k].t < slot->t ? &s_twin[k] : slot; /* full: the oldest goes */
+    }
+    *slot = (Twin){now, twin_hash(type, payload, len), (uint16_t)len, (uint8_t)port, type,
+        s_rx_relayed};
+}
+
 static void links_reset(void) {
     memset(s_fwd, 0, sizeof s_fwd);
+    s_relay_mask = 0;
+    memset(s_relay_t, 0, sizeof s_relay_t);
+    relay_twins_reset();
     for (int o = 0; o < PORTS; o++) {
         s_port_end[o] = -1;
         for (int i = 0; i < MAX_PEERS; i++) {
@@ -903,7 +1005,9 @@ void net_link_rel(int peer, uint8_t type, const void* payload, int len) {
     case REL_RELAY: { /* the host passing on another guest's message */
         Peer* o = len >= 2 && from_host ? peer_by_port(b[0]) : NULL;
         if (o != NULL && o != &s_peer[peer]) {
+            s_rx_relayed = true; /* for relay_twin */
             rel_dispatch(peer_index(o), b[1], b + 2, len - 2);
+            s_rx_relayed = false;
         }
         return;
     }
@@ -990,6 +1094,10 @@ static void links_poll(void) {
                 net.link_dead[i] = false;
                 SDL_UnlockMutex(net.tx_lock);
                 s_route_mask &= (uint8_t)~(1u << port);
+                if (s_relay_mask & (1u << port)) {
+                    s_relay_mask &= (uint8_t)~(1u << port);
+                    s_relay_t[port] = now; /* twins may still be on their way */
+                }
                 s_route_told = false;
                 pc_log_line("net: link to P%d is back at frame %d", port + 1, net.frame);
             }
@@ -1024,6 +1132,25 @@ static void links_poll(void) {
             continue; /* the host going silent ends the session (wait_remote) */
         }
         bool host_fresh = host >= 0 && heard[host] && now - last[host] < FRESH_MS * 1000000ull;
+        /* Ask for the relay well before giving the link up (above). */
+        const uint8_t bit = (uint8_t)(1u << port);
+        bool host_now = host >= 0 && heard[host] && now - last[host] < RELAY_HOST_MS * 1000000ull;
+        uint64_t silent = heard[i] ? now - last[i] : s_link_t0 != 0 ? now - s_link_t0 : 0;
+        uint64_t ask = (heard[i] ? RELAY_ASK_MS : RELAY_NEVER_MS) * 1000000ull;
+        if (judge && !(s_relay_mask & bit) && host_now && silent > ask) {
+            s_relay_mask |= bit;
+            s_relay_t[port] = now;
+            s_route_told = false;
+            pc_log_line("net: P%d silent %.0f ms at frame %d; asking the host to relay it",
+                port + 1, silent / 1e6, net.frame);
+        } else if ((s_relay_mask & bit) && heard[i] && now - last[i] < RELAY_HOST_MS * 1000000ull &&
+                   now - s_relay_t[port] > RELAY_HOLD_MS * 1000000ull)
+        {
+            s_relay_mask &= (uint8_t)~bit;
+            s_relay_t[port] = now; /* twins may still be on their way */
+            s_route_told = false;
+            pc_log_line("net: P%d heard again at frame %d; no relay needed", port + 1, net.frame);
+        }
         bool never = !heard[i] && s_link_t0 != 0 && now - s_link_t0 > ROUTE_WAIT_MS * 1000000ull;
         bool quiet = heard[i] && now - last[i] > ROUTE_SILENT_MS * 1000000ull;
         if (judge && (never || quiet) && host_fresh) {
@@ -1036,7 +1163,8 @@ static void links_poll(void) {
         }
     }
     if (!s_route_told && host >= 0) {
-        s_route_told = rel_send_to(host, REL_ROUTE, &s_route_mask, 1);
+        const uint8_t m = s_route_mask | s_relay_mask;
+        s_route_told = rel_send_to(host, REL_ROUTE, &m, 1);
     }
     /* Host: a player's collected input has settled and every guest holds it. */
     if (net.local == 0) {
@@ -4933,7 +5061,8 @@ static void capture_local_sample(bool fresh) {
  *
  *   net:   peers: P2 98 ms (avg 66, 12-212, jitter 31.1, loss 0%); P3 ...
  *
- * "dead" marks a link this side has given up on, "gone" a player who left. */
+ * "dead" marks a link this side has given up on, "gone" a player who left,
+ * "relayed" one whose relay this side asked for while the link still stands. */
 static void stats_peers_report(void) {
     if (net.npeers < 2) {
         return; /* a 1v1's one link is the stats line itself */
@@ -4949,7 +5078,8 @@ static void stats_peers_report(void) {
             p->port + 1, p->ping_us / 1000,
             p->st_rtt_n ? p->st_rtt_sum / 1000.0 / p->st_rtt_n : 0.0, p->st_rtt_min / 1000,
             p->st_rtt_max / 1000, p->st_jit_n ? p->st_jit_sum / 1000.0 / p->st_jit_n : 0.0, loss,
-            (s_gone & (1u << p->port)) ? " gone" : net.link_dead[i] ? " dead" : "");
+            (s_gone & (1u << p->port)) ? " gone" : net.link_dead[i] ? " dead" :
+            (s_relay_mask & (1u << p->port)) ? " relayed" : "");
         p->st_rtt_sum = p->st_jit_sum = 0;
         p->st_rtt_min = p->st_rtt_max = 0;
         p->st_rtt_n = p->st_jit_n = p->st_tx = p->st_acks = 0;

@@ -20,6 +20,11 @@ static Held s_held[HELD_MAX];   /* outgoing, under tx_lock */
  * drops what it would send across a listed pair, so set the same value on
  * all of them. Bit (a * 4 + b) and (b * 4 + a) per pair. */
 static uint16_t s_sim_block;
+/* MELEE_NET_SIM_CUT="1:2@600-780": one such pair, only from frame 600 to 780
+ * of the session: a working link that goes dead for a while and comes back
+ * (the playtest's 3 s outage between two guests). Set it on every instance. */
+static uint16_t s_sim_cut;
+static int32_t s_sim_cut_from, s_sim_cut_to;
 
 static unsigned sim_rand(unsigned n) {
     s_sim_rng ^= s_sim_rng << 13;
@@ -64,6 +69,11 @@ void tx(int peer, const void* body, size_t body_len) {
         return; /* no sender builds one: a truncated datagram would be worse */
     }
     if (s_sim_block & (1u << (net.local * 4 + net.peer_port[peer]))) {
+        return;
+    }
+    if ((s_sim_cut & (1u << (net.local * 4 + net.peer_port[peer]))) &&
+        net.frame >= s_sim_cut_from && net.frame < s_sim_cut_to)
+    {
         return;
     }
     memcpy(stamped, body, body_len);
@@ -157,6 +167,20 @@ void sim_env(uint16_t bind_port) {
     net.sim_hold = net.sim_delay_ns || net.sim_jitter_ms || net.sim_reorder || net.sim_dup;
     s_sim_rng = (uint32_t)bind_port * 2654435761u | 1u;
     s_sim_block = net_sim_block_mask();
+    s_sim_cut = 0;
+    v = getenv("MELEE_NET_SIM_CUT");
+    const char* at = v != NULL ? strchr(v, '@') : NULL;
+    if (at != NULL && v[0] >= '0' && v[0] <= '3' && v[1] == ':' && v[2] >= '0' && v[2] <= '3') {
+        int a = v[0] - '0', b = v[2] - '0';
+        const char* dash = strchr(at, '-');
+        s_sim_cut = (uint16_t)(1u << (a * 4 + b) | 1u << (b * 4 + a));
+        s_sim_cut_from = (int32_t)strtol(at + 1, NULL, 10);
+        s_sim_cut_to = dash != NULL ? (int32_t)strtol(dash + 1, NULL, 10) : INT32_MAX;
+        pc_log_line("net: sim cut between P%d and P%d from frame %d to %d", a + 1, b + 1,
+            s_sim_cut_from, s_sim_cut_to);
+    } else if (v != NULL) {
+        pc_log_line("net: MELEE_NET_SIM_CUT wants a:b@from-to with ports 0-3, not %s", v);
+    }
     for (int a = 0; a < 4; a++) {
         for (int b = a + 1; b < 4; b++) {
             if (s_sim_block & (1u << (a * 4 + b))) {

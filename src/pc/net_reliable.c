@@ -267,7 +267,11 @@ bool rel_dispatch(int peer, uint8_t type, const void* payload, int len) {
     /* Everything a player broadcasts that every peer acts on (the scene
      * hand-off, chat, the caller's messages) also goes on, through the host,
      * to a guest that cannot hear that player. */
-    if (type != REL_RESUME && type != REL_DELAY) {
+    const bool relayable = type != REL_RESUME && type != REL_DELAY;
+    if (relayable && net_relay_twin(peer, type, payload, len)) {
+        return true; /* its copy by the other path landed first (net.c, routes) */
+    }
+    if (relayable) {
         net_relay_out(peer, type, payload, len);
     }
     if (type == REL_RESUME) {
@@ -290,6 +294,9 @@ bool rel_dispatch(int peer, uint8_t type, const void* payload, int len) {
         if (len > 0) {
             memcpy(m->payload, payload, (size_t)len);
         }
+    }
+    if (relayable) {
+        net_relay_landed(peer, type, payload, len);
     }
     return true;
 }

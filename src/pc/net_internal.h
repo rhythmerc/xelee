@@ -495,6 +495,11 @@ void net_link_rel(int peer, uint8_t type, const void* payload, int len);
 /* The host passes a reliable message from `peer` on to the guests that cannot
  * hear it (REL_RELAY); a no-op anywhere else. */
 void net_relay_out(int peer, uint8_t type, const void* payload, int len);
+/* A guest asked for a player's relay while the direct link still works, so
+ * that player's messages may land twice: true when this one's copy by the
+ * other path already landed (drop it); net_relay_landed after delivering. */
+bool net_relay_twin(int peer, uint8_t type, const void* payload, int len);
+void net_relay_landed(int peer, uint8_t type, const void* payload, int len);
 
 /* One sendto with errno/WSA translation and the sock_err counter; used by
  * the senders here and the link simulator's flush (net_sim.c). Caller holds
