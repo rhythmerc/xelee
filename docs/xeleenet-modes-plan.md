@@ -236,12 +236,12 @@ All of this runs in the sim, once per tick, after fighters and items.
 
 | Setting | Default | Range |
 |---|---|---|
-| Captures to win | 3 | 1-9 |
-| Time limit | 8 min | 3-15, or none |
+| Captures to win | 5 (3 until the 2026-11-02 playtest) | 1-9 |
+| Time limit | 10 min (8 until the playtest; VS keeps 8) | 3-15, or none |
 | Flag must be home to score | on | on / off |
-| Auto-return | 10 s (blinks the last 3 s) | 5-30, or off |
+| Auto-return | off (10 s until the playtest; blinks the last 3 s) | 5-60, or off |
 | Respawn delay | Melee's default | proposal: a setting later, if play says so |
-| Carrying slows you | on | off / on (walk and run speed ×0.8 to start, tuned by play) |
+| Carrying slows you | on | off / on (walk and dash speed ×0.75; ×0.8 until the playtest) |
 | Other items | off | off, or the lobby's item settings |
 
 ## 4. Tests
@@ -501,6 +501,28 @@ CTF is a XeleeNet (and LAN) lobby mode.
   Temple from the host's rules) passes (no desync; a
   scoreless 1-minute match ends No Contest). The default scenario still
   passes; its Preset press now steps Down from the Mode bar first. `tools/ctf_test.py` is 15/15.
+
+## 6h. Playtest tuning (2026-11-03)
+
+From the 2026-11-02 playtest notes:
+- **Defaults:** first to 5 captures, 10:00, auto-return off, in the Host
+  page, the listing's JSON fallbacks, the service (`checks.go`'s missing
+  `ctf_caps`), the lobby-list preview and the debug match. CTF's time limit is
+  now its own setting (`ctf_minutes`, `match_minutes()`), so VS keeps 8:00.
+  A saved `xeleenet-lobby.txt` keeps the values it already has.
+- **Carry slowdown:** ×0.75 (`CTF_FLAG_CARRY_SPEED`), on the same walk and
+  dash speeds.
+- **Throws:** a flag's horizontal launch speed is ×0.85 in its `thrown`
+  callback (`CTF_FLAG_THROW_SPEED`); the vertical speed is kept, so every
+  throw lands 15% shorter (measured: a back throw 92.9 → 79.0, a neutral one
+  47.2 → 40.2). Drops keep Melee's speeds. Both bases still take a throw
+  home: red from the tunnel slope about 39 units out, blue from the main
+  floor's left end about 46 out (`ctf_test.py` `throwred`, `throwblue`).
+- **Zone rings:** a low translucent prism round each capture zone in the
+  team's colour (`pc_ctf_zone_ring`), 5 units tall on the zone's floor and
+  ±10 deep, with a lighter lip and a glow at its foot; drawn all match from
+  the stands' draw (the beams' path, so in the eye passes too; unverified on
+  a headset).
 
 ## 7. Open questions
 
