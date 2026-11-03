@@ -22,8 +22,18 @@ bool itCtfFlag_Is(Item_GObj* gobj);
  * (Fighter_8006CDA4); a flag carrier rolls with the damage times this. */
 #define CTF_FLAG_DROP_BIAS 3
 
-/* A flag carrier's walk and dash speeds, as a fraction (ftCo_800D105C). */
-#define CTF_FLAG_CARRY_SPEED 0.8f
+/* A flag carrier's walk and dash speeds, as a fraction (ftCo_800D105C).
+ * 0.8 at first; the 2026-11-02 playtest wanted carrying to cost more. */
+#define CTF_FLAG_CARRY_SPEED 0.75f
+
+/* A thrown flag's horizontal launch speed, as a fraction of Melee's
+ * light-item throw (on top of the borrowed Poke Ball's x4_throw_speed_mul).
+ * The vertical speed is kept, so the arc's flight time is too and every throw
+ * lands this much shorter, from any height; up throws reach as high as
+ * before. The 2026-11-02 playtest wanted throws about 15% shorter. A constant
+ * in the sim: deterministic. Drops (a hit knocking it loose) aren't throws
+ * and keep Melee's speeds. */
+#define CTF_FLAG_THROW_SPEED 0.85f
 
 /* The flag's look (its GXLink render function): a pole and a cloth in its
  * team's colour, blinking near the end of an auto-return. */

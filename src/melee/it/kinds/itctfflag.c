@@ -130,8 +130,13 @@ static void flag_dropped(Item_GObj* gobj)
 
 static void flag_thrown(Item_GObj* gobj)
 {
+    Item* ip = GET_ITEM(gobj);
     Item_80268E5C(gobj, FLAG_THROWN, 6);
-    OSReport("ctf: flag thrown\n");
+    /* Item_8026AD20 set the launch velocity just before this callback: a
+     * shorter throw, the same arc time (CTF_FLAG_THROW_SPEED). */
+    ip->x40_vel.x *= CTF_FLAG_THROW_SPEED;
+    ip->x40_vel.z *= CTF_FLAG_THROW_SPEED;
+    OSReport("ctf: flag thrown at %.1f %.1f vel %.3f %.3f\n", ip->pos.x, ip->pos.y, ip->x40_vel.x, ip->x40_vel.y);
 }
 
 static bool flag_bounce(Item_GObj* gobj)

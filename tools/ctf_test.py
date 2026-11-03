@@ -6,7 +6,7 @@ reads the game's "ctf:" log lines.
     DISPLAY=:0 tools/ctf_test.py [--exe build/linux/melee] [--disc ...] [scenario ...]
 
 The flag item (M1; one stray flag beside player 1, no CTF rules):
-  carry      pick up with A; B while holding does nothing; walk/dash slow to 0.8
+  carry      pick up with A; B while holding does nothing; walk/dash slow to 0.75
              while carrying and come back after the throw; it lands and stays.
   drop       a CPU Mario hits the carrier until the flag shakes loose.
 
@@ -25,6 +25,10 @@ floor (red -62, blue -30) so the script's runs are short; P1 is red.
   start      on Temple's real layout P1 starts in red's cave.
   respawn    P1 walks off the cave's edge, is KO'd, and is reborn in the cave.
   swap       with the sides swapped, P1 (red) starts at the right edge instead.
+  throwred   on the real layout, blue's flag picked up on the cave's tunnel and
+             thrown back from the slope (about 39 units out) scores for red.
+  throwblue  the same for the right edge (sides swapped): thrown from the main
+             floor's left end (about 46 units out).
 """
 import argparse
 import os
@@ -38,6 +42,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Link's first special motion id: anything at or above it is a special move.
 SPECIAL_MOTION_MIN = 341
+# A carrier's walk and dash, as a fraction (CTF_FLAG_CARRY_SPEED, itctfflag.h).
+CARRY_SPEED = 0.75
 NEAR = {"MELEE_DEBUG_CTF": "1", "MELEE_DEBUG_CTF_BASES": "-62,22.5,-30,22.5"}
 GO = "until ctf: f170 p1 300f\n"  # inputs before GO! are ignored
 
@@ -74,6 +80,14 @@ THROW = FETCH + "X+Left 3f\nwait 80f\nmark done\n"
 TAP_A = GO + "tap X 3f\nwait 40f\nmark done\n"
 WAIT = "until ctf: f300 p1 600f\nmark done\n"
 SD = GO + "Left 60f\nwait 400f\nmark done\n"
+# The real layout's throws home. Red: P1 dashes out of the cave to blue's
+# flag on the tunnel floor (-58), carries it down the slope to about x -36,
+# and throws it back left into the cave. Blue (sides swapped, so P1 defends
+# the right edge): P1 dashes left to blue's flag near the main floor's left
+# end (x 120) and throws it right from about x 123.
+THROW_RED = GO + ("Right 40f\nwait 30f\ntap X 3f\nwait 25f\nmark held\nRight 30f\nwait 30f\n"
+                  "X+Left 3f\nwait 100f\nmark done\n")
+THROW_BLUE = GO + "Left 40f\nwait 30f\ntap X 3f\nwait 25f\nmark held\nX+Right 3f\nwait 100f\nmark done\n"
 
 
 def run(args, name, script, extra_env):
@@ -137,8 +151,8 @@ def check_carry(text):
     if held and after:
         walk_ratio = held[-1][2] / after[-1][2]
         dash_ratio = held[-1][3] / after[-1][3]
-        if abs(walk_ratio - 0.8) > 0.01 or abs(dash_ratio - 0.8) > 0.01:
-            fails.append(f"carry speed ratios walk {walk_ratio:.3f} dash {dash_ratio:.3f}, want 0.8")
+        if abs(walk_ratio - CARRY_SPEED) > 0.01 or abs(dash_ratio - CARRY_SPEED) > 0.01:
+            fails.append(f"carry speed ratios walk {walk_ratio:.3f} dash {dash_ratio:.3f}, want {CARRY_SPEED}")
     if "ctf: flag landed" not in text.split("ctf: flag thrown", 1)[-1]:
         fails.append("the thrown flag never landed")
     if "ctf: flag destroyed" in text:
@@ -232,6 +246,10 @@ SCENARIOS = {
     "start": (WAIT, {"MELEE_DEBUG_CTF": "1"}, check_start),
     "respawn": (SD, {"MELEE_DEBUG_CTF": "1"}, check_respawn),
     "swap": (WAIT, {"MELEE_DEBUG_CTF": "1", "MELEE_DEBUG_CTF_SWAP": "1"}, check_swap),
+    "throwred": (THROW_RED, {"MELEE_DEBUG_CTF": "1", "MELEE_DEBUG_CTF_FREE": "1,-58,-80"},
+                 expect(r"ctf: flag picked up", r"capture red \(thrown\) red 1 blue 0")),
+    "throwblue": (THROW_BLUE, {"MELEE_DEBUG_CTF": "1", "MELEE_DEBUG_CTF_SWAP": "1", "MELEE_DEBUG_CTF_FREE": "1,120,0"},
+                  expect(r"ctf: flag picked up", r"capture red \(thrown\) red 1 blue 0")),
 }
 
 
