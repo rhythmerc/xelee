@@ -3594,7 +3594,14 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                             if ((cursor->x4 != 3 ||
                                  mnCharSel_804D6CB0->match_type != 1) &&
                                 mnCharSel_803F0DFC.doors[cursor->x4].p_kind ==
-                                    0)
+                                    0
+#ifdef TARGET_PC
+                                /* XeleeNet's (and LAN's) name box holds the
+                                 * player's XeleeNet name (cssXnCardsFrame):
+                                 * no name tag list to open there. */
+                                && !gmOnline_XnFlow()
+#endif
+                            )
                             {
                                 if (mnCharSel_804D6CF5 == 1) {
                                     lb_80011E24(
