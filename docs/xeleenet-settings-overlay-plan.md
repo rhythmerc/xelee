@@ -142,7 +142,10 @@ the RULES handshake inside the running session and skip the switch.
   - Right: FIGHTERS · STAGES · SET · LOBBY (Fighter list ›, Stage list ›,
     Stage pick SOON, Frozen Stadium, Format SOON, Seats, Visibility and Hide
     code, both not on LAN). Then the CHANGES box, APPLY and CANCEL.
-  - No preset bar and no Name row.
+  - No preset bar and no Name row. Since 2026-11-03 the Mode bar (VS ·
+    Capture the Flag) sits above both columns, where the overlay opens
+    (docs/xeleenet-modes-plan.md §6i); in CTF the left column holds CTF's
+    rules.
   - A changed row shows `was <old>`.
   - The CHANGES box lists each change ("Stocks 4 → 3") and its effects:
     - "KOOPA's Fox is off the new list: KOOPA picks again";

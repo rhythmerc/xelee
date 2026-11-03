@@ -830,14 +830,20 @@ struct Screen : Rml::EventListener {
     }
 
     // The Mode bar (docs/xeleenet-modes-plan.md, wireframe X1): VS, or
-    // Capture the Flag. Row 0 of the Host page.
-    void mode_bar(std::string& r, const HostSettings& h) {
+    // Capture the Flag. Row 0 of the Host page; Lobby Settings' has it to
+    // itself above the columns (row -1, so Left/Right off a link never lands
+    // on it), with the mode in force as its "was".
+    void mode_bar(std::string& r, const HostSettings& h, const HostSettings* in_force = nullptr) {
         static const char* const kModes[2] = {"xeleenet.host.modes.vs", "xeleenet.host.modes.ctf"};
-        r += std::string("<div id=\"mode\" class=\"pbar") + (h.mode == 0 ? " m2" : "") + "\"><div class=\"k\">" + enc(tr("xeleenet.host.mode")) +
+        const bool over = in_force != nullptr;
+        const std::string list = in_force != nullptr && in_force->mode != h.mode
+                                     ? was_tag(tr(kModes[in_force->mode]))
+                                     : enc(tr(kModes[0])) + kDot + enc(tr(kModes[1]));
+        r += std::string("<div id=\"mode\" class=\"pbar") + (over ? " ob" : h.mode == 0 ? " m2" : "") +
+             (readOnly ? " ro" : "") + "\"><div class=\"k\">" + enc(tr("xeleenet.host.mode")) +
              "</div><div class=\"pv\"><span class=\"arr\">" + kLeft + "</span>" + enc(tr(kModes[h.mode])) +
-             "<span class=\"arr\">" + kRight + "</span></div><div class=\"pk\">" + enc(tr(kModes[0])) + kDot +
-             enc(tr(kModes[1])) + "</div></div>";
-        Item it{"mode", 0, 0, !readOnly};
+             "<span class=\"arr\">" + kRight + "</span></div><div class=\"pk\">" + list + "</div></div>";
+        Item it{"mode", 0, over ? -1 : 0, !readOnly};
         it.change = [](int) { s_edit->mode = 1 - s_edit->mode; };
         it.hint = tr("xeleenet.host.hints.mode");
         items.push_back(std::move(it));
@@ -3260,7 +3266,7 @@ std::string changes_box(const HostSettings& was, const HostSettings& now) {
                  enc(tr("xeleenet.settings.effects.off_list", {{"name", port_name(q)}, {"fighter", fighter_name_of(ck)}})) +
                  "</div>";
     }
-    if (now.teams && !was.teams)
+    if ((now.teams || now.mode == 1) && !(was.teams || was.mode == 1)) // Capture the Flag plays teams
         r += "<div class=\"ce\">" + enc(tr("xeleenet.settings.effects.teams")) + "</div>";
     return r + "<div class=\"ce\">" + enc(tr("xeleenet.settings.effects.next_game")) + "</div>";
 }
@@ -3272,8 +3278,12 @@ void Screen::build_overlay_host() {
     const HostSettings& o = s_host; // what's in force (or on its way), the host's
     const bool host = !readOnly;
     const auto was = [&](const std::string& now, const std::string& before) { return host && now != before ? before : ""; };
-    std::string r = "<div class=\"col left\">";
-    if (h.mode == 1) { // Capture the Flag: its own rules; the mode stays the Host page's
+    // The Mode bar first, as on the Host page: a mode change is applied like
+    // any other, and the mode's rules (teams, time, its maps) come with it.
+    std::string r;
+    mode_bar(r, h, host ? &o : &h);
+    r += "<div class=\"col left\">";
+    if (h.mode == 1) { // Capture the Flag: its own rules
         group(r, "xeleenet.host.groups.rules_ctf");
         choice(r, "caps", 0, 0, "xeleenet.host.rows.ctf_caps", std::to_string(h.ctf_caps),
                [](int d) { s_edit->ctf_caps = 1 + (s_edit->ctf_caps - 1 + d + 9) % 9; }, "xeleenet.host.hints.ctf_caps",
@@ -3828,6 +3838,7 @@ void settings_answer() {
 // css-settings (the host, Stocks and the fighter list changed),
 // css-settings-fighters (its fighter page, on a held fighter that's off),
 // css-settings-guest (read-only), css-settings-seats (at the seats' limit),
+// css-settings-ctf (a VS lobby's draft switched to Capture the Flag),
 // css-changed (C4), css-offlist (F3) and css-editing (C3, a guest's).
 void preview_settings() {
     static bool done;
@@ -3848,10 +3859,12 @@ void preview_settings() {
         }
         if (pv == "css-settings-seats")
             s_draft.seats = 3;
+        if (pv == "css-settings-ctf")
+            s_draft.mode = 1;
         if (pv == "css-settings-fighters") {
             s_over.go(Page::Fighters, "fi10"); // Fox
         } else {
-            s_over.cursorId = pv == "css-settings-seats" ? "seats" : "stocks";
+            s_over.cursorId = pv == "css-settings-seats" ? "seats" : pv == "css-settings-ctf" ? "mode" : "stocks";
             s_over.refresh();
         }
     } else if (pv == "css-changed") {

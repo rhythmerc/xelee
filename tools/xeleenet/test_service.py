@@ -252,7 +252,11 @@ def run(url):
                       (dict(ctf, win="stock"), "Capture the Flag on stocks"),
                       (dict(ctf, stage_mask=temple | 1 << 25), "Capture the Flag off its maps")):
         refused(lambda: a.settings(lobby, "CTF night", bad), "bad_settings", what)
+    # Lobby Settings switches a running lobby's mode back (the playtest's 7.4).
     a.settings(lobby, "Friday netplay", four)
+    row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
+    check(row and row[0]["settings"].get("game_mode") == "vs" and "ctf_caps" not in row[0]["settings"],
+          "Lobby Settings takes a lobby from Capture the Flag back to VS")
 
     print("-- leaving, removing")
     b.leave(lobby)

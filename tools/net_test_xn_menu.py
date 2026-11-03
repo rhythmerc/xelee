@@ -988,10 +988,11 @@ def leave_match(insts, shots, drive, scenario):
 
 # ---- Lobby Settings (docs/xeleenet-settings-overlay-plan.md) ------------------
 # The overlay's items, top to bottom, as Up and Down walk them on the host's
-# page (xeleenet_menu.cpp build_overlay_host): Friendly fire only with Teams
-# on; Visibility and Hide code not on LAN.
+# page (xeleenet_menu.cpp build_overlay_host): the Mode bar (where it opens),
+# then VS's rows; Friendly fire only with Teams on; Visibility and Hide code
+# not on LAN.
 def settings_rows(teams, lan):
-    rows = ["teams", "stocks", "time", "items"] + (["ff"] if teams else []) + ["more", "flist", "slist", "frozen",
+    rows = ["mode", "teams", "stocks", "time", "items"] + (["ff"] if teams else []) + ["more", "flist", "slist", "frozen",
                                                                              "seats"]
     return rows + ([] if lan else ["vis", "hide"]) + ["apply", "cancel"]
 
@@ -1333,6 +1334,39 @@ def settings_walk(insts, shots, args):
     return True
 
 
+def settings_mode(insts, shots, args):
+    """The 2026-11-02 playtest's 7.4: Lobby Settings changes the game mode.
+    The host's VS lobby: Z, Right on the Mode bar (where it opens), START.
+    Every player commits Capture the Flag's RULES (teams, time, Temple) on
+    the same frame; the match that follows is CTF on Temple (run()'s checks,
+    as --scenario ctf)."""
+    host = insts[0]
+    nt.settle(insts, nt.MENU_SETTLE)
+    if not open_settings(host):
+        return False
+    shot(host, shots, "s-mode-open")
+    tap(host, "Right")  # Mode: VS -> Capture the Flag
+    nap(0.5)
+    shot(host, shots, "s-mode-ctf")
+    loads, before = [css_loads(i) for i in insts], [len(commits(i)) for i in insts]
+    t0 = time.time()
+    tap(host, "Return")  # START: apply
+    if not host.wait_log(r"xeleenet: Lobby Settings applied: .*Capture the Flag", 5):
+        print("FAIL: START didn't apply a mode change")
+        return False
+    if not applied_everywhere(insts, loads, before, shots, "s-mode-after"):
+        return False
+    print(f"net_test_xn_menu: the mode change landed {time.time() - t0:.1f} s after START", flush=True)
+    ok = True
+    for i in insts:
+        last = (nt.re.findall(r"net: RULES (?:applied|in force) (mode=.*)", i.text()) or [""])[-1]
+        for want in (r"game_mode=1/", r"stages=0*4000 ", r"time=10 "):
+            if not nt.re.search(want, last):
+                print(f"[{i.name}] FAIL: no {want} in the RULES in force: {last[:200]}")
+                ok = False
+    return ok
+
+
 def settings_cancel(insts, shots, args):
     """B: the host changes Stocks and cancels; no restart, no reload, and
     P2's Ready stands."""
@@ -1347,7 +1381,7 @@ def settings_cancel(insts, shots, args):
     starts = nt.count(host, r"xeleenet: starting")
     if not open_settings(host):
         return False
-    tap(host, "Down")
+    to_row(host, settings_rows(teams=True, lan=args.net == "lan"), "stocks")
     tap(host, "Right")
     tap(host, "Z")  # B: cancel
     if not host.wait_log(r"xeleenet: Lobby Settings closed", 5):
@@ -1435,6 +1469,7 @@ def settings_teams(insts, shots, args):
     nt.settle(insts, nt.MENU_SETTLE)
     if not open_settings(host):
         return False
+    to_row(host, settings_rows(teams=False, lan=lan), "teams")
     tap(host, "Right")  # Teams: Off -> On
     loads, before = [css_loads(i) for i in insts], [len(commits(i)) for i in insts]
     tap(host, "Return")
@@ -1739,7 +1774,7 @@ def run(args):
             return False
         scenes = {"settings-engine": settings_engine, "settings-hold": settings_hold, "settings-open": settings_open,
                   "settings": settings_walk, "settings-cancel": settings_cancel, "settings-teams": settings_teams,
-                  "settings-list": settings_list}
+                  "settings-list": settings_list, "settings-mode": settings_mode}
         if args.scenario in scenes and not scenes[args.scenario](insts, shots, args):
             return False
         if args.scenario == "settings-seats":
@@ -1795,7 +1830,7 @@ def run(args):
         if lan and not all("xeleenet: network LAN" in t for t in texts):
             print("FAIL: an instance never switched to LAN")
             ok = False
-        if args.scenario == "ctf":
+        if args.scenario in ("ctf", "settings-mode"):
             # Every player's match is Capture the Flag on Temple from the
             # lobby's RULES (the defaults: first to 5, no auto-return, 10:00),
             # its HUD up, and its sides as set (game 1).
@@ -1834,7 +1869,7 @@ def main():
                              "multipad-full", "fighters", "details", "settings-engine", "settings-hold",
                              "settings-open", "settings", "settings-cancel", "settings-seats", "settings-teams",
                              "settings-alone", "settings-race", "settings-list", "ctf", "leave-match",
-                             "leave-match-kill"),
+                             "leave-match-kill", "settings-mode"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
@@ -1860,7 +1895,7 @@ def main():
                          "with no UI (MELEE_XN_TEST_APPLY), -hold rests the host's port, -open opens it from the "
                          "banner and with Z, settings walks the UI and applies, -cancel changes nothing, -seats "
                          "lowers and raises the seats (a 4th joins), -teams deals and keeps teams, -alone applies "
-                         "with nobody in, -race applies while a join is in flight, -list changes the listing only")
+                         "with nobody in, -race applies while a join is in flight, -list changes the listing only, -mode switches VS to Capture the Flag and plays it")
     ap.add_argument("--paced", action="store_true",
                     help="the old way: 60 Hz, key holds in milliseconds (docs/fast-tests-plan.md)")
     ap.add_argument("--no-shots", action="store_true",

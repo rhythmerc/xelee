@@ -527,6 +527,26 @@ From the 2026-11-02 playtest notes:
   flag away, its ring drops to 15-45% and breathes over 100 frames, fading
   in and out over 12 (`ctf_zone_ring_alpha`, draw-only state).
 
+## 6i. The mode in Lobby Settings (2026-11-03)
+
+The 2026-11-02 playtest (7.4): the host had to close a lobby and open a new
+one to switch between VS and CTF.
+- **Lobby Settings has the Mode bar** on its own row above the columns, where
+  the overlay opens (VS · Capture the Flag; a changed mode shows "was VS").
+  Left/Right on it switches the draft's rows between VS's and CTF's, as on
+  the Host page. A guest's read-only overlay shows the mode with no arrows.
+- **Applied like any other change:** `plays_same()` and `rule_changes()`
+  already knew the mode, so Apply restarts the session and the next RULES
+  carry it, with CTF's forced teams, time and the Temple mask
+  (`pc_xn_menu_rules`); the CSS deals teams when CTF turns them on, and the
+  listing (`settings_json`) carries `game_mode`. The service already took a
+  mode change on a running lobby (`setSettings` replaces the settings);
+  `test_service.py` now checks the way back to VS too.
+- **Tests:** `net_test_xn_menu.py --scenario settings-mode` (3 players: a VS
+  lobby, Z, Right on Mode, START; every player commits CTF's RULES on one
+  frame and plays CTF on Temple). `tools/xn_preview.py css-settings-ctf`
+  shows the overlay with the draft switched.
+
 ## 7. Open questions
 
 All seven from the first draft were answered 2026-11-01 (decisions 10-17).
