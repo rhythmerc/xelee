@@ -236,6 +236,28 @@ typedef struct FwdAck {
     int32_t frame;  /* newest contiguous frame of it the sender now holds */
 } __attribute__((packed)) FwdAck;
 
+/* 'L' (proto 15): one peer's figures for each of its links (net.c, link
+ * figures), twice a second, guests to the host and the host to every guest.
+ * Unreliable on purpose: the next one supersedes a lost one, and on the
+ * reliable lane it would queue the scene hand-off behind a statistic. All
+ * fields network order, times in microseconds. */
+#define LINK_RELAYED 0x01 /* what it sends here comes through the host as well */
+#define LINK_DEAD 0x02    /* given up: only the host's path is left */
+#define LINK_GONE 0x04    /* its player left */
+typedef struct LinkFig {
+    uint8_t port;  /* the other end's primary port; 0xff: unused slot */
+    uint8_t flags; /* LINK_* */
+    uint32_t ping; /* the direct link's smoothed round trip */
+    uint32_t jit;  /* the direct link's mean |dRTT| */
+    uint32_t trip; /* what that player's input takes to get here, by whichever path is faster */
+    uint32_t jeff; /* the jitter of that path */
+} __attribute__((packed)) LinkFig;
+typedef struct LinkReport {
+    Hdr h;        /* 'L' */
+    uint32_t fwd; /* the host's measured hold before it passes input on; 0 from a guest */
+    LinkFig fig[MAX_PEERS];
+} __attribute__((packed)) LinkReport;
+
 /* Reliable lobby message (stop-and-wait, net_reliable.c). */
 #define REL_MAX 256
 #define REL_RULES 0x01  /* host -> guest {seed, start_frame, nonce} (net_handshake.c) */
@@ -508,6 +530,23 @@ void net_relay_out(int peer, uint8_t type, const void* payload, int len);
  * other path already landed (drop it); net_relay_landed after delivering. */
 bool net_relay_twin(int peer, uint8_t type, const void* payload, int len);
 void net_relay_landed(int peer, uint8_t type, const void* payload, int len);
+/* The link to peer i still carries something worth measuring: its player
+ * has not left and this side has not given the link up (game thread). */
+bool net_link_counts(int peer);
+/* The mesh's worst path for auto delay (net.c, link figures): over every
+ * ordered pair this side knows -- its own links, and on the host every
+ * guest's inbound links as reported -- the one whose trip plus jitter is
+ * longest. A pair that goes through the host counts as the relayed path. */
+typedef struct LinkWorst {
+    uint32_t need_us;    /* that pair's trip + jitter */
+    uint32_t trip_us;    /* its one-way trip */
+    uint32_t jit_us;     /* the jitter that path carries */
+    uint32_t rtt_max_us; /* the slowest pair's round trip, for the LAN test */
+    uint32_t jit_max_us; /* the worst jitter of any pair */
+    int from, to;        /* ports: the sending end and the receiving end */
+    bool relayed;        /* the pair goes through the host */
+} LinkWorst;
+void net_links_worst(LinkWorst* w);
 
 /* One sendto with errno/WSA translation and the sock_err counter; used by
  * the senders here and the link simulator's flush (net_sim.c). Caller holds
@@ -621,8 +660,9 @@ void handshake_direct(void);
 
 /* One phase sample: the peer's frame advantage and ours (net.c on_inputs). */
 void adv_note(int peer, int remote_adv, int local_adv);
-void jitter_note(uint32_t rtt); /* one RTT sample, for the |dRTT| mean */
-uint32_t jitter_us(void);
+void jitter_note(int peer, uint32_t rtt); /* one RTT sample of that link, for its |dRTT| mean */
+uint32_t jitter_peer_us(int peer);        /* that link's mean |dRTT| */
+uint32_t jitter_us(void);                 /* the worst of this side's live links' */
 void time_sync(void);
 /* The host's REL_DELAY announcement (on_rel dispatches it here, like
  * REL_RESUME); game thread. */

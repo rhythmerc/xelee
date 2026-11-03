@@ -15,6 +15,9 @@ hosts the handshake. Each instance drives its own keyboard workout, offset
 from the others, so every remote input keeps changing and the rollback loop
 has something to correct on every link.
 
+--link 1:2=80,0:1=10~2 gives those pairs a one-way delay (and +-jitter) of
+their own, on top of --delay/--jitter: a mesh whose links differ.
+
 --block 1:2 cuts those controller ports (0 is P1) off from each other in the
 link simulator, as two guests behind strict NATs: they must find out, tell
 the host, and get each other's input and messages through it (net.c, routes).
@@ -158,6 +161,8 @@ def run(args):
             env["MELEE_NET_SIM_JITTER_MS"] = "20"
         if args.block:
             env["MELEE_NET_SIM_BLOCK"] = args.block
+        if args.link:
+            env["MELEE_NET_SIM_LINK"] = args.link
         for spec in args.env:
             who, _, kv = spec.partition(":")
             var, _, val = kv.partition("=")
@@ -305,6 +310,8 @@ def main():
                     help="the old way: 60 Hz, key holds in milliseconds (docs/fast-tests-plan.md)")
     ap.add_argument("--owners", default="", help="the instance that plays each port, e.g. 0,1,1,2")
     ap.add_argument("--block", default="", help="port pairs that cannot reach each other, e.g. 1:2")
+    ap.add_argument("--link", default="", help="per-pair one-way delay ms (~jitter ms), e.g. "
+                                               "1:2=80,0:1=10~2 (MELEE_NET_SIM_LINK on every instance)")
     ap.add_argument("--kill", default="", help="instance@seconds into the match to SIGKILL, e.g. c@20")
     ap.add_argument("--xn", action="store_true", help="join by code through a local XeleeNet service")
     ap.add_argument("--xn-url", default="", help="an XeleeNet service already running (implies --xn)")

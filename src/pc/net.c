@@ -22,6 +22,7 @@
  *   MELEE_NET_SIM_DUP=pct        send that share of packets twice
  *   MELEE_NET_SIM_BURST=n        every 5 s drop n consecutive outgoing packets
  *   MELEE_NET_SIM_CUT=a:b@f-t    ports a and b cannot reach each other from frame f to t
+ *   MELEE_NET_SIM_LINK=a:b=ms~j@f-t  that pair's own one-way delay (+-j ms jitter, frames f-t), comma-separated
  *   (the simulator's PRNG is seeded from MELEE_NET_PORT, so runs repeat)
  *
  * This file is the session, the socket and the rollback loop; the wire
@@ -685,6 +686,7 @@ typedef struct VoidMsg {
 } __attribute__((packed)) VoidMsg;
 
 static void exit_if_test_done(void);
+static void link_figs_reset(void);
 
 static Peer* peer_by_port(int port) {
     for (int i = 0; i < net.npeers; i++) {
@@ -779,6 +781,7 @@ void net_relay_landed(int peer, uint8_t type, const void* payload, int len) {
 static void links_reset(void) {
     memset(s_fwd, 0, sizeof s_fwd);
     s_relay_mask = 0;
+    link_figs_reset();
     memset(s_relay_t, 0, sizeof s_relay_t);
     relay_twins_reset();
     for (int o = 0; o < PORTS; o++) {
@@ -1045,6 +1048,259 @@ void net_link_rel(int peer, uint8_t type, const void* payload, int len) {
     }
 }
 
+/* ---- link figures ---------------------------------------------------------
+ * Every side measures only its own links, and auto delay is decided by the
+ * host alone (net_sync.c delay_auto), which never sees a link between two
+ * guests. So every guest reports its figures for each of its links to the
+ * host twice a second ('L', LinkReport), and the host reports its own to
+ * every guest. A figure is the receiving end's view of one direction: the
+ * direct link's ping and jitter, and the trip that player's input actually
+ * takes to get here -- the direct link's half round trip, or the relayed
+ * path's when this side gets that player through the host. Delay is then
+ * sized from the worst of all of them (net_links_worst).
+ *
+ * A pair that goes through the host (a dead or silent link, above) counts
+ * as the host's path, estimated: half this side's round trip to the host,
+ * plus half the host's to that player (the host's report), plus the host's
+ * measured forwarding hold (fwd below: from the input packet's arrival on
+ * its receive thread to the next send_inputs, where send_forwarded passes it
+ * on -- game-thread paced, about once a frame). */
+#define LINKS_EVERY_MS 500   /* a link report goes out this often */
+#define LINKS_STALE_MS 3000  /* a report this old no longer counts */
+
+typedef struct LinkRow {
+    uint64_t t;   /* when it arrived, 0 never */
+    uint32_t fwd; /* the host's forwarding hold */
+    LinkFig fig[MAX_PEERS]; /* host order */
+} LinkRow;
+static LinkRow s_rows[PORTS]; /* each peer's last report, by its primary port (game thread) */
+static uint64_t s_links_sent; /* when ours last went out */
+
+/* Host: the forwarding hold, from each input packet that moved a player's
+ * mark (its receive-thread arrival) to the next send_inputs, which is where
+ * send_forwarded passes it on. Measured whether or not anything is being
+ * forwarded: it is the hold a relay would see. */
+static uint64_t s_fwd_pend_sum; /* arrival stamps since the last send_inputs */
+static unsigned s_fwd_pend_n;
+static uint64_t s_fwd_win_ns;   /* this report window's holds */
+static unsigned s_fwd_win_n;
+static uint32_t s_fwd_us;       /* smoothed over windows */
+
+static void link_figs_reset(void) {
+    memset(s_rows, 0, sizeof s_rows);
+    s_links_sent = 0;
+    s_fwd_pend_sum = s_fwd_win_ns = 0;
+    s_fwd_pend_n = s_fwd_win_n = 0;
+    s_fwd_us = 0;
+}
+
+bool net_link_counts(int i) {
+    return i >= 0 && i < net.npeers && !(s_gone & (1u << s_peer[i].port)) && !net.link_dead[i];
+}
+
+/* Host: an input packet that arrived at rx_ns moved its player's mark. */
+static void fwd_pending(uint64_t rx_ns) {
+    if (net.local == 0 && net.npeers >= 2 && rx_ns != 0) {
+        s_fwd_pend_sum += rx_ns;
+        s_fwd_pend_n++;
+    }
+}
+
+/* Host, from send_inputs: everything pending goes out now. */
+static void fwd_sent(uint64_t now) {
+    if (s_fwd_pend_n != 0) {
+        uint64_t held = (uint64_t)s_fwd_pend_n * now - s_fwd_pend_sum;
+        if ((int64_t)held > 0) {
+            s_fwd_win_ns += held;
+            s_fwd_win_n += s_fwd_pend_n;
+        }
+        s_fwd_pend_sum = 0;
+        s_fwd_pend_n = 0;
+    }
+}
+
+/* A fresh report's figure from `reporter` for its link to `port`, or NULL. */
+static const LinkFig* row_fig(int reporter, int port, uint64_t now) {
+    const LinkRow* r = &s_rows[reporter];
+    if (r->t == 0 || now - r->t > LINKS_STALE_MS * 1000000ull) {
+        return NULL;
+    }
+    for (int k = 0; k < MAX_PEERS; k++) {
+        if (r->fig[k].port == port) {
+            return &r->fig[k];
+        }
+    }
+    return NULL;
+}
+
+/* Why that guest gets that player through the host, by its last report. */
+static const char* row_relay_why(int reporter, int port) {
+    const LinkFig* f = row_fig(reporter, port, SDL_GetTicksNS());
+    return f == NULL ? "asked" : (f->flags & LINK_DEAD) ? "dead" : "silent";
+}
+
+/* Guest: the host's path for peer i's input, estimated -- half our round
+ * trip to the host, the host's forwarding hold, half the host's round trip
+ * to that player -- with the jitter of the worse of the two legs. */
+static bool relay_estimate(int i, uint64_t now, uint32_t* trip, uint32_t* jit) {
+    const int host = net_host_peer();
+    if (net.local == 0 || host < 0 || i == host) {
+        return false;
+    }
+    const LinkFig* ha = row_fig(0, s_peer[i].port, now);
+    const uint32_t bh = s_peer[host].ping_us;
+    if (ha == NULL || ha->ping == 0 || bh == 0) {
+        return false;
+    }
+    *trip = bh / 2 + s_rows[0].fwd + ha->ping / 2;
+    const uint32_t jb = jitter_peer_us(host);
+    *jit = ha->jit > jb ? ha->jit : jb;
+    return true;
+}
+
+/* Our figure for peer i's input to us (host order). */
+static void own_fig(int i, uint64_t now, LinkFig* f) {
+    const Peer* p = &s_peer[i];
+    const uint8_t bit = (uint8_t)(1u << p->port);
+    const bool dead = net.link_dead[i];
+    const bool relayed = ((s_relay_mask | s_route_mask) & bit) != 0;
+    memset(f, 0, sizeof *f);
+    f->port = (uint8_t)p->port;
+    f->flags = (uint8_t)(((s_gone & bit) ? LINK_GONE : 0) | (dead ? LINK_DEAD : 0) |
+                         (relayed ? LINK_RELAYED : 0));
+    f->ping = p->ping_us;
+    f->jit = jitter_peer_us(i);
+    f->trip = p->ping_us / 2;
+    f->jeff = f->jit;
+    uint32_t rt, rj;
+    if (!(dead || relayed) || !relay_estimate(i, now, &rt, &rj)) {
+        return;
+    }
+    if (dead || rt < f->trip) { /* each frame is used from whichever path brings it first */
+        f->trip = rt;
+        f->jeff = rj;
+    }
+}
+
+/* Our report: to the host from a guest, to every guest from the host. */
+static void links_report(uint64_t now, bool force) {
+    if (!force && s_links_sent != 0 && now - s_links_sent < LINKS_EVERY_MS * 1000000ull) {
+        return;
+    }
+    s_links_sent = now;
+    if (net.local == 0 && s_fwd_win_n != 0) {
+        const uint32_t w = (uint32_t)(s_fwd_win_ns / s_fwd_win_n / 1000);
+        s_fwd_us = s_fwd_us == 0 ? w : (s_fwd_us * 3 + w) / 4;
+        s_fwd_win_ns = 0;
+        s_fwd_win_n = 0;
+    }
+    LinkReport r;
+    memset(&r, 0, sizeof r);
+    r.h = hdr('L');
+    r.fwd = htonl(net.local == 0 ? s_fwd_us : 0);
+    for (int k = 0; k < MAX_PEERS; k++) {
+        LinkFig* f = &r.fig[k];
+        if (k >= net.npeers) {
+            f->port = 0xff;
+            continue;
+        }
+        own_fig(k, now, f);
+        f->ping = htonl(f->ping);
+        f->jit = htonl(f->jit);
+        f->trip = htonl(f->trip);
+        f->jeff = htonl(f->jeff);
+    }
+    const int host = net_host_peer();
+    SDL_LockMutex(net.tx_lock);
+    for (int i = 0; i < net.npeers; i++) {
+        if ((net.local == 0 || i == host) && net_link_counts(i)) {
+            tx(i, &r, sizeof r);
+        }
+    }
+    SDL_UnlockMutex(net.tx_lock);
+}
+
+/* A peer's report (game thread): the host keeps every guest's, a guest the host's. */
+static void on_links(const Peer* p, const LinkReport* r) {
+    if ((net.local == 0) == (p->port == 0)) {
+        return;
+    }
+    LinkRow* row = &s_rows[p->port];
+    row->t = SDL_GetTicksNS();
+    row->fwd = ntohl(r->fwd);
+    for (int k = 0; k < MAX_PEERS; k++) {
+        LinkFig f = r->fig[k];
+        if (f.port >= PORTS) {
+            f.port = 0xff;
+        }
+        f.ping = ntohl(f.ping);
+        f.jit = ntohl(f.jit);
+        f.trip = ntohl(f.trip);
+        f.jeff = ntohl(f.jeff);
+        row->fig[k] = f;
+    }
+}
+
+void net_links_worst(LinkWorst* w) {
+    memset(w, 0, sizeof *w);
+    w->from = w->to = net.local;
+    if (s_slippi_on || net.npeers < 2) {
+        /* A 1v1 (or a Slippi session, whose round trip is the adapter's):
+         * the one link, both ways. */
+        const uint32_t j = jitter_us();
+        w->trip_us = net.ping_us / 2;
+        w->jit_us = w->jit_max_us = j;
+        w->need_us = w->trip_us + j;
+        w->rtt_max_us = net.ping_us;
+        w->from = net.npeers > 0 ? net.peer_port[0] : net.local;
+        return;
+    }
+    const uint64_t now = SDL_GetTicksNS();
+    for (int r = 0; r < PORTS; r++) {
+        if (s_gone & (1u << r)) {
+            continue;
+        }
+        for (int k = 0; k < MAX_PEERS; k++) {
+            LinkFig own;
+            const LinkFig* f;
+            if (r == net.local) {
+                if (k >= net.npeers) {
+                    break;
+                }
+                own_fig(k, now, &own);
+                f = &own;
+            } else {
+                const LinkRow* row = &s_rows[r];
+                if (row->t == 0 || now - row->t > LINKS_STALE_MS * 1000000ull) {
+                    break;
+                }
+                f = &row->fig[k];
+            }
+            if (f->port >= PORTS || (f->flags & LINK_GONE) || (s_gone & (1u << f->port)) ||
+                f->trip == 0)
+            {
+                continue;
+            }
+            const uint32_t need = f->trip + f->jeff;
+            if (2 * f->trip > w->rtt_max_us) {
+                w->rtt_max_us = 2 * f->trip;
+            }
+            if (f->jeff > w->jit_max_us) {
+                w->jit_max_us = f->jeff;
+            }
+            if (need > w->need_us) {
+                w->need_us = need;
+                w->trip_us = f->trip;
+                w->jit_us = f->jeff;
+                w->from = f->port;
+                w->to = r;
+                w->relayed = (f->flags & LINK_DEAD) ||
+                             ((f->flags & LINK_RELAYED) && f->trip < f->ping / 2);
+            }
+        }
+    }
+}
+
 /* Routes, drops and their timers: every fresh tick and every turn of an input
  * wait (game thread). */
 static void links_poll(void) {
@@ -1074,6 +1330,9 @@ static void links_poll(void) {
      * there is none before the first frame): silence means nothing yet. The
      * connect and stall waits cover that stretch, as in a 1v1. */
     bool judge = s_link_t0 != 0;
+    if (judge) {
+        links_report(now, false);
+    }
     /* Is there a fresh link other than i? (FRESH_MS) */
     int fresh = 0;
     for (int i = 0; i < net.npeers; i++) {
@@ -1297,6 +1556,9 @@ static void send_inputs(void) {
         p->last_send_ns = now;
     }
     send_forwarded();
+    if (net.local == 0) {
+        fwd_sent(SDL_GetTicksNS());
+    }
     SDL_UnlockMutex(net.tx_lock);
     s_red_target = red;
     if (newest != s_send_frame) {
@@ -1364,12 +1626,14 @@ typedef struct RxMsg {
     int len;    /* message bytes */
     int rtt_us; /* 'A': round trip timed as it landed, -1 for none;
                  * 'M': RX_REORDERED if it arrived behind a later seq */
+    uint64_t rx_ns; /* when it landed: the host's forwarding hold (fwd_pending) */
     union {
         Hdr h;
         Packet pk;
         Ack ack;
         Rel rel;
         RelAck rack;
+        LinkReport links;
     } u;
 } RxMsg;
 /* While this side is frozen the peer keeps sending: its input packet every
@@ -1395,6 +1659,7 @@ static bool rx_push(const Peer* p, const void* body, int len, int rtt_us) {
     m->peer = peer_index(p);
     m->len = len;
     m->rtt_us = rtt_us;
+    m->rx_ns = SDL_GetTicksNS();
     memcpy(&m->u, body, (size_t)len);
     return true;
 }
@@ -1519,16 +1784,20 @@ static void on_port_pads(int port, const Packet* pk, const WirePad* pads) {
  * the same packets in the same order, against a net.frame never behind the
  * one it checked, so a drain leaves the port's mark at or above rx_have.
  * Every port the peer plays rides in the packet (xports); each moves alike. */
-static void on_inputs(Peer* p, const Packet* pk, bool reordered) {
+static void on_inputs(Peer* p, const Packet* pk, bool reordered, uint64_t rx_ns) {
     const int port = p->port;
     if (s_port_end[port] >= 0) {
         return; /* the player left and everyone agreed where its input ends */
     }
+    const int32_t had = s_port_have[port];
     on_port_pads(port, pk, pk->pads);
     for (int q = 0, x = 0; q < PORTS && x < MAX_XPORTS; q++) {
         if (pk->xports & (1u << q)) {
             on_port_pads(q, pk, pk->xpads[x++]);
         }
+    }
+    if (s_port_have[port] > had) {
+        fwd_pending(rx_ns);
     }
     if (pk->ck_frame >= 0) {
         p->rck[pk->ck_frame & (RING - 1)].frame = pk->ck_frame;
@@ -1848,7 +2117,7 @@ static void on_ack(Peer* p, const Ack* a, int rtt) {
         if ((uint32_t)rtt > s_rtt_max) {
             s_rtt_max = (uint32_t)rtt;
         }
-        jitter_note((uint32_t)rtt);
+        jitter_note(peer_index(p), (uint32_t)rtt);
         p->st_rtt_sum += (uint64_t)rtt;
         p->st_rtt_n++;
         if (p->st_rtt_min == 0 || (uint32_t)rtt < p->st_rtt_min) {
@@ -1974,6 +2243,12 @@ static void rx_dispatch(Peer* p, void* buf, int n) {
         }
         rx_push(p, &u->rack, n, -1);
         break;
+    case 'L':
+        if (n != (int)sizeof(LinkReport)) {
+            return;
+        }
+        rx_push(p, buf, n, -1);
+        break;
     case 'B':
         /* Only a peer we have already heard from can end the session. Before
          * pinning, the source address is not a usable filter (a dual-stack
@@ -2034,6 +2309,8 @@ static bool packet_shape(const void* buf, int n) {
     }
     case 'G':
         return n == (int)sizeof(FwdAck);
+    case 'L':
+        return n == (int)sizeof(LinkReport);
     case 'B':
         return n == (int)sizeof(Bye);
     default:
@@ -2399,13 +2676,16 @@ void recv_inputs(void) {
         Peer* p = &s_peer[m.peer];
         switch (m.u.h.magic) {
         case 'M':
-            on_inputs(p, &m.u.pk, m.rtt_us == RX_REORDERED);
+            on_inputs(p, &m.u.pk, m.rtt_us == RX_REORDERED, m.rx_ns);
             break;
         case 'A':
             on_ack(p, &m.u.ack, m.rtt_us);
             break;
         case 'R':
             on_rel(m.peer, &m.u.rel, m.len);
+            break;
+        case 'L':
+            on_links(p, &m.u.links);
             break;
         default: /* 'K' */
             on_rel_ack(m.peer, &m.u.rack);
@@ -5217,32 +5497,47 @@ static void capture_local_sample(bool fresh) {
 }
 
 /* The stats line's ping, jitter and loss are the session's: the ping its
- * slowest link's, the jitter taken over every link's samples in turn. With
- * three or four players that hides which link is the bad one, so each link
- * gets its own figures on a line of their own (caller holds s_rx_lock, which
- * the acks are counted under; tx_lock nests inside it as in rx_input):
+ * slowest link's, the jitter its worst link's own. With three or four
+ * players that hides which link is the bad one, so each link gets its own
+ * figures on a line of their own (caller holds s_rx_lock, which the acks are
+ * counted under; tx_lock nests inside it as in rx_input):
  *
  *   net:   peers: P2 98 ms (avg 66, 12-212, jitter 31.1, loss 0%); P3 ...
  *
  * "dead" marks a link this side has given up on, "gone" a player who left,
- * "relayed" one whose relay this side asked for while the link still stands. */
+ * "relayed" one whose relay this side asked for while the link still stands.
+ * The host names, after a guest, the players it passes on to it and why. */
 static void stats_peers_report(void) {
     if (net.npeers < 2) {
         return; /* a 1v1's one link is the stats line itself */
     }
-    char line[512];
+    char line[640];
     int n = snprintf(line, sizeof line, "net:   peers:");
     SDL_LockMutex(net.tx_lock);
     for (int i = 0; i < net.npeers && n > 0 && n < (int)sizeof line; i++) {
         Peer* p = &s_peer[i];
+        const uint8_t bit = (uint8_t)(1u << p->port);
         int loss = p->st_tx > p->st_acks ? (int)(100 * (p->st_tx - p->st_acks) / p->st_tx) : 0;
+        char why[48] = "";
+        if (s_gone & bit) {
+            snprintf(why, sizeof why, " gone");
+        } else if (net.link_dead[i]) {
+            snprintf(why, sizeof why, " dead");
+        } else if (s_relay_mask & bit) {
+            snprintf(why, sizeof why, " relayed");
+        }
         n += snprintf(line + n, sizeof line - (size_t)n,
             "%s P%d %u ms (avg %.0f, %u-%u, jitter %.1f, loss %d%%)%s", i > 0 ? ";" : "",
             p->port + 1, p->ping_us / 1000,
             p->st_rtt_n ? p->st_rtt_sum / 1000.0 / p->st_rtt_n : 0.0, p->st_rtt_min / 1000,
             p->st_rtt_max / 1000, p->st_jit_n ? p->st_jit_sum / 1000.0 / p->st_jit_n : 0.0, loss,
-            (s_gone & (1u << p->port)) ? " gone" : net.link_dead[i] ? " dead" :
-            (s_relay_mask & (1u << p->port)) ? " relayed" : "");
+            why);
+        for (int o = 0; net.local == 0 && o < PORTS && n > 0 && n < (int)sizeof line; o++) {
+            if ((s_fwd[o] & (1u << i)) && !(s_gone & (1u << o))) {
+                n += snprintf(line + n, sizeof line - (size_t)n, " gets P%d relayed (%s)", o + 1,
+                    row_relay_why(p->port, o));
+            }
+        }
         p->st_rtt_sum = p->st_jit_sum = 0;
         p->st_rtt_min = p->st_rtt_max = 0;
         p->st_rtt_n = p->st_jit_n = p->st_tx = p->st_acks = 0;
