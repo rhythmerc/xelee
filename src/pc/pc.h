@@ -97,6 +97,7 @@ void pc_pad_rumble_command(unsigned port, unsigned command); /* a game port's PA
  * any thread. */
 bool pc_gcadapter_raw(int port, uint8_t raw[6], bool* wireless);
 uint64_t pc_gcadapter_report_count(void);
+bool pc_gcadapter_is_open(void); /* the adapter itself is open (any thread) */
 
 /* Input latency meter (src/pc/input_poll.c): the 1000 Hz thread stamps each
  * sample; pc_frame_boundary records how old the sample the sim is about to

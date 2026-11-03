@@ -246,6 +246,20 @@ size_t pc_pad_census(char* out, size_t cap) {
     /* Not an SDL device: merged into port 1's input (keyboard.c), with
      * the keyboard's keys; it holds no SDL slot. */
     CENSUS("  touch controls: %s\n", pc_touch_is_active() ? "on (port 1)" : "off");
+    /* Not an SDL device either (src/pc/gcadapter.c): adapter slot N feeds
+     * port N; port 1 is merged with the keyboard and touch (keyboard.c). */
+    if (!pc_gcadapter_is_open()) {
+        CENSUS("  GC adapter: not open\n");
+    } else {
+        CENSUS("  GC adapter: open (slot N feeds port N)\n");
+        for (int slot = 0; slot < 4; slot++) {
+            uint8_t raw[6];
+            bool wireless = false;
+            const bool present = pc_gcadapter_raw(slot, raw, &wireless);
+            CENSUS("    slot %d: %s\n", slot + 1,
+                !present ? "empty" : wireless ? "wireless controller" : "wired controller");
+        }
+    }
 #undef CENSUS
     return n;
 }

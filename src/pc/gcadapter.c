@@ -10,11 +10,18 @@
  * to 8 bits: a stick at raw +80 reaches the game as +116, a trigger reads 0
  * until half travel, and the scale moves mid-session. Melee's dash, tilt and
  * light-shield thresholds are all in raw units, so the adapter is read here:
- * 37-byte 0x21 reports through SDL's hidapi (SDL_hid_*, no new dependency;
- * SDL routes this VID/PID to its libusb backend on every platform, see
- * SDL_hidapi.c SDL_libusb_required[]), drained from the 1000 Hz input thread,
- * origin-relative like the GC SDK's PADRead, published as virtual pad status.
- * Adapter slot N is always PAD port N.
+ * 37-byte 0x21 reports through SDL's hidapi (SDL_hid_*, no new dependency),
+ * drained from the 1000 Hz input thread, origin-relative like the GC SDK's
+ * PADRead, published as virtual pad status. Adapter slot N is always PAD port N.
+ *
+ * SDL lists this VID/PID as libusb-only (SDL_hidapi.c SDL_libusb_required[]):
+ * the platform HID backends skip it, so where SDL has no libusb nothing sees
+ * the adapter. Linux and Windows build SDL with libusb (Windows statically,
+ * tools/windows/build_libusb.sh; the adapter also needs the WinUSB driver,
+ * installed with Zadig as for Dolphin). Android has no libusb, so Aurora
+ * patches SDL to let the adapter through its Java USB HID backend
+ * (apply-sdl3-gamecube-adapter-without-libusb.cmake); Android asks the player
+ * for USB access the first time it is opened.
  *
  * MELEE_GC_ADAPTER=0 hands the adapter back to SDL's driver.
  */
@@ -46,7 +53,65 @@ static int s_open_retries;
 static bool s_warned_open;
 static uint8_t s_rumble[1 + GC_SLOTS] = {0x11};
 
-#if !defined(_WIN32) && !defined(__APPLE__)
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <setupapi.h>
+
+/* Whether the adapter is plugged in, and which driver service owns it
+ * ("WinUSB" once Zadig has been run, "HidUsb" out of the box, "" for none).
+ * SDL cannot say: without a usable libusb path it just never lists it. */
+static bool usb_device_driver(char* service, DWORD size) {
+    HDEVINFO set = SetupDiGetClassDevsA(NULL, "USB", NULL, DIGCF_ALLCLASSES | DIGCF_PRESENT);
+    if (set == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    bool found = false;
+    SP_DEVINFO_DATA dev = {.cbSize = sizeof(dev)};
+    char id[256];
+    for (DWORD i = 0; !found && SetupDiEnumDeviceInfo(set, i, &dev); i++) {
+        if (!SetupDiGetDeviceInstanceIdA(set, &dev, id, sizeof(id), NULL)) {
+            continue;
+        }
+        SDL_strupr(id);
+        if (strstr(id, "VID_057E&PID_0337") == NULL) {
+            continue;
+        }
+        found = true;
+        if (!SetupDiGetDeviceRegistryPropertyA(set, &dev, SPDRP_SERVICE, NULL, (BYTE*)service,
+                size, NULL))
+        {
+            service[0] = '\0';
+        }
+    }
+    SetupDiDestroyDeviceInfoList(set);
+    return found;
+}
+
+/* Log once why an adapter Windows has is out of SDL's reach. */
+static void explain_unreachable_win32(bool listed) {
+    char service[64];
+    if (!usb_device_driver(service, sizeof(service))) {
+        return;
+    }
+    s_warned_open = true;
+    if (SDL_strcasecmp(service, "WinUSB") != 0) {
+        pc_log_line("GC adapter: WUP-028 plugged in with driver \"%s\"; it needs the WinUSB driver."
+                    " Run Zadig (zadig.akeo.ie), pick \"WUP-028\" and install WinUSB, as for"
+                    " Dolphin/Slippi, then restart",
+            service[0] != '\0' ? service : "none");
+    } else {
+        pc_log_line("GC adapter: WUP-028 plugged in with WinUSB but %s: %s",
+            listed ? "could not be opened (another program using it?)"
+                   : "not visible to SDL (SDL built without libusb?)",
+            SDL_GetError());
+    }
+}
+#endif
+
+/* Not on Android: there SDL's Java USB layer finds the adapter, and its open
+ * error (e.g. "Waiting for permission") says what is missing. */
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined(__ANDROID__)
 #include <dirent.h>
 #include <stdio.h>
 static bool check_usb_device_attached(uint16_t vid, uint16_t pid) {
@@ -124,6 +189,8 @@ static void publish_snapshot(void) {
 /* Cross-thread snapshot for the HUD: raw[6] | present<<48 | wireless<<49. */
 static _Atomic uint64_t s_raw[GC_SLOTS];
 static _Atomic uint64_t s_reports;
+/* s_dev != NULL, for other threads (the pads census). */
+static atomic_bool s_open;
 
 void pc_gcadapter_init(void) {
     const char* env = getenv("MELEE_GC_ADAPTER");
@@ -168,17 +235,25 @@ static void try_open(void) {
     SDL_UnlockJoysticks();
     s_open_retries = info != NULL ? s_open_retries - 1 : 0;
     if (s_dev == NULL) {
+#ifdef _WIN32
+        if (!s_warned_open) {
+            explain_unreachable_win32(info != NULL);
+        }
+#else
         if (info != NULL && !s_warned_open) {
             s_warned_open = true;
             pc_log_line("GC adapter: WUP-028 attached but could not be opened: %s"
-#if !defined(_WIN32) && !defined(__APPLE__)
+#if defined(__ANDROID__)
+                        " (allow USB access when Android asks; the adapter is picked up then)"
+#elif !defined(__APPLE__)
                         " (udev rule: SUBSYSTEM==\"usb\", ATTRS{idVendor}==\"057e\", "
                         "ATTRS{idProduct}==\"0337\", MODE=\"0666\")"
 #endif
                 ,
                 SDL_GetError());
         }
-#if !defined(_WIN32) && !defined(__APPLE__)
+#endif
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined(__ANDROID__)
         else if (info == NULL && !s_warned_open && check_usb_device_attached(GC_VID, GC_PID))
         {
             s_warned_open = true;
@@ -203,6 +278,7 @@ static void try_open(void) {
     }
     memset(s_rumble + 1, 0, GC_SLOTS);
     s_warned_open = false;
+    atomic_store_explicit(&s_open, true, memory_order_relaxed);
     pc_log_line(
         "GC adapter: WUP-028 opened, raw 1000 Hz path active (MELEE_GC_ADAPTER=0 to use SDL)");
 }
@@ -211,6 +287,7 @@ static void close_dev(const char* why) {
     pc_log_line("GC adapter: %s", why);
     SDL_hid_close(s_dev);
     s_dev = NULL;
+    atomic_store_explicit(&s_open, false, memory_order_relaxed);
     for (int i = 0; i < GC_SLOTS; i++) {
         clear_slot(i);
     }
@@ -428,4 +505,8 @@ bool pc_gcadapter_raw(int port, uint8_t raw[6], bool* wireless) {
 
 uint64_t pc_gcadapter_report_count(void) {
     return atomic_load_explicit(&s_reports, memory_order_relaxed);
+}
+
+bool pc_gcadapter_is_open(void) {
+    return atomic_load_explicit(&s_open, memory_order_relaxed);
 }
