@@ -244,6 +244,7 @@ typedef struct FwdAck {
 #define LINK_RELAYED 0x01 /* what it sends here comes through the host as well */
 #define LINK_DEAD 0x02    /* given up: only the host's path is left */
 #define LINK_GONE 0x04    /* its player left */
+#define LINK_FASTER 0x08  /* relayed for speed, not because the link is silent */
 typedef struct LinkFig {
     uint8_t port;  /* the other end's primary port; 0xff: unused slot */
     uint8_t flags; /* LINK_* */
