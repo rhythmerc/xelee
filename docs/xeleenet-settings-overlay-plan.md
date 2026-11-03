@@ -308,6 +308,29 @@ Test: on the Quest, with a desktop host and guest.
   RULES, which also fixes a latent join-time risk.
 - **The 3.5-5 s latency.** The "Applying…" notice covers it. Re-running the
   handshake without switching is the follow-up.
+  - **Measured 2026-11-03** (`net_test_xn_menu.py --scenario
+    settings-engine`, 3 players on one machine; frames at 60 Hz): the
+    host's wait for the start's answers 213 ms (it only looked when its
+    200 ms resend timer came round), SWITCH_LEAD 90 frames (1.5 s), then the
+    new session's `hs_lead` 119 frames and the reload's 20 (2.3 s): about
+    4.0 s. The playtest's 5.2 s at 23:11 is the same plus rick's delay.
+  - **Cut:** answers are looked for every tick (213 → 5 ms), and the switch
+    lead comes from the start's own round trip: `2 × trip + delay + 24`
+    frames, 30 to 90 (`switch_lead`, net_punch.c). On one machine that's 30
+    frames, so about 2.8 s in all; at 100 ms and delay 7, about 55. Every
+    guest heard the switch 27-30 frames ahead. Under a simulated 50 ms ±
+    40 ms with 2% loss, the settle at the switch timing out (1.5 s) and a
+    desync at the CSS → stage select hand-off happened with the old lead
+    too: neither comes from this.
+  - **What's left is `hs_lead`'s 120-frame floor** (2 s): a new session
+    knows no ping, and a guest's READY missing the start in a 3+ player
+    session fails the handshake. Re-running the handshake inside the
+    running session (the follow-up above) would skip the switch and its
+    settle and could size the lead from the session's measured ping (3 ×
+    RTT + 30, with a lower floor): about 0.6-1 s in all. That needs a
+    re-armable handshake (`pc_net_host_match` expects `HS_IDLE`), a RULES
+    epoch for `xnAgreeFrame` in place of the session number, and a safe
+    path for a late READY that doesn't fail the session.
 - **There's no menu checksum.** The tests compare the commit hashes and the
   logged picks after the reload.
 - **The hidden rules bar and Teams zones** may be live in XeleeNet today.
