@@ -925,6 +925,67 @@ def rematch(insts, shots, drive):
     return True
 
 
+def leave_match(insts, shots, drive, scenario):
+    """--scenario leave-match / leave-match-kill (the 2026-11-02 playtest,
+    section 7.2): the last guest leaves mid-match, with a goodbye (SIGTERM,
+    the game's own exit path) or none (SIGKILL: silence, a timeout). The
+    others void the match and must go back to the CSS together, with the
+    lobby one player smaller, and play on."""
+    import signal
+    nap(6)
+    gone, rest = insts[-1], insts[:-1]
+    kill = scenario.endswith("kill")
+    print(f"net_test_xn_menu: {gone.name} leaves mid-match ({'no goodbye' if kill else 'goodbye'})", flush=True)
+    want = f"(players {(1 << len(rest)) - 1:02x})"
+    sessions = [nt.count(i, nt.re.escape(want)) for i in rest]  # those while the others joined
+    t0 = time.time()
+    gone.proc.send_signal(signal.SIGKILL if kill else signal.SIGTERM)
+    if not all(i.wait_log(r"online: match void at frame", 90) for i in rest):
+        drive.done()
+        print("FAIL: the others never voided the match")
+        return False
+    print(f"net_test_xn_menu: void after {time.time() - t0:.1f} s", flush=True)
+    css = [nt.count(i, r"online: enter CSS") for i in rest]
+    deadline = time.time() + 40
+    while time.time() < deadline:
+        if wait_more(rest, r"online: enter CSS", css, 2):
+            break
+        if any(nt.re.search(r"online: enter RESULTS", i.text()) for i in rest):
+            nt.press(rest, "Return", 9, 0)  # START, as players would on the results
+    else:
+        drive.done()
+        shot(rest[0], shots, "13-stuck")
+        print("FAIL: the others never got back to the CSS after the leave")
+        for i in rest:
+            print(f"[{i.name}] " + "; ".join(nt.re.findall(r"online: (enter \w+) at frame", i.text())[-4:]))
+        return False
+    drive.done()
+    print(f"net_test_xn_menu: back at the CSS {time.time() - t0:.1f} s after the leave", flush=True)
+    if not wait_more(rest, nt.re.escape(want), sessions, 60):
+        print(f"FAIL: the others never formed a session without the leaver {want}")
+        return False
+    nap(3)
+    shot(rest[0], shots, "13-css-after-leave")
+    del insts[-1]  # it plays no more
+    if not drive_css(rest, want=2):
+        print("FAIL: no CSS pick after the leave reached the SSS")
+        return False
+    cells = [nt.count(i, r"sss: resolved cell") for i in rest]
+    vs = [nt.count(i, r"online: enter VS at frame") for i in rest]
+    if not nt.press_until(rest, "Return", 9, r"sss: resolved cell", want=min(cells) + 1, tries=8, each=6.0):
+        print("FAIL: the SSS after the leave never resolved a stage everywhere")
+        return False
+    again = __import__("net_test_n").Drive(rest)
+    ok = wait_more(rest, r"online: enter VS at frame", vs, 180)
+    if ok:
+        nap(8)
+        shot(rest[0], shots, "14-match-after-leave")
+    again.done()
+    if not ok:
+        print("FAIL: the match after the leave never loaded")
+    return ok
+
+
 # ---- Lobby Settings (docs/xeleenet-settings-overlay-plan.md) ------------------
 # The overlay's items, top to bottom, as Up and Down walk them on the host's
 # page (xeleenet_menu.cpp build_overlay_host): Friendly fire only with Teams
@@ -1720,6 +1781,9 @@ def run(args):
         if args.scenario == "set":
             if not rematch(insts, shots, drive):
                 return False
+        elif args.scenario.startswith("leave-match"):
+            if not leave_match(insts, shots, drive, args.scenario):
+                return False
         else:
             nap(args.seconds)
             drive.done()
@@ -1769,7 +1833,8 @@ def main():
                              "sss-same", "css-b-hold", "leave-host-alone", "set", "teams", "multipad",
                              "multipad-full", "fighters", "details", "settings-engine", "settings-hold",
                              "settings-open", "settings", "settings-cancel", "settings-seats", "settings-teams",
-                             "settings-alone", "settings-race", "settings-list", "ctf"),
+                             "settings-alone", "settings-race", "settings-list", "ctf", "leave-match",
+                             "leave-match-kill"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
@@ -1780,6 +1845,8 @@ def main():
                          "css-b-hold: B held over the grid leaves the token and the pick alone; "
                          "leave-host-alone: the host alone holds B and leaves its lobby; "
                          "ctf: the host's lobby plays Capture the Flag; every player's match is CTF on Temple; "
+                         "leave-match: the last guest quits mid-match (a goodbye), and the others go back to "
+                         "the CSS together and play on; leave-match-kill: the same with no goodbye (SIGKILL); "
                          "set: 1-minute matches, the results, back to the CSS and a rematch; "
                          "teams: Teams with a seat per player (doors moved unless 4), the host turns "
                          "its team on its door's button; "

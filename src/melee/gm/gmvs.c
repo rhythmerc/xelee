@@ -1165,6 +1165,9 @@ static bool softPaused;
 /* The port whose L+R+A+Start ended the match, -1 when none did: Slippi's
  * Direct counts it as that player's loss (CheckIfWonLastGame). */
 int gm_vs_slippi_quitter = -1;
+/* The port whose leaving voided the match (src/pc/net.c, drops), -1 when
+ * none: XeleeNet takes the others back to the CSS without it. */
+int gm_vs_net_leaver = -1;
 
 bool gm_vs_soft_paused(void)
 {
@@ -1175,6 +1178,7 @@ static void softPauseReset(void)
 {
     softPaused = false;
     gm_vs_slippi_quitter = -1;
+    gm_vs_net_leaver = -1;
 }
 
 static void slippiSoftPause(VsSceneController* c)
@@ -1230,6 +1234,7 @@ void gm_DoPauseChecksAndRoutine(VsSceneController* arg0, int arg1)
         const int gone = pc_net_void_port_now();
         if (gone >= 0) {
             pc_log_line("online: match void at frame %d, P%d left", pc_net_frame(), gone + 1);
+            gm_vs_net_leaver = gone;
             fn_8016CF4C(gone, OUTCOME_NO_CONTEST);
             return;
         }

@@ -49,6 +49,7 @@
 extern bool pc_net_slippi_active(void);
 extern const char* pc_get_net_target(void);
 extern int gm_vs_slippi_quitter;
+extern int gm_vs_net_leaver;
 #include <melee/mn/mnstagesel.h>
 extern void pc_set_net_target(const char* code);
 #include "pc/pc.h"
@@ -85,6 +86,10 @@ static bool xn_reload;
 static bool xn_join_css;
 /* The reloaded CSS's first frame re-seeds (gmOnline_XnCssFrame). */
 static bool xn_reseed;
+/* Ports of players who left mid-match (xnLeftMidMatch): their doors are
+ * shut until the next session, which the host starts without them. */
+static int xn_left_ports;
+static int xn_seq; /* the session the handshake is for (xnAgreeFrame, below) */
 /* The picks a roster reload keeps (gmOnline_XnKeepPicks): the host's, which
  * it sends to everyone, with each door's team. */
 #define NET_MSG_XN_PICKS 0x21
@@ -505,7 +510,10 @@ void onEnterCss(GameModeState* state)
          * hold, a failure); a session's end alone keeps it. */
         pc_net_unlock_pin();
         /* A door for every player in the session, by controller port. */
-        int ports = pc_net_port_mask();
+        if (xn_reload || xn_join_css) {
+            xn_left_ports = 0; /* a new session: its port mask is who plays */
+        }
+        int ports = pc_net_port_mask() & ~xn_left_ports;
         if (ports == 0) {
             ports = 1; /* the host, alone until someone joins */
         }
@@ -1156,6 +1164,33 @@ void onEnterVs(GameModeState* state)
 #endif
 }
 
+#ifdef TARGET_PC
+/* A player's leaving voided the match (net.c's drops; gm_vs_net_leaver): no
+ * results, whose exit waits on every player's START, theirs too, so it never
+ * came (the 2026-11-02 playtest). Everyone goes back to the CSS from the
+ * same frame, and the lobby lets the player go as for a B hold on the CSS
+ * (gmOnline_XnLeave): the host's next session leaves them out. */
+static void xnLeftMidMatch(int port)
+{
+    PcXnPunchView v;
+    int k;
+    pc_xn_punch_view(&v);
+    for (k = 0; k < v.nplayers; k++) {
+        if (v.players[k].port == port) {
+            pc_xn_css_left(v.players[k].name);
+        }
+    }
+    pc_log_line("online: XeleeNet P%d left mid-match; back to the CSS at frame %d", port + 1,
+                pc_net_frame());
+    xn_left_ports |= 1 << port;
+    if (pc_xn_punch_left(port)) {
+        xn_reload = true; /* the host alone again: no session left */
+        xn_seq = pc_xn_punch_session_seq();
+    }
+    gm_SetNextGameModeStateId(state_css);
+}
+#endif
+
 void onExitVs(GameModeState* state)
 {
 #ifdef TARGET_PC
@@ -1173,6 +1208,9 @@ void onExitVs(GameModeState* state)
     gmVsMelee_ExitVs(state, state_results, state_sudden_death);
     mei = gm_GetGameModeStateExitData(state);
 #ifdef TARGET_PC
+    if (online_kind == ONLINE_KIND_XN && gm_vs_net_leaver >= 0) {
+        xnLeftMidMatch(gm_vs_net_leaver);
+    }
     if (rankedMode()) {
         MatchEnd* end = &mei->match_end;
         if (gm_WasMatchCanceled(end->outcome) || end->is_teams ||
@@ -1247,6 +1285,11 @@ void onExitSuddenDeath(GameModeState* state)
     }
 #endif
     gmVsMelee_ExitSuddenDeath(state);
+#ifdef TARGET_PC
+    if (online_kind == ONLINE_KIND_XN && gm_vs_net_leaver >= 0) {
+        xnLeftMidMatch(gm_vs_net_leaver);
+    }
+#endif
 }
 
 void onEnterResults(GameModeState* state)
