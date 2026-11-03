@@ -125,6 +125,12 @@ typedef struct Peer {
     /* Game thread. */
     int32_t last_acked; /* newest local frame it holds */
     uint32_t ping_us;   /* smoothed RTT of this link */
+    /* This link's share of the stats line, per window (stats_peers_report):
+     * RTT samples, their mean |dRTT|, and the input packets sent to it
+     * (tx_lock) against the acks that came back (receive thread). */
+    uint64_t st_rtt_sum, st_jit_sum;
+    uint32_t st_rtt_min, st_rtt_max, st_rtt_prev;
+    unsigned st_rtt_n, st_jit_n, st_tx, st_acks;
     /* Its newest checksum report, which the host passes on with its input to
      * a guest that cannot hear it (send_forwarded). */
     int32_t ck_last_frame;
@@ -542,6 +548,7 @@ static void send_packet(Peer* p, Packet* pk) {
     int slot = pk->seq & 63;
     p->rtt_ring[slot].seq = pk->seq;
     p->rtt_ring[slot].send_ns = SDL_GetTicksNS();
+    p->st_tx++;
     Packet w = *pk;
     wire_packet(&w);
     uint8_t out[PACKET_WIRE_MAX];
@@ -1714,6 +1721,21 @@ static void on_ack(Peer* p, const Ack* a, int rtt) {
             s_rtt_max = (uint32_t)rtt;
         }
         jitter_note((uint32_t)rtt);
+        p->st_rtt_sum += (uint64_t)rtt;
+        p->st_rtt_n++;
+        if (p->st_rtt_min == 0 || (uint32_t)rtt < p->st_rtt_min) {
+            p->st_rtt_min = (uint32_t)rtt;
+        }
+        if ((uint32_t)rtt > p->st_rtt_max) {
+            p->st_rtt_max = (uint32_t)rtt;
+        }
+        if (p->st_rtt_prev != 0) {
+            uint32_t d = (uint32_t)rtt > p->st_rtt_prev ? (uint32_t)rtt - p->st_rtt_prev :
+                                                         p->st_rtt_prev - (uint32_t)rtt;
+            p->st_jit_sum += d;
+            p->st_jit_n++;
+        }
+        p->st_rtt_prev = (uint32_t)rtt;
     }
 }
 
@@ -1808,6 +1830,7 @@ static void rx_dispatch(Peer* p, void* buf, int n) {
         }
         wire_ack(&u->ack);
         s_rx_acks++;
+        p->st_acks++;
         rx_push(p, &u->ack, n, rtt_sample(p, u->ack.seq));
         break;
     case 'R':
@@ -4902,6 +4925,39 @@ static void capture_local_sample(bool fresh) {
     }
 }
 
+/* The stats line's ping, jitter and loss are the session's: the ping its
+ * slowest link's, the jitter taken over every link's samples in turn. With
+ * three or four players that hides which link is the bad one, so each link
+ * gets its own figures on a line of their own (caller holds s_rx_lock, which
+ * the acks are counted under; tx_lock nests inside it as in rx_input):
+ *
+ *   net:   peers: P2 98 ms (avg 66, 12-212, jitter 31.1, loss 0%); P3 ...
+ *
+ * "dead" marks a link this side has given up on, "gone" a player who left. */
+static void stats_peers_report(void) {
+    if (net.npeers < 2) {
+        return; /* a 1v1's one link is the stats line itself */
+    }
+    char line[512];
+    int n = snprintf(line, sizeof line, "net:   peers:");
+    SDL_LockMutex(net.tx_lock);
+    for (int i = 0; i < net.npeers && n > 0 && n < (int)sizeof line; i++) {
+        Peer* p = &s_peer[i];
+        int loss = p->st_tx > p->st_acks ? (int)(100 * (p->st_tx - p->st_acks) / p->st_tx) : 0;
+        n += snprintf(line + n, sizeof line - (size_t)n,
+            "%s P%d %u ms (avg %.0f, %u-%u, jitter %.1f, loss %d%%)%s", i > 0 ? ";" : "",
+            p->port + 1, p->ping_us / 1000,
+            p->st_rtt_n ? p->st_rtt_sum / 1000.0 / p->st_rtt_n : 0.0, p->st_rtt_min / 1000,
+            p->st_rtt_max / 1000, p->st_jit_n ? p->st_jit_sum / 1000.0 / p->st_jit_n : 0.0, loss,
+            (s_gone & (1u << p->port)) ? " gone" : net.link_dead[i] ? " dead" : "");
+        p->st_rtt_sum = p->st_jit_sum = 0;
+        p->st_rtt_min = p->st_rtt_max = 0;
+        p->st_rtt_n = p->st_jit_n = p->st_tx = p->st_acks = 0;
+    }
+    SDL_UnlockMutex(net.tx_lock);
+    pc_log_line("%s", line);
+}
+
 /* A fresh frame: capture the local sample, exchange inputs, predict or
  * stall, and feed the queue head. `raw` is false for the extra tick a
  * time-sync advance adds, which reuses the last physical sample. */
@@ -5133,6 +5189,7 @@ static void fresh_tick(PADStatus* head, bool raw) {
         s_rx_dups = s_rx_reorders = s_sock_err = s_resim_eat = 0;
         s_rx_bad_src = s_rx_bad_sess = s_rx_bad_player = s_rx_malformed = s_tx_would_block = 0;
         s_rx_bad_mac = s_rx_full = 0;
+        stats_peers_report();
         SDL_UnlockMutex(s_rx_lock);
         snap_stats_report();
         sfx_stats_report();
