@@ -7,7 +7,6 @@ BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build/macos}"
 DIST_DIR="${ROOT_DIR}/dist"
 APP="${BUILD_DIR}/Melee.app"
 ARCH="$(uname -m)"
-MELEE_VERSION="${MELEE_VERSION:-0.0.0}"
 
 # Apple's clang builds the C++ (aurora, Dawn glue, launcher); the decomp's C
 # goes through Homebrew GCC via tools/gcc_launcher.py. See CMakeLists.txt.
@@ -24,7 +23,16 @@ ninja -C "${BUILD_DIR}" melee
 echo "=== Staging ${APP} ==="
 rm -rf "${APP}"
 mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources" "${APP}/Contents/Frameworks"
-sed "s/@MELEE_VERSION@/${MELEE_VERSION#v}/g" "${ROOT_DIR}/platforms/macos/Info.plist" \
+# The version the app itself reports (cmake/AppVersion.cmake: the release tag,
+# else the newest tag and the commit), so Info.plist can't drift from the
+# string XeleeNet matches lobbies on. Don't set MELEE_VERSION here: cmake
+# reads it from the environment, and a default would become the app's version.
+APP_VERSION="$(sed -n 's/^#define MELEE_APP_VERSION "\(.*\)"$/\1/p' "${BUILD_DIR}/generated/app_version.h")"
+if [ -z "${APP_VERSION}" ]; then
+    echo "error: no MELEE_APP_VERSION in ${BUILD_DIR}/generated/app_version.h" >&2
+    exit 1
+fi
+sed "s/@MELEE_VERSION@/${APP_VERSION#v}/g" "${ROOT_DIR}/platforms/macos/Info.plist" \
     > "${APP}/Contents/Info.plist"
 cp "${ROOT_DIR}/platforms/macos/melee.icns" "${APP}/Contents/Resources/"
 cp "${BUILD_DIR}/melee" "${APP}/Contents/MacOS/melee"

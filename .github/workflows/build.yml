@@ -344,9 +344,12 @@ jobs:
           MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
           XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
-        run: |
-          # Info.plist wants a version; an untagged build uses git describe's.
-          MELEE_VERSION="${MELEE_VERSION:-$(git describe --tags)}" tools/package_macos.sh
+        # No version override: cmake/AppVersion.cmake names an untagged build
+        # (newest tag, commits, 9-digit hash) the same as on every other
+        # platform, and package_macos.sh puts that one in Info.plist. A
+        # git describe here gave a shorter hash, and XeleeNet kept the Mac
+        # out of the other builds' lobbies.
+        run: tools/package_macos.sh
 
       - uses: actions/upload-artifact@v4
         with:
