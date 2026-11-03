@@ -4624,6 +4624,30 @@ static void predict(int32_t f) {
     }
 }
 
+/* MELEE_NET_SIM_TAKE_REFUSE=N (fixture): every Nth snapshot take of a
+ * re-run frame is refused, as snapshot_take refuses one while an ARAM or
+ * disc transfer is in flight. The real case is rare: aurora's ARQ worker
+ * counts a transfer finished only after running its callback, and a
+ * synchronous ARAM fetch (ftdata.c's fighter animations) is released by
+ * that callback, so the take right after such a tick -- a rollback's -- can
+ * find it still in flight. The re-run then waits for that frame's input,
+ * which is the path this exercises; a rollback's own retake only waits with
+ * three or more players (in a 1v1 the correction that starts it is the
+ * input it would wait for). */
+static bool take_refuse_test(void) {
+    static int every = -1;
+    static unsigned n;
+    if (every < 0) {
+        const char* e = getenv("MELEE_NET_SIM_TAKE_REFUSE");
+        every = e != NULL ? atoi(e) : 0;
+        if (every > 0) {
+            pc_log_line("net: refusing every %d re-run snapshot take (MELEE_NET_SIM_TAKE_REFUSE)",
+                every);
+        }
+    }
+    return every > 0 && net.resim && ++n % (unsigned)every == 0;
+}
+
 /* Snapshot before a predicted frame. Behind the barrier nothing is taken
  * (the frame cannot be rolled back to anyway); when the buffer cannot be
  * grown, disable further prediction without invalidating older snapshots.
@@ -4631,6 +4655,10 @@ static void predict(int32_t f) {
 static bool snap_predicted(int32_t f) {
     Snapshot* s = snap_slot(f);
     if (s_lockstep || f <= net.rb_barrier || scene_exit_lockstep(f)) {
+        return false;
+    }
+    if (take_refuse_test()) {
+        s->frame = -1; /* what snapshot_take does when it refuses */
         return false;
     }
     if (!snapshot_take(s, f)) {
@@ -4945,7 +4973,22 @@ static bool rollback_to(int32_t f) {
     if (depth > s_rb_depth_cur) {
         s_rb_depth_cur = depth;
     }
+    /* The state is now f's entry state: the timeline ends at f - 1, and
+     * frames f.. are re-run from the rings. simulated_upto() has to say so
+     * before resim_prepare, which can wait for input: with three or more
+     * players one peer's correction starts the rollback while another's
+     * input for f is still predicted, and when the retake of f is refused
+     * (an ARAM transfer from the tick just run still in flight) the re-run
+     * waits for it. Left at the pre-rollback tick, a correction for any
+     * frame from f up to that tick landing during the wait read as a
+     * misprediction of a frame already simulated, and the next tick rolled
+     * back again: to a later frame, whose snapshot still held the timeline
+     * being replaced (a DESYNC a frame later, on that machine alone), or to
+     * f itself, whose slot the refused take had just emptied ("cannot roll
+     * back ... no snapshot"). Those frames have not been re-run yet; the
+     * re-run reads the corrected ring. */
     net.resim = true;
+    net.tick_frame = f - 1;
     return resim_prepare(f);
 }
 
