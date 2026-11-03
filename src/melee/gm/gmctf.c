@@ -56,6 +56,7 @@
 #include "pc/ctf_art.h"
 
 #ifdef TARGET_PC
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #endif
@@ -101,6 +102,14 @@ static CtfLayout ctf_debug_layout;
  * this far in front of and behind the fighters' plane. */
 #define CTF_ZONE_RING_HEIGHT 5.0f
 #define CTF_ZONE_RING_DEPTH 10.0f
+
+/* A zone that can't score (home required, its own flag away) dims and
+ * breathes: its alpha swings between these every CTF_ZONE_PULSE_FRAMES, and
+ * it fades between that and full over CTF_ZONE_FADE_FRAMES. */
+#define CTF_ZONE_DIM_LOW 0.15f
+#define CTF_ZONE_DIM_HIGH 0.45f
+#define CTF_ZONE_PULSE_FRAMES 100
+#define CTF_ZONE_FADE_FRAMES 12
 
 /* ---- state: all of it rolls back ---------------------------------------- */
 
@@ -467,6 +476,40 @@ static void ctf_debug_log(void)
 
 /* ---- the per-frame process ------------------------------------------------ */
 
+/* A zone ring's alpha: full while its team can score there, else a slow
+ * pulse between CTF_ZONE_DIM_LOW and _HIGH (the rule in ctf_check_captures:
+ * with home required, a team scores only while its own flag is home). The
+ * fade between the two is the draw's own (a step per sim frame advanced, so
+ * extra draws of one frame, XR eyes or held redraws, don't speed it), never
+ * the sim's. */
+static float ctf_zone_ring_alpha(int team)
+{
+    static float level[2] = { 1.0f, 1.0f }; /* 1 live, 0 dimmed */
+    static int last_frame[2] = { -1, -1 };
+    const bool live = !ctf_rules.home_required || ctf.home[team];
+    const float target = live ? 1.0f : 0.0f;
+    const float phase = (float) (ctf.frame % CTF_ZONE_PULSE_FRAMES) / CTF_ZONE_PULSE_FRAMES;
+    const float pulse =
+        CTF_ZONE_DIM_LOW + (CTF_ZONE_DIM_HIGH - CTF_ZONE_DIM_LOW) * (0.5f - 0.5f * cosf(phase * 6.2831853f));
+
+    if (ctf.frame != last_frame[team]) {
+        /* Frames since the last draw; a rollback or a new match counts one. */
+        int steps = ctf.frame > last_frame[team] ? ctf.frame - last_frame[team] : 1;
+        float step;
+        if (steps > CTF_ZONE_FADE_FRAMES) {
+            steps = CTF_ZONE_FADE_FRAMES;
+        }
+        step = (float) steps / CTF_ZONE_FADE_FRAMES;
+        if (level[team] < target) {
+            level[team] = level[team] + step > target ? target : level[team] + step;
+        } else if (level[team] > target) {
+            level[team] = level[team] - step < target ? target : level[team] - step;
+        }
+        last_frame[team] = ctf.frame;
+    }
+    return pulse + (1.0f - pulse) * level[team];
+}
+
 /* The stands, in the stage's draw: a plate under each, and a ghost of the
  * flag while it is away (itCtfFlag_DrawStand). Reads state, writes none. */
 static void ctf_draw_stands(HSD_GObj* gobj, intptr_t pass)
@@ -489,11 +532,12 @@ static void ctf_draw_stands(HSD_GObj* gobj, intptr_t pass)
     HSD_CObjGetViewingMtx(HSD_CObjGetCurrent(), view);
     GXLoadPosMtxImm(view, GX_PNMTX0);
     GXSetCurrentMtx(GX_PNMTX0);
-    /* Each capture zone's edge, on its floor, all match long. */
+    /* Each capture zone's edge, on its floor, all match long. One that
+     * can't score dims and breathes (ctf_zone_ring_alpha). */
     for (team = 0; team < 2; team++) {
         const CtfBox* z = &ctf_base(team)->zone;
         pc_ctf_zone_ring(z->l, z->r, z->b, CTF_ZONE_RING_DEPTH, -CTF_ZONE_RING_DEPTH, CTF_ZONE_RING_HEIGHT,
-                         body[team], light[team], 1.0f);
+                         body[team], light[team], ctf_zone_ring_alpha(team));
     }
     /* READY: a light beam over each base (the camera frames both then). */
     if (ctf.frame < CTF_READY_FRAMES) {

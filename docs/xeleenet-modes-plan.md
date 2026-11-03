@@ -523,6 +523,9 @@ From the 2026-11-02 playtest notes:
   ±10 deep, with a lighter lip and a glow at its foot; drawn all match from
   the stands' draw (the beams' path, so in the eye passes too; unverified on
   a headset).
+- **A zone that can't score dims:** with home required and the team's own
+  flag away, its ring drops to 15-45% and breathes over 100 frames, fading
+  in and out over 12 (`ctf_zone_ring_alpha`, draw-only state).
 
 ## 7. Open questions
 
