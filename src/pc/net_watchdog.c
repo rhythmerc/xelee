@@ -95,12 +95,18 @@ void net_watchdog_tick(int32_t frame) {
     uint64_t now = SDL_GetTicksNS();
     if (frame != s_last_frame) {
         s_last_frame = frame;
-        s_last_move_ns = now;
+        __atomic_store_n(&s_last_move_ns, now, __ATOMIC_RELAXED);
         s_reported = false;
         return;
     }
-    if (s_reported || !__atomic_load_n(&s_game_thread_known, __ATOMIC_ACQUIRE) ||
-        s_last_move_ns == 0 || now - s_last_move_ns < (uint64_t)WATCHDOG_MS * 1000000ull)
+    /* The game thread's heartbeat stamps the clock too, and it can do so
+     * after `now` was read here: `now - moved` then wraps to centuries, and
+     * a thread spinning in an input wait was reported wedged (six times in
+     * the 2026-11-02 playtest, every stack the normal pc_net_sync wait). A
+     * stamp later than now is as fresh as it gets. */
+    uint64_t moved = __atomic_load_n(&s_last_move_ns, __ATOMIC_RELAXED);
+    if (s_reported || !__atomic_load_n(&s_game_thread_known, __ATOMIC_ACQUIRE) || moved == 0 ||
+        moved >= now || now - moved < (uint64_t)WATCHDOG_MS * 1000000ull)
     {
         return;
     }
@@ -111,7 +117,7 @@ void net_watchdog_tick(int32_t frame) {
 }
 
 void net_watchdog_heartbeat(void) {
-    s_last_move_ns = SDL_GetTicksNS();
+    __atomic_store_n(&s_last_move_ns, SDL_GetTicksNS(), __ATOMIC_RELAXED);
 }
 #else
 void net_watchdog_arm(void) {}
