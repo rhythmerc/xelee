@@ -30,7 +30,7 @@ set(BROWSER_PC_SOURCES
  android_compat.cpp music_stream.cpp textures.cpp
  net.c net_chat.c net_dht.c net_dht_item.c net_handshake.c net_identity.c net_disc.c net_match.c net_rank.c
  net_rank_session.c net_rank_store.c net_reliable.c net_sfx.c net_sim.c net_snapshot.c net_sync.c net_watchdog.c net_wire.c
- libm/pc_msl_trig.c libm/pc_perturb.c libm/pc_rank_exp.c libm/pc_rank_sqrt.c)
+ libm/pc_msl_trig.c libm/pc_msl_logf.c libm/pc_perturb.c libm/pc_rank_exp.c libm/pc_rank_sqrt.c)
 list(TRANSFORM BROWSER_PC_SOURCES PREPEND ${CMAKE_SOURCE_DIR}/src/pc/)
 # Vendored netplay dependencies, listed in PC_SOURCES upstream as well.
 list(APPEND BROWSER_PC_SOURCES

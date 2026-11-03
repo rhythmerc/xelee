@@ -437,6 +437,7 @@ set(PC_SOURCES
         # section 5), and so does any libm from the GameCube's, which a
         # Slippi peer runs (src/pc/libm/pc_msl_trig.c).
         src/pc/libm/pc_msl_trig.c
+        src/pc/libm/pc_msl_logf.c
         src/pc/libm/pc_perturb.c)
 # iOS, not APPLE: ios_dialog.m imports UIKit, which the macOS SDK has no
 # headers for. The glob this replaced matched src/pc/*.m on macOS too.
