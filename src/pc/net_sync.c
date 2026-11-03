@@ -282,6 +282,15 @@ static void delay_auto(void) {
     int hi = fight ? 4 : 8;
     d = d < lo ? lo : d > hi ? hi : d;
     if (d == net.delay) {
+        /* The pick for this side of the menu/fight line is the delay already
+         * running: it is made all the same. Returning without noting it left
+         * s_delay_fight at the menus' false through a whole fight entered at
+         * the delay it wanted, so the first link change mid-match passed the
+         * crossing test below and moved the delay mid-fight (a guest pair
+         * whose link turned bad at frame 4000: "auto delay 2 -> 3 at frame
+         * 4200 (fight, ...)", net_test_n --paced --link
+         * 0:1=10,0:2=10,1:2=80@4000-8000). */
+        s_delay_fight = fight;
         return;
     }
     /* The delay moves on entering or leaving a fight and nowhere else. A
