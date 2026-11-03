@@ -2916,16 +2916,42 @@ int pc_net_local_player(void) {
  * not an arithmetic one (docs/netcode-plan.md section 5.2).
  *
  * So the exit frame is agreed instead of inferred: each peer announces the
- * frame its scene asked to end on, and both leave on the later of the two
- * plus a lead that covers the reliable round trip. This is the pattern the
- * lobbies use to hand over to the CSS (pc_net_start_frame). */
-#define SCENE_HANDOFF 20 /* frames of lead: ~330 ms, menus are lockstep */
+ * frame its scene asked to end on, and every peer leaves on the latest of
+ * them plus a lead. This is the pattern the lobbies use to hand over to the
+ * CSS (pc_net_start_frame).
+ *
+ * The announcement used to be a reliable message (REL_SCENE) and the lead
+ * was meant to cover its round trip, which no lead can: lockstep paces the
+ * frames by the input
+ * packets, which go out every few milliseconds and carry each frame many
+ * times over, while the announcement is one message that a single lost
+ * packet holds back for a 250 ms resend. Under 50 ms +-40 ms with 2% loss it
+ * arrived after the agreed frame on some peer in 8 of 12 3-player runs; that
+ * peer had already ticked the old scene past the exit and entered the next
+ * scene a frame or more late (DESYNC on the first frames of the stage select
+ * or the match; tools/net_test_xn_menu.py, default and settings-engine).
+ *
+ * So the ask travels IN the input stream, which every peer already holds in
+ * frame order before it may simulate a frame: the peer marks the first input
+ * frame it has not yet written (WIRE_SCENE_ASK) and that input frame is its
+ * ask. A peer whose confirmed input from P runs through frame h without a
+ * mark knows P's ask, whenever it comes, is past h, so the exit is past
+ * h + SCENE_HANDOFF. Confirmed input reaches at least WINDOW frames behind
+ * any frame we simulate, so with the lead above WINDOW a missing ask can
+ * never be one the gate needed: no peer can pass an exit it does not know,
+ * however late any packet is, and nobody waits for anything but inputs.
+ *
+ * The Slippi transport keeps REL_SCENE: its pads are the console's format and
+ * Dolphin peers (the only ones it meets in a match-only session, which has
+ * no hand-offs at all) would read the mark as a button. */
+#define SCENE_HANDOFF 20 /* frames of lead; must exceed WINDOW (see above) */
+_Static_assert(SCENE_HANDOFF > WINDOW, "an unconfirmed ask must lie past the gate");
 #define SCENE_SLOTS 8    /* announcements kept: the peer may be a scene ahead */
 /* How long a scene may wait for the other half of a hand-off before the
  * session is declared dead. Five seconds is far longer than any real
- * hand-off (the announcement is one reliable round trip on top of
- * SCENE_HANDOFF) and short enough that a peer which never answers does not
- * leave the player in a scene they cannot leave. */
+ * hand-off (the peers' scenes ask within a load's difference of each other)
+ * and short enough that a peer which never answers does not leave the
+ * player in a scene they cannot leave. */
 #define SCENE_HOLD_MAX 300
 
 /* Defined below; pc_net_scene_hold() is the one caller ahead of it. */
@@ -2943,9 +2969,24 @@ static int32_t s_scene_exit_local = -1;          /* frame our scene asked to end
 static int32_t s_scene_exit_at = -1;             /* agreed frame, once both are in */
 static int32_t s_scene_wait_since = -1;          /* frame the incomplete wait began */
 static int32_t s_scene_exit_remote[MAX_PEERS][SCENE_SLOTS]; /* each peer's, by its own seq */
+/* The asks as input marks (WIRE_SCENE_ASK): per controller port, the newest
+ * confirmed input frame already looked at, and how many marks it held (the
+ * port's own count of exits, the seq its next mark belongs to). */
+static int32_t s_mark_scanned[PORTS];
+static uint32_t s_mark_seq[PORTS];
+
+/* Asks ride the input stream on the custom transport; REL_SCENE on Slippi's. */
+static bool scene_marks(void) {
+    return !s_slippi_on;
+}
 
 void net_scene_rel(int peer, const void* payload, int len) {
     SceneMsg m;
+    if (scene_marks()) {
+        /* Nothing on this transport sends one: an ask here is an input mark. */
+        pc_log_line("net: REL_SCENE from peer %d ignored (asks are input marks)", peer);
+        return;
+    }
     if (len != (int)sizeof m) {
         pc_log_line("net: REL_SCENE of %d bytes ignored", len);
         return;
@@ -2990,6 +3031,108 @@ static void scene_handoff_reset(void) {
             s_scene_exit_remote[p][i] = -1;
         }
     }
+    for (int q = 0; q < PORTS; q++) {
+        s_mark_scanned[q] = -1;
+        s_mark_seq[q] = 0;
+    }
+}
+
+/* Read the asks out of every peer's newly confirmed input, in frame order.
+ * Every fresh tick and every gate check calls it, so it never falls a ring
+ * behind: a peer's confirmed input cannot run more than its delay and ours
+ * past the frame we are on. Only the primary port carries the mark. */
+static void scene_marks_scan(void) {
+    if (!net.active || !scene_marks()) {
+        return;
+    }
+    for (int i = 0; i < net.npeers; i++) {
+        const int p = s_peer[i].port;
+        if (p < 0 || p >= PORTS || !(s_remote_mask & (1u << p))) {
+            continue;
+        }
+        int32_t upto = s_port_have[p];
+        if (s_port_end[p] >= 0 && upto > s_port_end[p]) {
+            upto = s_port_end[p];
+        }
+        int32_t f = s_mark_scanned[p] + 1;
+        if (f <= upto - RING) {
+            pc_log_line("net: P%d's input %d..%d went by unread for scene asks", p + 1, f,
+                upto - RING);
+            f = upto - RING + 1;
+        }
+        for (; f <= upto; f++) {
+            if (!(s_remote_ring[p][f & (RING - 1)].button & WIRE_SCENE_ASK)) {
+                continue;
+            }
+            const uint32_t seq = s_mark_seq[p]++;
+            int64_t ahead = (int64_t)seq - (int64_t)s_scene_seq;
+            if (ahead < 0 || ahead > 1) {
+                /* A peer leaves a scene only on the frame we leave it too, so
+                 * its asks can be for ours or the next one and no other. */
+                pc_log_line("net: P%d's scene ask %u at input %d ignored (we are on %u)", p + 1,
+                    seq, f, s_scene_seq);
+                continue;
+            }
+            s_scene_exit_remote[i][seq % SCENE_SLOTS] = f;
+        }
+        if (upto > s_mark_scanned[p]) {
+            s_mark_scanned[p] = upto;
+        }
+    }
+}
+
+/* Every live peer's exit frame for this scene; the latest of them, -1 while
+ * any is still missing (-2 with no live peer). All of them announce to all of
+ * them, so each computes the same exit on its own. */
+static int32_t scene_exit_remote(void) {
+    const int slot = s_scene_seq % SCENE_SLOTS;
+    int32_t remote = -2;
+    for (int i = 0; i < net.npeers; i++) {
+        if (s_gone & (1u << s_peer[i].port)) {
+            continue;
+        }
+        int32_t f = s_scene_exit_remote[i][slot];
+        remote = f < 0 ? -1 : remote == -1 ? -1 : f > remote ? f : remote;
+    }
+    return remote;
+}
+
+/* Agree the exit frame once our ask and every peer's are in. True when it is
+ * agreed (now or before). */
+static bool scene_exit_agree(void) {
+    if (s_scene_exit_at >= 0) {
+        return true;
+    }
+    int32_t remote = scene_exit_remote();
+    if (s_scene_exit_local < 0 || remote < 0) {
+        return false;
+    }
+    int32_t later = remote > s_scene_exit_local ? remote : s_scene_exit_local;
+    s_scene_exit_at = later + SCENE_HANDOFF;
+    /* Nothing may still be predicted when the scene goes: the next
+     * scene's first tick raises the barrier past every outstanding
+     * frame, and snapshot_unusable() rejects those snapshots anyway, so
+     * a correction arriving then is dropped and the peers finish the
+     * match on different remote inputs. So the last frames of the scene
+     * run lockstep (scene_exit_lockstep): they cost nothing, being the
+     * frames after the match has already been decided, and it is the
+     * same thing the entry side does.
+     *
+     * Not by raising the barrier: the peer's announcement can land a few
+     * frames after our own ask, with those frames still predicted, and a
+     * barrier over them dropped their correction (DESYNC a frame later,
+     * seen unpaced in net_test_xn_menu's set and fighters runs). */
+    pc_log_line("net: scene %u ends at frame %d (asked %d, peer %d)", s_scene_seq,
+        s_scene_exit_at, s_scene_exit_local, remote);
+    /* net.frame is the frame the next tick runs. The marks keep the
+     * agreement ahead of it (see SCENE_HANDOFF), so this cannot fire on the
+     * custom transport; if it does, this peer leaves the scene late and the
+     * checksum says so a frame on. */
+    if (net.frame > s_scene_exit_at) {
+        pc_log_line("net: scene %u exit agreed late: frame %d is already past %d", s_scene_seq,
+            net.frame, s_scene_exit_at);
+    }
+    return true;
 }
 
 /* True while the caller must keep ticking the scene it has asked to leave.
@@ -3003,19 +3146,12 @@ bool pc_net_scene_hold(void) {
          * recorded pair agreed, not where this run's own code asks to. */
         return record_replay_scene_hold(net.frame);
     }
-    /* Every peer's exit frame for this scene; the latest of them, or -1 while
-     * any is still missing. All of them announce to all of them, so each
-     * computes the same exit on its own. */
-    const int slot = s_scene_seq % SCENE_SLOTS;
-    int32_t remote = -2;
-    for (int i = 0; i < net.npeers; i++) {
-        if (s_gone & (1u << s_peer[i].port)) {
-            continue;
-        }
-        int32_t f = s_scene_exit_remote[i][slot];
-        remote = f < 0 ? -1 : remote == -1 ? -1 : f > remote ? f : remote;
-    }
-    if (s_scene_exit_local < 0) {
+    scene_marks_scan();
+    if (s_scene_exit_local < 0 && scene_marks()) {
+        /* The first input frame not yet written carries the mark (fresh_tick
+         * sets it as it writes that frame), and is the ask. */
+        s_scene_exit_local = s_wrote + 1;
+    } else if (s_scene_exit_local < 0) {
         SceneMsg m = {htonl(s_scene_seq), htonl((uint32_t)net.frame)};
         /* Only latch the frame if the announcement actually went out. The
          * lane is stop-and-wait four deep and shares itself with the resume,
@@ -3035,8 +3171,9 @@ bool pc_net_scene_hold(void) {
      * eventually. The peer keeps sending inputs, so neither the stall timeout
      * nor the watchdog notices a peer that has simply stopped answering this
      * exchange, and the player is left in a scene they cannot leave. */
-    if (s_scene_exit_local < 0 || remote < 0) {
+    if (!scene_exit_agree()) {
         static int32_t said;
+        const int32_t remote = scene_exit_remote();
         if (s_scene_wait_since < 0) {
             s_scene_wait_since = net.frame;
         }
@@ -3056,28 +3193,10 @@ bool pc_net_scene_hold(void) {
         return true; /* the peer is still in the scene: wait for its frame */
     }
     s_scene_wait_since = -1;
-    if (s_scene_exit_at < 0) {
-        int32_t later = remote > s_scene_exit_local ? remote : s_scene_exit_local;
-        s_scene_exit_at = later + SCENE_HANDOFF;
-        /* Nothing may still be predicted when the scene goes: the next
-         * scene's first tick raises the barrier past every outstanding
-         * frame, and snapshot_unusable() rejects those snapshots anyway, so
-         * a correction arriving then is dropped and the peers finish the
-         * match on different remote inputs. So the last frames of the scene
-         * run lockstep (scene_exit_lockstep): they cost nothing, being the
-         * frames after the match has already been decided, and it is the
-         * same thing the entry side does.
-         *
-         * Not by raising the barrier: the peer's announcement can land a few
-         * frames after our own ask, with those frames still predicted, and a
-         * barrier over them dropped their correction (DESYNC a frame later,
-         * seen unpaced in net_test_xn_menu's set and fighters runs). */
-        pc_log_line("net: scene %u ends at frame %d (asked %d, peer %d)", s_scene_seq,
-            s_scene_exit_at, s_scene_exit_local, remote);
-    }
     if (net.frame < s_scene_exit_at) {
         return true;
     }
+    const int slot = s_scene_seq % SCENE_SLOTS;
     for (int i = 0; i < MAX_PEERS; i++) {
         s_scene_exit_remote[i][slot] = -1;
     }
@@ -3098,8 +3217,9 @@ bool net_local_idle(void) {
     for (int q = 0; q < PORTS; q++) {
         const WirePad* p = &s_local_ring[q][s_wrote & (RING - 1)];
         if ((net.local_mask & (1u << q)) &&
-            (p->button != 0 || p->stickX != 0 || p->stickY != 0 || p->substickX != 0 ||
-                p->substickY != 0 || p->triggerLeft != 0 || p->triggerRight != 0))
+            ((p->button & ~WIRE_SCENE_ASK) != 0 || p->stickX != 0 || p->stickY != 0 ||
+                p->substickX != 0 || p->substickY != 0 || p->triggerLeft != 0 ||
+                p->triggerRight != 0))
         {
             return false;
         }
@@ -4713,7 +4833,7 @@ static void write_head(PADStatus* head, int32_t f) {
             theirs = &wrong;
         }
         from_wire(&head[p], theirs);
-        if (!s_seen_remote && theirs->button != 0) {
+        if (!s_seen_remote && (theirs->button & ~WIRE_SCENE_ASK) != 0) {
             s_seen_remote = true;
             pc_log_line("net: first remote button press (%04x) at frame %d", theirs->button, f);
         }
@@ -5122,6 +5242,11 @@ static void fresh_tick(PADStatus* head, bool raw) {
                     to_wire(&s_local_ring[q][w & (RING - 1)], &s_raw_last[q]);
                 }
             }
+            if (w == s_scene_exit_local && scene_marks()) {
+                /* Our scene's ask (pc_net_scene_hold): on the primary port,
+                 * which every peer reads it from (scene_marks_scan). */
+                s_local_ring[net.local][w & (RING - 1)].button |= WIRE_SCENE_ASK;
+            }
             s_wrote = w;
         }
         send_inputs();
@@ -5168,6 +5293,7 @@ static void fresh_tick(PADStatus* head, bool raw) {
             int lead = in_fight() ? FIGHT_ENTRY_LEAD : IO_QUIET;
             barrier_raise(net.frame + lead);
         }
+        scene_marks_scan(); /* the peers' scene asks, from their new input */
         /* Predict at most WINDOW frames past the remote, and only in a
          * fight past the barrier (plan §10.4: menus lockstep, rollback
          * armed in GS_VS once the match's own loads have gone quiet).

@@ -167,6 +167,13 @@ static inline void sock_startup(void) {}
  * the length of each message type is one number rather than two. */
 #define NET_MAC_LEN 8
 
+/* A button bit no GameCube pad has, which the wire keeps for the netcode:
+ * set on one frame of a player's primary-port input, it is that player's
+ * scene exit ask (net.c, scene hand-off). to_wire clears it from a real
+ * pad (Aurora's MISC1 shares the bit) and from_wire before the sim sees
+ * it, so no game code ever reads it. */
+#define WIRE_SCENE_ASK 0x8000
+
 /* 8-byte pad, same fields Slippi puts on the wire. */
 typedef struct WirePad {
     uint16_t button;
@@ -325,7 +332,8 @@ typedef struct DelayMsg {
 /* Payload of REL_SCENE (net.c): the frame the sender's scene asked to end
  * on. Both peers leave on max(theirs, ours) + SCENE_HANDOFF, so a load that
  * costs one peer more ticks than the other cannot put the next scene on
- * different frames (docs/netcode-plan.md section 5.2). */
+ * different frames (docs/netcode-plan.md section 5.2). The Slippi transport
+ * only: the custom one carries the ask as an input mark (WIRE_SCENE_ASK). */
 typedef struct SceneMsg {
     uint32_t seq;   /* exits the sender has completed: pairs the two halves */
     uint32_t frame; /* the frame its scene asked to end on */

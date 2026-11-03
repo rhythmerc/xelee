@@ -47,7 +47,11 @@ extern "C" {
  * gains an xports byte, and the pads of those ports follow the primary
  * port's (docs/lan-multipad-plan.md). A peer on 12 reads every packet as
  * malformed. */
-#define PC_NET_PROTO_VERSION 14 /* 14: Rules carries the game mode */
+/* Version 14: Rules carries the game mode. */
+/* Version 15 marks a scene exit ask in the input stream (WIRE_SCENE_ASK,
+ * net.c scene hand-off) instead of sending REL_SCENE: a peer on 14 would
+ * play the mark as a button and wait for a REL_SCENE that never comes. */
+#define PC_NET_PROTO_VERSION 15 /* 15: scene asks ride the input stream */
 void pc_net_init(void);
 void pc_net_set_input_delay(int frames);
 bool pc_net_active(void);

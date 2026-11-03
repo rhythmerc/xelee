@@ -75,10 +75,11 @@ static int run_case(int advance, int mode) {
     callback_count = sim_count = 0;
     request_exit = mode == 1;
     memset(&scene_state, 0, sizeof scene_state);
-    /* Both peers already asked at 180, agreeing exit boundary 200. */
+    /* Both peers already asked at 180, agreeing exit boundary 200. The
+     * peer's ask is the mark on its input frame 180, which it has sent. */
     s_scene_exit_local = mode == 0 ? 180 : -1;
-    SceneMsg peer = {htonl(0), htonl(180)};
-    net_scene_rel(0, &peer, sizeof peer);
+    s_remote_ring[net.remote][180 & (RING - 1)].button |= WIRE_SCENE_ASK;
+    s_mark_scanned[net.remote] = 170;
     s_scene_end_held = mode == 0;
     shipping_dispatch(count_frame);
     if (mode == 0) {
@@ -88,7 +89,10 @@ static int run_case(int advance, int mode) {
     } else if (mode == 1) {
         assert(scene_state.unk_C == 0 && s_scene_end_held == 1);
         assert(callback_count == 1 + (EXPECT_OLD && advance));
-        assert(s_scene_exit_local == 200 + (EXPECT_OLD && advance));
+        /* Our ask is the first input frame not yet written, at the gate
+         * after the request's tick. */
+        assert(net.frame == 200 + (EXPECT_OLD && advance));
+        assert(s_scene_exit_local == s_wrote + 1);
     } else {
         assert(callback_count == 2 && net.frame == 201);
     }
