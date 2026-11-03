@@ -203,3 +203,42 @@ void pc_ctf_beam(float x, float y, float z, float height, float width, GXColor b
         ellipse_strips(x, ry, z, hw * (0.36f + 0.14f * phase), hw * 0.08f, hw * 0.07f, hw * 0.05f, c);
     }
 }
+
+/* One lap of the prism's wall, from height y0 to y1: the rectangle's corners
+ * in order and back to the first, alpha a0 at the bottom and a1 at the top. */
+static void zone_band(const float* cx, const float* cz, float y0, float y1, GXColor c, float a0, float a1)
+{
+    int i;
+    GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, 10);
+    for (i = 0; i <= 4; i++) {
+        const int k = i & 3;
+        GXPosition3f32(cx[k], y0, cz[k]);
+        GXColor4u8(c.r, c.g, c.b, (u8) (255.0f * a0));
+        GXPosition3f32(cx[k], y1, cz[k]);
+        GXColor4u8(c.r, c.g, c.b, (u8) (255.0f * a1));
+    }
+    GXEnd();
+}
+
+void pc_ctf_zone_ring(float l, float r, float y, float z_near, float z_far, float height, GXColor body, GXColor edge,
+                      float alpha)
+{
+    /* Corners round the footprint: back left, back right, front right,
+     * front left (a closed lap). */
+    const float cx[4] = { l, r, r, l };
+    const float cz[4] = { z_far, z_far, z_near, z_near };
+    const float lip = height * 0.16f; /* the bright top edge's band */
+
+    if (alpha <= 0.0f) {
+        return;
+    }
+    setup_geometry(false, true);
+    /* The wall: strongest at the floor, thinning upward. Seen from above,
+     * its front and back overlap, so each stays light. */
+    zone_band(cx, cz, y, y + height - lip, body, 0.34f * alpha, 0.16f * alpha);
+    /* Its lip, a lighter line that marks the top. */
+    zone_band(cx, cz, y + height - lip, y + height, edge, 0.75f * alpha, 0.9f * alpha);
+    /* A soft glow where it meets the floor. */
+    setup_geometry(true, true);
+    zone_band(cx, cz, y, y + height * 0.35f, edge, 0.25f * alpha, 0.0f);
+}

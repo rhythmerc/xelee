@@ -96,6 +96,12 @@ static CtfLayout ctf_debug_layout;
 /* READY's length: the camera frames both bases and the beams stand. */
 #define CTF_READY_FRAMES 150
 
+/* The capture zones' edge (pc_ctf_zone_ring): a third of an average
+ * fighter's height (Mario and Fox stand about 14-15 units), and the footprint
+ * this far in front of and behind the fighters' plane. */
+#define CTF_ZONE_RING_HEIGHT 5.0f
+#define CTF_ZONE_RING_DEPTH 10.0f
+
 /* ---- state: all of it rolls back ---------------------------------------- */
 
 static bool ctf_requested;
@@ -465,6 +471,9 @@ static void ctf_debug_log(void)
  * flag while it is away (itCtfFlag_DrawStand). Reads state, writes none. */
 static void ctf_draw_stands(HSD_GObj* gobj, intptr_t pass)
 {
+    static const GXColor body[2] = { { 232, 58, 58, 255 }, { 63, 111, 240, 255 } };
+    static const GXColor light[2] = { { 255, 120, 120, 255 }, { 130, 170, 255, 255 } };
+    Mtx view;
     int team;
     if (!gmCtf_Active() || Camera_80031060() != 0) {
         return;
@@ -477,25 +486,28 @@ static void ctf_draw_stands(HSD_GObj* gobj, intptr_t pass)
         at.z = 0.0f;
         itCtfFlag_DrawStand(&at, (u8) team, !ctf.home[team] || ctf.flag[team] == NULL);
     }
+    HSD_CObjGetViewingMtx(HSD_CObjGetCurrent(), view);
+    GXLoadPosMtxImm(view, GX_PNMTX0);
+    GXSetCurrentMtx(GX_PNMTX0);
+    /* Each capture zone's edge, on its floor, all match long. */
+    for (team = 0; team < 2; team++) {
+        const CtfBox* z = &ctf_base(team)->zone;
+        pc_ctf_zone_ring(z->l, z->r, z->b, CTF_ZONE_RING_DEPTH, -CTF_ZONE_RING_DEPTH, CTF_ZONE_RING_HEIGHT,
+                         body[team], light[team], 1.0f);
+    }
     /* READY: a light beam over each base (the camera frames both then). */
     if (ctf.frame < CTF_READY_FRAMES) {
-        static const GXColor body[2] = { { 232, 58, 58, 255 }, { 63, 111, 240, 255 } };
-        static const GXColor light[2] = { { 255, 120, 120, 255 }, { 130, 170, 255, 255 } };
         const float in = ctf.frame < 10 ? ctf.frame / 10.0f : 1.0f;
         const float out = ctf.frame > CTF_READY_FRAMES - 30 ? (CTF_READY_FRAMES - ctf.frame) / 30.0f : 1.0f;
-        Mtx view;
-        HSD_CObjGetViewingMtx(HSD_CObjGetCurrent(), view);
-        GXLoadPosMtxImm(view, GX_PNMTX0);
-        GXSetCurrentMtx(GX_PNMTX0);
         for (team = 0; team < 2; team++) {
             const CtfBase* base = ctf_base(team);
             pc_ctf_beam(base->stand.x, base->stand.y, 0.0f, 200.0f, 40.0f, body[team], light[team], in * out,
                         ctf.frame);
         }
-        HSD_StateInvalidate(-1);
-        HSD_StateInitTev();
-        HSD_ClearVtxDesc();
     }
+    HSD_StateInvalidate(-1);
+    HSD_StateInitTev();
+    HSD_ClearVtxDesc();
 }
 
 /* Through READY the camera frames both bases as well as the players, so

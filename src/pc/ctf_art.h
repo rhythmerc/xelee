@@ -44,4 +44,13 @@ void pc_ctf_ellipse(float cx, float cy, float z, float rx, float ry, float w, fl
 void pc_ctf_beam(float x, float y, float z, float height, float width, GXColor body, GXColor light, float alpha,
                  int tick);
 
+/* A capture zone's edge: a low translucent wall round the rectangle x l..r,
+ * z z_near..z_far, standing on the floor at y and `height` tall, in `body`
+ * with a brighter lip in `edge` along its top and a glow at its foot. Real 3D
+ * in the current camera's world (it reads the same in a headset's eyes).
+ * Depth-tested, not written; `alpha` 0-1 fades it. The caller loads the
+ * camera's view as the current position matrix. */
+void pc_ctf_zone_ring(float l, float r, float y, float z_near, float z_far, float height, GXColor body, GXColor edge,
+                      float alpha);
+
 #endif
