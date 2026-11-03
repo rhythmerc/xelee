@@ -175,6 +175,33 @@ bool ifAll_IsHUDHidden(void)
     return hidden;
 }
 
+#ifdef TARGET_PC
+/* XR: the top row's anchor (the timer's) comes down to this far above the
+ * player HUDs' anchor, where the damage meters are. Their stock icons reach
+ * about 8.3 units above it; the row's tallest art (CTF's emblems, over the
+ * stocks of a four-player match) reaches 3.4 below its anchor, which leaves
+ * about a unit (10 px) between them. */
+#define IFALL_XR_TOP_ROW 13.0f
+
+bool ifAll_TopBegin(void)
+{
+    const float row = ifAll_804A0FD8.x18[0].y + IFALL_XR_TOP_ROW;
+    return pc_xr_hud_top_begin(row - ifAll_804A0FD8.xC.y);
+}
+
+void ifAll_TopEnd(bool began)
+{
+    pc_xr_hud_top_end(began);
+}
+
+void ifAll_TopJObjCallback(HSD_GObj* gobj, intptr_t pass)
+{
+    const bool moved = ifAll_TopBegin();
+    HSD_GObj_JObjCallback(gobj, pass);
+    ifAll_TopEnd(moved);
+}
+#endif
+
 static void fn_802F36B8(HSD_GObj* gobj, intptr_t unused)
 {
     if (!ifAll_IsHUDHidden()) {

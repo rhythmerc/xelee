@@ -120,7 +120,7 @@ static void set_digit(TeamHud* t, int d)
 static void ifCtf_JObjDraw(HSD_GObj* gobj, intptr_t pass)
 {
     if (!ifAll_IsHUDHidden()) {
-        HSD_GObj_JObjCallback(gobj, pass);
+        ifAll_TopJObjCallback(gobj, pass); /* the HUD's top row (XR: above the damage row) */
     }
 }
 
@@ -263,11 +263,13 @@ static void ifCtf_ArtDraw(HSD_GObj* gobj, intptr_t pass)
 {
     Mtx view;
     int team;
+    bool moved;
     (void) gobj;
     (void) pass;
     if (ifAll_IsHUDHidden() || !ifCtf.have_h) {
         return;
     }
+    moved = ifAll_TopBegin();
     HSD_StateInvalidate(-1);
     HSD_CObjGetViewingMtx(HSD_CObjGetCurrent(), view);
     GXLoadPosMtxImm(view, GX_PNMTX0);
@@ -282,6 +284,7 @@ static void ifCtf_ArtDraw(HSD_GObj* gobj, intptr_t pass)
     HSD_StateInvalidate(-1);
     HSD_StateInitTev();
     HSD_ClearVtxDesc();
+    ifAll_TopEnd(moved);
 }
 
 /* ---- the process --------------------------------------------------------------- */
