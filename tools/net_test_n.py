@@ -158,6 +158,11 @@ def run(args):
             env["MELEE_NET_SIM_JITTER_MS"] = "20"
         if args.block:
             env["MELEE_NET_SIM_BLOCK"] = args.block
+        for spec in args.env:
+            who, _, kv = spec.partition(":")
+            var, _, val = kv.partition("=")
+            if who == name and var:
+                env[var] = val
         for pad, port in enumerate(plays[k][1:], start=2):
             fifo = os.path.join(args.work, f"{name}.pad{pad}.keys")
             os.mkfifo(fifo)
@@ -312,6 +317,9 @@ def main():
     ap.add_argument("--disc", default=os.path.join(HERE, "..", "..", "melee.ciso"))
     ap.add_argument("--port", type=int, default=42150, help="P1's UDP port; P2.. use +1..")
     ap.add_argument("--work", default="/tmp/net_test_n")
+    ap.add_argument("--env", action="append", default=[], metavar="NAME:VAR=VALUE",
+                    help="an environment variable for one instance (a, b, c, d), e.g. "
+                         "a:MELEE_HELD_REDRAW=1 or c:MELEE_NET_HITCH_TEST=800:240; repeatable")
     args = ap.parse_args()
     nt.UNPACED = not args.paced  # docs/fast-tests-plan.md T4: as fast as it runs
     nt.claim_slot(exclusive=args.paced, lan=args.lan)
