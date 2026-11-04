@@ -111,6 +111,12 @@ def metrics(lines, teams, cpus, end_frame, go_frame=GO_FRAME):
     defend_total = [0, 0]
     last_pos = {}
     role_changes = 0
+    # Trips (C3): out, from GO or the team's last capture to its next pickup
+    # of the enemy flag; back, from a pickup to the carried capture it led to
+    # (a drop on the way voids it).
+    trip_start = [go_frame, go_frame]
+    trip_pick = [None, None]
+    trips_out, trips_back = [], []
 
     def flag_event(f):
         nonlocal last_flag_event, deadlock, both_away_since
@@ -168,6 +174,11 @@ def metrics(lines, teams, cpus, end_frame, go_frame=GO_FRAME):
                 throw_outcome(1 if m.group(1) == "red" else 0, "scored")
             if first_cap is None:
                 first_cap = f
+            ct = 0 if m.group(1) == "red" else 1
+            if m.group(2) == "carried" and trip_pick[ct] is not None:
+                trips_back.append((f - trip_pick[ct]) / FPS)
+            trip_pick[ct] = None
+            trip_start[ct] = f
             flag_event(f)
             continue
         m = re.match(r"ctfev: f\d+ pickup p(\d) team(\d) flag(\d)", line)
@@ -175,6 +186,11 @@ def metrics(lines, teams, cpus, end_frame, go_frame=GO_FRAME):
             p, team, t = int(m.group(1)), int(m.group(2)), int(m.group(3))
             if team != t:
                 pickups_enemy += 1
+                if trip_start[team] is not None:
+                    trips_out.append((f - trip_start[team]) / FPS)
+                    trip_start[team] = None
+                if trip_pick[team] is None:
+                    trip_pick[team] = f
                 if pending_throw[t] is not None:
                     throw_outcome(t, "pass" if team == pending_throw[t][0] and p != pending_throw[t][1] else "self")
             if flag_free_since[t] is not None and team != t:
@@ -196,6 +212,7 @@ def metrics(lines, teams, cpus, end_frame, go_frame=GO_FRAME):
             p, t = int(m.group(1)), int(m.group(2))
             flag_holder[t] = -1
             set_held(t, f, False)
+            trip_pick[t ^ 1] = None
             if flag_free_since[t] is None:
                 flag_free_since[t] = f
             if m.group(3) == "throw" and teams[p] is not None and teams[p] != t:
@@ -274,6 +291,8 @@ def metrics(lines, teams, cpus, end_frame, go_frame=GO_FRAME):
         "deadlock_pct": round(100.0 * deadlock / played, 1),
         "throws": throws,
         "role_changes": role_changes,
+        "trips_out_s": [round(x, 1) for x in trips_out],
+        "trips_back_s": [round(x, 1) for x in trips_back],
         "defend_near_pct": [None if defend_total[t] == 0 else round(100.0 * defend_in[t] / defend_total[t], 1)
                             for t in (0, 1)],
     }
@@ -409,6 +428,11 @@ def summarize(runs):
     lies = [x for r in runs for x in r["free_lie_s"]]
     s["free_lie_median_s"] = round(statistics.median(lies), 1) if lies else None
     s["free_flags"] = len(lies)
+    for k in ("trips_out_s", "trips_back_s"):
+        v = [x for r in runs for x in r.get(k, [])]
+        s[k[:-2] + "_median_s"] = round(statistics.median(v), 1) if v else None
+        s[k[:-2] + "_n"] = len(v)
+    s["matches_with_trip"] = sum(1 for r in runs if r.get("trips_back_s"))
     th = {}
     for r in runs:
         for k, v in r["throws"].items():

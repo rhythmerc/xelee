@@ -497,6 +497,7 @@ src/melee/gm/gmclassic.c
 src/melee/gm/gmctf.c
 src/melee/gm/gmctfai.c
 src/melee/gm/gmctfmode.c
+src/melee/gm/gmctfnav.c
 src/melee/gm/gmdebugmode.c
 src/melee/gm/gmevent.c
 src/melee/gm/gmfixedcamera.c

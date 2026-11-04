@@ -32,6 +32,7 @@
 #ifdef TARGET_PC
 #include <melee/gm/gmctf.h>
 #include <melee/gm/gmctfai.h>
+#include <melee/gm/gmctfnav.h>
 #endif
 #include <melee/gr/grbigblue.h>
 #include <melee/gr/grcastle.h>
@@ -980,6 +981,15 @@ static void ftCo_800A1CC4(Fighter* fp, ftCo_803C6594_t* var_r29)
 
     PAD_STACK(0x10);
 
+#ifdef TARGET_PC
+    /* A CTF match on a map with a nav graph (gm/gmctfnav.c): the CTF layer
+     * routes the CPU, and these stage hints (Temple's lead out of the cave)
+     * would pull it off the path and hold it there for 300 frames. Outside
+     * CTF the graph is never active. */
+    if (gmCtfNav_Active()) {
+        return;
+    }
+#endif
     data = &fp->cpu;
     if (var_r29 != NULL && data->x60 == 0 && data->kind != 0 &&
         fp->ground_or_air != GA_Air && !ftCo_800A21FC(fp))
@@ -7971,7 +7981,28 @@ static void ftCo_CtfThink(Fighter* fp)
         ftCo_800B49F4(fp);
         return;
     }
+    /* Moving (1) or idle at an earlier way point (0xA): not mid-attack,
+     * shield or recovery. */
+    if (o.hop != 0 && (data->x18 == 1 || data->x18 == 0xA) && fp->ground_or_air == GA_Ground && data->csP == NULL &&
+        data->command_duration == 0)
+    {
+        /* Off a solid ledge toward the next way point: Melee's mover teeters
+         * at a ledge and turns away (ftCo_800AACD0). A jump with the stick
+         * that way; in the air the mover drifts on to x54 (ftCo_800A9CB4). */
+        ftCo_800B4A78(fp);
+        data->x54 = o.point;
+        data->x38 = o.tol;
+        data->x60 = 0;
+        ftCo_800B46B8(fp, CpuCmd_SetLstickX, (u8) (o.hop > 0 ? 0x7F : -0x7F));
+        ftCo_800B463C(fp, CpuCmd_PressX);
+        ftCo_800B46B8(fp, CpuCmd_WaitFor, 4);
+        ftCo_800B463C(fp, CpuCmd_ReleaseX);
+        ftCo_800B46B8(fp, CpuCmd_WaitFor, 4);
+        ftCo_800B49F4(fp);
+        return;
+    }
     data->xF9_b2 = data->xF9_b3 = data->xF9_b5 = o.fight;
+    data->xF8_b0 = o.run;
     data->xF9_b6 = o.defend;
     data->xF9_b7 = o.pickup;
     data->x44 = o.target;

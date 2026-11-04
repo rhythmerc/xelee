@@ -20,6 +20,7 @@
 #include "gmctfai.h"
 
 #include "gmctf.h"
+#include "gmctfnav.h"
 
 #include <Runtime/platform.h>
 
@@ -36,12 +37,15 @@
 #ifdef TARGET_PC
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* A KO with no damage taken in this long before it is a self-destruct. */
 #define CTFAI_SD_FRAMES 180
 /* A CPU that hasn't moved in this long while short of its destination is
- * stuck (cpu.x84 counts frames without movement; stock AI never reads it). */
+ * stuck (cpu.x84 counts frames without movement; stock AI never reads it),
+ * if it had that goal the whole time: a bot holding in its zone or at its
+ * guard spot that is handed a far goal hasn't been stuck. */
 #define CTFAI_STUCK_FRAMES 180
 #define CTFAI_POS_EVERY 30
 
@@ -100,7 +104,23 @@ static struct {
     Vec2 goal[4];
     float goal_tol[4];
     bool has_goal[4];
+    int goal_since[4]; /* the frame the goal last moved more than 30 units */
     int hold_since[4]; /* a carrier holding in its zone since, or 0 */
+    /* Navigation (gmctfnav.c): each fighter's area when last on the ground;
+     * each bot's goal node, its way point while a path is on (kept through
+     * a jump: re-aiming mid-air at the node it jumped from would undo the
+     * jump), an alternate route's node, a node to route around after a
+     * failure, and its progress (path cost) for the stuck check. */
+    s8 area[4];
+    s8 nav_goal[4];
+    s8 nav_via[4];
+    s8 nav_avoid[4];
+    bool nav_on[4];
+    Vec2 nav_pt[4];
+    s8 nav_node[4];
+    int avoid_until[4];
+    int best_cost[4];
+    int best_at[4];
     /* The event lines' bookkeeping. */
     bool dead[4];
     bool stuck[4];
@@ -160,6 +180,18 @@ static int ai_team_level(int team)
         }
     }
     return level > 9 ? 9 : level;
+}
+
+/* MELEE_DEBUG_CTF_AI_PACIFIST=1: bots never attack (tools/ctf_ai_test.py's
+ * trip test, where the idle opponent stands at the trip's far end). Read
+ * once; the same on every peer. */
+static bool ai_pacifist(void)
+{
+    static int v = -1;
+    if (v < 0) {
+        v = getenv("MELEE_DEBUG_CTF_AI_PACIFIST") != NULL;
+    }
+    return v != 0;
 }
 
 /* Another CPU of the team is in play (alive, not the given port). */
@@ -248,6 +280,15 @@ static Fighter* ai_nearest_enemy_to(int team, float x, float y, float* d2)
     return best;
 }
 
+/* An enemy is close enough to be fighting (the stuck checks leave a bot in
+ * a fight alone: standing still while shielding isn't being lost). */
+static bool ai_fighting(Fighter* fp, int team)
+{
+    float d2;
+    return ai_nearest_enemy_to(team, fp->cur_pos.x, fp->cur_pos.y, &d2) != NULL &&
+           d2 < CTFAI_FIGHT_RADIUS * CTFAI_FIGHT_RADIUS;
+}
+
 static Item* ai_flag_item(int team)
 {
     HSD_GObj* g = gmCtf_FlagItem(team);
@@ -326,23 +367,38 @@ static int ai_flip_frames(int level)
     return level >= 9 ? 45 * 60 : level == 8 ? 60 * 60 : 90 * 60;
 }
 
-/* How well a bot fits a role: the distance to its object (lower is better). */
+/* How far a bot is from a point: the path's length on the nav graph
+ * (gmctfnav.c, in units), or a straight line on a map without one. */
+static float ai_travel(Fighter* fp, float x, float y)
+{
+    int area, goal, cost;
+    if (!gmCtfNav_Active()) {
+        return ai_dist(&fp->cur_pos, x, y);
+    }
+    area = ai.area[fp->player_idx] >= 0 ? ai.area[fp->player_idx]
+                                         : gmCtfNav_NodeArea(gmCtfNav_NodeIn(-1, fp->cur_pos.x, fp->cur_pos.y));
+    goal = gmCtfNav_NodeIn(-1, x, y);
+    cost = gmCtfNav_Cost(gmCtfNav_Class(fp), area, fp->cur_pos.x, fp->cur_pos.y, goal);
+    return (float) cost / 10.0f;
+}
+
+/* How well a bot fits a role: the way to its object (lower is better). */
 static float ai_role_cost(Fighter* fp, int role, const CtfAiFlag* own, const CtfAiFlag* theirs)
 {
     Fighter* h;
     switch (role) {
     case ROLE_RETURN:
-        return ai_dist(&fp->cur_pos, own->pos.x, own->pos.y);
+        return ai_travel(fp, own->pos.x, own->pos.y);
     case ROLE_DEFEND:
-        return ai_dist(&fp->cur_pos, own->stand.x, own->stand.y);
+        return ai_travel(fp, own->stand.x, own->stand.y);
     case ROLE_HUNT:
         h = ai_holder(own);
-        return h != NULL ? ai_dist(&fp->cur_pos, h->cur_pos.x, h->cur_pos.y) : 0.0f;
+        return h != NULL ? ai_travel(fp, h->cur_pos.x, h->cur_pos.y) : 0.0f;
     case ROLE_ESCORT:
         h = ai_holder(theirs);
-        return h != NULL ? ai_dist(&fp->cur_pos, h->cur_pos.x, h->cur_pos.y) : 0.0f;
+        return h != NULL ? ai_travel(fp, h->cur_pos.x, h->cur_pos.y) : 0.0f;
     case ROLE_ATTACK:
-        return ai_dist(&fp->cur_pos, theirs->pos.x, theirs->pos.y);
+        return ai_travel(fp, theirs->pos.x, theirs->pos.y);
     default:
         return 0.0f;
     }
@@ -491,8 +547,11 @@ static void ai_order_base(Fighter* fp, int team, GmCtfAiOrder* o)
     float d2;
     memset(o, 0, sizeof *o);
     o->defend = true;
+    /* Dash to far goals: a walking CPU took 3x a scripted human's time from
+     * red's stand to blue's (C3's first trips, Mario: 889 frames to 290). */
+    o->run = true;
     o->target = ai_nearest_enemy_to(team, fp->cur_pos.x, fp->cur_pos.y, &d2);
-    o->fight = o->target != NULL && d2 < CTFAI_FIGHT_RADIUS * CTFAI_FIGHT_RADIUS;
+    o->fight = o->target != NULL && d2 < CTFAI_FIGHT_RADIUS * CTFAI_FIGHT_RADIUS && !ai_pacifist();
 }
 
 static void ai_go_point(GmCtfAiOrder* o, Vec2 p, float tol)
@@ -556,8 +615,13 @@ static bool ai_defend(Fighter* fp, int team, const CtfAiFlag* own, const CtfAiFl
         return true;
     }
     intruder = ai_nearest_enemy_to(team, own->stand.x, own->stand.y, &d2);
+    /* Only an intruder on the stand's own floor: one up in the shaft over
+     * red's stand is out of reach, and chasing it left the stand bare (C3's
+     * 2v2 runs: 37 defenders stood under one). */
     if (intruder != NULL && d2 < CTFAI_GUARD_RADIUS * CTFAI_GUARD_RADIUS &&
-        ai_dist2(&fp->cur_pos, own->stand.x, own->stand.y) < leash * leash)
+        ai_dist2(&fp->cur_pos, own->stand.x, own->stand.y) < leash * leash &&
+        (!gmCtfNav_Active() ||
+         ai.area[intruder->player_idx] == gmCtfNav_NodeArea(gmCtfNav_NodeIn(-1, own->stand.x, own->stand.y))))
     {
         ai_go_fighter(o, intruder, true);
         return true;
@@ -591,6 +655,164 @@ static bool ai_escort(Fighter* fp, int team, const CtfAiFlag* own, const CtfAiFl
     return true;
 }
 
+/* ---- navigation (plan §3c, C3) ------------------------------------------------- */
+
+/* No progress along a path in this long is a stuck bot: it routes around the
+ * node it was making for, for CTFAI_AVOID_FRAMES. */
+#define CTFAI_NAV_STUCK_FRAMES 300
+#define CTFAI_AVOID_FRAMES 600
+/* Share of trips (per 100) on the alternate route, from level 5 up (plan
+ * §4.2: UT's alternate paths, a seeded pick per trip). Off on Temple: its
+ * alternate, over the top-left mass and down the shaft, cost more stuck
+ * bots than it was worth (C3's 2v2 runs: 31 of the stuck events were on
+ * the top-left mass's steps); the map data keeps it for a better one. */
+#define CTFAI_ALT_ROUTE_PCT 0
+
+static int ai_area_of_point(float x, float y)
+{
+    return gmCtfNav_NodeArea(gmCtfNav_NodeIn(-1, x, y));
+}
+
+/* The goal of an order as a position and the area it is in. */
+static int ai_order_goal(const GmCtfAiOrder* o, Vec2* at)
+{
+    int line;
+    switch (o->go) {
+    case CTFAI_GO_ITEM:
+        at->x = o->item->pos.x;
+        at->y = o->item->pos.y;
+        line = o->item->ground_or_air == GA_Ground ? o->item->x378_itemColl.floor.index : -1;
+        if (line >= 0 && gmCtfNav_AreaOfLine(line) >= 0) {
+            return gmCtfNav_AreaOfLine(line);
+        }
+        return ai_area_of_point(at->x, at->y);
+    case CTFAI_GO_FIGHTER:
+        at->x = o->follow->cur_pos.x;
+        at->y = o->follow->cur_pos.y;
+        if (ai.area[o->follow->player_idx] >= 0) {
+            return ai.area[o->follow->player_idx];
+        }
+        return ai_area_of_point(at->x, at->y);
+    case CTFAI_GO_POINT:
+        *at = o->point;
+        return ai_area_of_point(at->x, at->y);
+    default:
+        return -1;
+    }
+}
+
+/* Turn an order whose goal is in another area into the next way point of
+ * the path there (gmCtfNav_Step), fed to Melee's mover as a raw destination.
+ * Fighting, shielding and the pickup stay as the order says. */
+static void ai_nav(Fighter* fp, int slot, GmCtfAiOrder* o)
+{
+    const int frame = gmCtf_Frame();
+    const int team = gmCtf_TeamOfSlot(slot);
+    Vec2 goal_at, pt;
+    CtfNavStep step;
+    int goal_area, goal, node, cost;
+    int cls;
+
+    if (!gmCtfNav_Active()) {
+        return;
+    }
+    /* Mid-air (a jump or a fall the path asked for): keep aiming where it
+     * was going. */
+    if (fp->ground_or_air != GA_Ground) {
+        if (ai.nav_on[slot] && ai.nav_node[slot] >= 0) {
+            /* Over the way point (not under it, still rising to it): aim on
+             * from there. A blue Mario that jumped the main floor's step
+             * floated 70 frames over the floor's left node before jumping
+             * for the pillar (C3's trips). */
+            const Vec2 np = gmCtfNav_NodePos(ai.nav_node[slot]);
+            const float dx = fp->cur_pos.x - np.x;
+            if (dx < 8.0f && dx > -8.0f && fp->cur_pos.y >= np.y - 2.0f &&
+                gmCtfNav_Step(gmCtfNav_Class(fp), gmCtfNav_NodeArea(ai.nav_node[slot]), fp->cur_pos.x,
+                              fp->cur_pos.y, ai.nav_goal[slot], ai.nav_via[slot], ai.nav_avoid[slot], &step) &&
+                step.hop == 0)
+            {
+                ai.nav_pt[slot] = step.point;
+                ai.nav_node[slot] = (s8) step.node;
+            }
+        }
+        if (ai.nav_on[slot]) {
+            o->go = CTFAI_GO_POINT;
+            o->point = ai.nav_pt[slot];
+            o->tol = 6.0f;
+            o->nav = true;
+        }
+        return;
+    }
+    ai.area[slot] = (s8) gmCtfNav_AreaOfLine(fp->coll_data.floor.index);
+    if (ai.area[slot] < 0) {
+        ai.area[slot] = (s8) ai_area_of_point(fp->cur_pos.x, fp->cur_pos.y);
+    }
+    goal_area = ai_order_goal(o, &goal_at);
+    goal = gmCtfNav_NodeIn(goal_area, goal_at.x, goal_at.y);
+    if (goal != ai.nav_goal[slot]) {
+        /* A new trip: maybe the long way round, and a fresh progress mark. */
+        const int other = gmCtf_BaseOf(team ^ 1), mine = gmCtf_BaseOf(team);
+        int via = -1;
+        if (goal == gmCtfNav_StandNode(other)) {
+            via = gmCtfNav_AltVia(mine, other);
+        } else if (goal == gmCtfNav_StandNode(mine)) {
+            via = gmCtfNav_AltVia(other, mine);
+        }
+        if (via >= 0 && (fp->cpu.level < 5 || ai_rand(team, 100) >= CTFAI_ALT_ROUTE_PCT)) {
+            via = -1;
+        }
+        ai.nav_goal[slot] = (s8) goal;
+        ai.nav_via[slot] = (s8) via;
+        ai.best_cost[slot] = 0x7FFFFFFF;
+        ai.best_at[slot] = frame;
+    }
+    if (ai.nav_avoid[slot] >= 0 && frame >= ai.avoid_until[slot]) {
+        ai.nav_avoid[slot] = -1;
+    }
+    cls = gmCtfNav_Class(fp);
+    if (ai.nav_via[slot] >= 0 && gmCtfNav_Cost(cls, ai.area[slot], fp->cur_pos.x, fp->cur_pos.y,
+                                               ai.nav_via[slot]) >= 30000)
+    {
+        ai.nav_via[slot] = -1; /* the long way is beyond this fighter */
+    }
+    if (ai.nav_via[slot] >= 0 && ai.area[slot] == gmCtfNav_NodeArea(ai.nav_via[slot])) {
+        ai.nav_via[slot] = -1; /* through it */
+    }
+    if (!gmCtfNav_Step(cls, ai.area[slot], fp->cur_pos.x, fp->cur_pos.y, goal, ai.nav_via[slot],
+                       ai.nav_avoid[slot], &step))
+    {
+        ai.nav_on[slot] = false;
+        return;
+    }
+    pt = step.point;
+    node = step.node;
+    cost = step.cost;
+    o->hop = step.hop;
+    /* Progress: the path's cost must keep falling. A bot that can't make a
+     * link (a jump it keeps missing) routes around that node for a while. */
+    if (cost < ai.best_cost[slot] - 50 || ai_fighting(fp, team)) {
+        /* A fight holds a bot up; it isn't lost. */
+        ai.best_cost[slot] = cost;
+        ai.best_at[slot] = frame;
+    } else if (frame - ai.best_at[slot] > CTFAI_NAV_STUCK_FRAMES) {
+        if (gmCtf_EventLog()) {
+            OSReport("ctfev: f%d stuck p%d at %.0f %.0f dest %.0f %.0f role %s nav %d\n", frame, slot,
+                     fp->cur_pos.x, fp->cur_pos.y, pt.x, pt.y, ai_role_name[ai.role[slot]], node);
+        }
+        ai.nav_avoid[slot] = (s8) node;
+        ai.avoid_until[slot] = frame + CTFAI_AVOID_FRAMES;
+        ai.best_cost[slot] = 0x7FFFFFFF;
+        ai.best_at[slot] = frame;
+    }
+    o->go = CTFAI_GO_POINT;
+    o->point = pt;
+    o->tol = 6.0f;
+    o->nav = true;
+    ai.nav_on[slot] = true;
+    ai.nav_pt[slot] = pt;
+    ai.nav_node[slot] = (s8) node;
+}
+
 #endif /* TARGET_PC */
 
 /* ---- the interface ------------------------------------------------------------ */
@@ -611,6 +833,7 @@ bool gmCtfAi_Think(Fighter* fp, GmCtfAiOrder* o)
     ok = ai_think(fp, o);
     ai.has_goal[slot] = ok && o->go != CTFAI_GO_STOCK;
     if (ai.has_goal[slot]) {
+        const Vec2 before = ai.goal[slot];
         ai.goal_tol[slot] = 15.0f;
         switch (o->go) {
         case CTFAI_GO_POINT:
@@ -631,6 +854,15 @@ bool gmCtfAi_Think(Fighter* fp, GmCtfAiOrder* o)
             ai.goal_tol[slot] = 45.0f;
             break;
         }
+        if ((ai.goal[slot].x - before.x) * (ai.goal[slot].x - before.x) +
+                (ai.goal[slot].y - before.y) * (ai.goal[slot].y - before.y) >
+            30.0f * 30.0f)
+        {
+            ai.goal_since[slot] = gmCtf_Frame();
+        }
+        ai_nav(fp, slot, o);
+    } else {
+        ai.nav_on[slot] = false;
     }
     return ok;
 #else
@@ -732,7 +964,8 @@ static void ai_log_events(int frame)
             const float dx = gx - fp->cur_pos.x, dy = gy - fp->cur_pos.y;
             const bool short_of = dx * dx + dy * dy > tol * tol;
             const bool stuck = !dead && !ftLib_IsRebirth(fp->gobj) && short_of &&
-                               fp->cpu.x84 >= CTFAI_STUCK_FRAMES;
+                               fp->cpu.x84 >= CTFAI_STUCK_FRAMES && !ai_fighting(fp, gmCtf_TeamOfSlot(slot)) &&
+                               (!ai.has_goal[slot] || frame - ai.goal_since[slot] >= CTFAI_STUCK_FRAMES);
             if (stuck && !ai.stuck[slot]) {
                 OSReport("ctfev: f%d stuck p%d at %.0f %.0f dest %.0f %.0f role %s%s\n", frame, slot,
                          fp->cur_pos.x, fp->cur_pos.y, gx, gy, ai_role_name[ai.role[slot]],
@@ -759,7 +992,9 @@ void gmCtfAi_MatchInit(void)
     memset(&ai, 0, sizeof ai);
     for (slot = 0; slot < 4; slot++) {
         ai.hurt_frame[slot] = -CTFAI_SD_FRAMES;
+        ai.area[slot] = ai.nav_goal[slot] = ai.nav_via[slot] = ai.nav_avoid[slot] = ai.nav_node[slot] = -1;
     }
+    gmCtfNav_Init();
     if (gmCtf_Active()) {
         /* Each team's stream starts from the match's seeded RNG, once. */
         ai.rng[0] = (u32) HSD_Randi(0x7FFFFFFF);
@@ -790,6 +1025,13 @@ void gmCtfAi_Tick(void)
             }
         }
     }
+    /* Where everyone stands, for the paths of those who follow them. */
+    for (slot = 0; slot < 4; slot++) {
+        Fighter* fp = ai_fighter(slot);
+        if (fp != NULL && fp->ground_or_air == GA_Ground && gmCtfNav_AreaOfLine(fp->coll_data.floor.index) >= 0) {
+            ai.area[slot] = (s8) gmCtfNav_AreaOfLine(fp->coll_data.floor.index);
+        }
+    }
     ai_planner(frame);
     /* A goal counts for the tick whose think set it: on a tick when stock
      * think takes over (a hazard, a Starman), the stuck check reads x54. */
@@ -806,6 +1048,7 @@ u32 gmCtfAi_Checksum(void)
     int i;
     for (i = 0; i < 4; i++) {
         h = h * 31u + ai.role[i];
+        h = h * 31u + (u8) ai.nav_goal[i] + ((u32) (u8) ai.nav_via[i] << 8);
     }
     return h * 31u + ai.sit[0] * 7u + ai.sit[1];
 #else

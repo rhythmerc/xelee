@@ -27,6 +27,8 @@ typedef struct GmCtfAiOrder {
     bool defend;     /* shield, dodge, roll (cpu.xF9_b6) */
     bool pickup;     /* pick up `item` in reach (cpu.xF9_b7) */
     bool nav;        /* `point` is the nav layer's: written as is, no stage hints */
+    bool run;        /* dash when far from the destination (cpu.xF8_b0, which
+                        the no-target init clears: VS CPUs walk to a far goal) */
     Fighter* target; /* cpu.x44, whom to fight, or NULL */
     Fighter* follow; /* CTFAI_GO_FIGHTER */
     Item* item;      /* cpu.x4C: this tick's flag, never kept */
@@ -36,6 +38,9 @@ typedef struct GmCtfAiOrder {
      * on the same frame (a smash throw; stick down: dropped at the feet). */
     bool throw_now;
     s8 throw_x, throw_y;
+    /* Hop off a ledge now, -1 left or 1 right (the nav layer's; Melee's mover
+     * won't walk off a solid ledge). */
+    s8 hop;
 } GmCtfAiOrder;
 
 /* A CPU's order for this tick; false outside CTF, or to leave it to stock
