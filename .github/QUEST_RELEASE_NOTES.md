@@ -1,22 +1,48 @@
-Xelee for Meta Quest 3 / 3S, Android phones and tablets, Windows PCs, Steam Deck and Linux PCs. You need your own Super Smash Bros. Melee NTSC-U 1.02 disc image.
+Xelee for Meta Quest 3 / 3S, Android phones and tablets, Windows PCs, Macs, Steam Deck and Linux PCs. You need your own Super Smash Bros. Melee NTSC-U 1.02 disc image.
 
 ## Changelog
 
-A small update to v0.3.0-beta: controllers on Android, and a way to send us your logs. New to XeleeNet? See [v0.3.0-beta's notes](https://github.com/rhythmerc/xelee/releases/tag/v0.3.0-beta).
+### Capture the Flag
 
-**Controllers (Android)**
-- The controller you press a button on now becomes player 1 when player 1's controller has never been used. Some phones list their own buttons as a controller: RedMagic phones show their shoulder triggers as an "Xbox 360 Controller", which took player 1 ahead of your real one. Your controller then couldn't type a XeleeNet name or play online. Controllers never swap during a fight, and the new order is remembered.
+A new team mode on Hyrule Temple: grab the other team's flag and bring it back to your base.
 
-**Send logs**
-- Settings > Launcher > Logs > Send now works on every platform. It uploads your recent logs and shows a code (XL-…) to give us with your bug report. Logs are kept 30 days, and public IP addresses are hidden.
-- The logs now list your controllers and which player each one is.
+- **Offline:** VS Mode › Xelee Melee › Capture the Flag. Red vs blue, any mix of players and CPUs.
+- **Online:** XeleeNet and LAN lobbies can switch between VS and Capture the Flag with the **Mode** bar in Lobby Settings.
+- **Rules:** captures to win (default 5), time limit (default 10:00), whether your own flag must be home to score, flag return time, and whether carriers are slowed.
+- **New CPU behaviors for CTF.** They go after the enemy flag, guard and return their own, throw the flag into their base, and pass to teammates at higher levels. The CPU level (1–9) sets how well they play.
 
-**Windows**
-- The game in the Windows zip is now `xelee.exe`.
+### CPUs in XeleeNet lobbies
 
-## Installing
+- New Lobby Settings row: **CPUs: Off / Host / Anyone** (default Host).
+- Press the button on an empty seat to add a CPU. Set its fighter, level, colour and team the same way as offline.
+- A CPU never keeps a person out: the lobby list shows "+1 CPU", and anyone joining (online, or with a second controller) takes a CPU's seat.
 
-**On the headset, no PC needed:**
+### Netplay
+
+- Fixed a desync in matches with 3 or 4 players.
+- Fixed a desync between Windows and the other platforms.
+- Auto delay now goes by the worst connection between any two players, jitter included, and holds steady through a match.
+- When two guests connect to each other better through the host, Xelee routes them through it automatically.
+- Lobby Settings changes apply about a second sooner.
+- Leaving mid-match now sends everyone back to the character select screen instead of a stuck No Contest.
+- Name tag selection disabled in XeleeNet (unintended feature that crashed sessions. Name is now locked to XeleeNet name as intended)
+
+### GameCube adapter
+
+- The official adapter (WUP-028) now works on Windows and Android.
+
+### Headset
+
+- The HUD's top row sits just above the damage row.
+
+### Platforms
+
+- Builds added for MacOS on Intel and Apple Silicon.
+
+## Installation
+
+### Quest 3/3S
+
 1. In the headset's browser, open this release page and download `Xelee-Quest-arm64.apk`.
 2. Open the **Files** app and go to **Downloads**. Tap the three dots next to `Xelee-Quest-arm64.apk`, then **Open with**, then **Package installer**.
 3. The first time, the headset asks whether Files may install apps: allow it, then choose **Install**.
@@ -32,6 +58,16 @@ Download `Xelee-Android-arm64.apk` on the device, open it, and allow installs fr
 
 Download `Xelee-Windows-x86_64.zip`, extract it, and run `xelee.exe`. Keep the DLLs and the `resources` folder next to it.
 
+### macOS
+
+Download `Xelee-macOS-arm64.zip` for Apple Silicon Macs (M1 and later) or `Xelee-macOS-x86_64.zip` for Intel Macs. Open the zip and move `Melee.app` into **Applications**. It needs macOS 13 or later.
+
+Xelee isn't notarized by Apple, so macOS blocks the first launch:
+1. Open `Melee.app`. macOS says it can't verify the app: choose **Done**.
+2. Open **System Settings**, then **Privacy & Security**, scroll down and choose **Open Anyway** next to Melee, and confirm.
+
+If macOS says the app is damaged, or there's no **Open Anyway**, run this in Terminal instead: `xattr -dr com.apple.quarantine /Applications/Melee.app`
+
 ### Steam Deck
 
 1. In Desktop Mode, download `Xelee-x86_64.AppImage` from this page and move it somewhere it can stay, such as a new `Applications` folder in your home folder. The updater replaces it in place.
@@ -41,7 +77,9 @@ Download `Xelee-Windows-x86_64.zip`, extract it, and run `xelee.exe`. Keep the D
 
 ### Other Linux PCs (x86-64)
 
-Download `Xelee-x86_64.AppImage`, make it executable (`chmod +x Xelee-x86_64.AppImage`) and run it. It needs a Vulkan driver. `xelee-linux-x86_64.tar.gz` is the same build as a plain folder: extract it and run `run.sh`.
+Download `Xelee-x86_64.AppImage`, make it executable (`chmod +x Xelee-x86_64.AppImage`) and run it. 
+
+Alternatively: Download `xelee-linux-x86_64.tar.gz`, extract it, and run `run.sh`.
 
 **GameCube controller adapter:** Linux needs a one-time rule before Xelee can open it. In a terminal (Konsole on the Deck, in Desktop Mode):
 
@@ -57,3 +95,5 @@ On the Deck, `sudo` needs a password: set one first with `passwd` if you never h
 The launcher checks for new releases at each start (Settings → Launcher). Choose **Update Now**, then **Install**, and confirm in the system's dialog. The first time, the headset asks you to allow installs from Xelee.
 
 On Steam Deck and Linux, choose **Update Now**, then **Restart to apply**: the new AppImage replaces the old one and Xelee restarts.
+
+On Windows and macOS, **Update Now** saves the new zip to your Downloads folder: unzip it and replace your old copy.

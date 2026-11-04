@@ -306,8 +306,8 @@ jobs:
           if-no-files-found: error
 
   macos:
-    # Run by hand only (playtest builds): not part of a push or a release yet.
-    if: github.event_name == 'workflow_dispatch'
+    # Pushes to main, release tags and hand runs; not pull requests.
+    if: github.event_name != 'pull_request'
     name: macOS (${{ matrix.arch }})
     strategy:
       fail-fast: false
@@ -359,7 +359,7 @@ jobs:
 
   release:
     name: Publish release
-    needs: [quest, linux, android, windows]
+    needs: [quest, linux, android, windows, macos]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
@@ -387,6 +387,13 @@ jobs:
           name: xelee-windows
           path: artifacts
 
+      # Both Macs' zips; Intel may be missing (its job may fail, see macos).
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: xelee-macos-*
+          merge-multiple: true
+          path: artifacts
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -403,4 +410,5 @@ jobs:
             artifacts/Xelee-Android-arm64.apk \
             artifacts/Xelee-Windows-x86_64.zip \
             artifacts/Xelee-x86_64.AppImage \
-            artifacts/xelee-linux-x86_64.tar.gz
+            artifacts/xelee-linux-x86_64.tar.gz \
+            artifacts/Xelee-macOS-*.zip
