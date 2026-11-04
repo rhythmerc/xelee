@@ -32,6 +32,10 @@ typedef struct GmCtfAiOrder {
     Item* item;      /* cpu.x4C: this tick's flag, never kept */
     Vec2 point;      /* CTFAI_GO_POINT */
     float tol;       /* arrival distance */
+    /* Throw the held flag now, the left stick at (throw_x, throw_y) with A
+     * on the same frame (a smash throw; stick down: dropped at the feet). */
+    bool throw_now;
+    s8 throw_x, throw_y;
 } GmCtfAiOrder;
 
 /* A CPU's order for this tick; false outside CTF, or to leave it to stock

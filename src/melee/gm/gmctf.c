@@ -919,6 +919,17 @@ bool gmCtf_FlagWhere(int team, Vec3* pos, int* holder, bool* home)
     return true;
 }
 
+int gmCtf_BaseOf(int team)
+{
+    return (team ^ (ctf_rules.swap_sides ? 1 : 0)) & 1;
+}
+
+bool gmCtf_RealLayout(void)
+{
+    const CtfLayout* lay = ctf_layout();
+    return lay != NULL && lay != &ctf_debug_layout;
+}
+
 void gmCtf_Base(int team, Vec2* stand, float* zone_l, float* zone_r, float* zone_b, float* zone_t)
 {
     const CtfBase* b = ctf_base(team);

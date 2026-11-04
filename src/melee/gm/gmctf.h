@@ -79,6 +79,11 @@ HSD_GObj* gmCtf_FlagItem(int team);
 /* Where a team's flag is (its carrier's position while carried), its
  * carrier's port or -1, and whether it is home. False while it is gone. */
 bool gmCtf_FlagWhere(int team, Vec3* pos, int* holder, bool* home);
+/* Which of the layout's two bases a team defends this game (0 the first,
+ * red's before a swap): the key of per-base data such as the AI's. */
+int gmCtf_BaseOf(int team);
+/* The stage has its own layout (not MELEE_DEBUG_CTF_BASES' test stands). */
+bool gmCtf_RealLayout(void);
 /* A team's stand and capture zone, after this game's side swap. */
 void gmCtf_Base(int team, Vec2* stand, float* zone_l, float* zone_r, float* zone_b, float* zone_t);
 /* Your own flag must be home to score. */

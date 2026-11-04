@@ -7953,6 +7953,24 @@ static void ftCo_CtfThink(Fighter* fp)
         ftCo_CpuActOnNoTarget(fp, data);
         return;
     }
+    if (o.throw_now && fp->item_gobj != NULL && data->x18 != 4 && fp->ground_or_air == GA_Ground &&
+        data->csP == NULL && data->command_duration == 0)
+    {
+        /* A throw of the CTF layer's choosing (a flag parked in the zone, a
+         * throw home): its own short script, which the act step leaves alone
+         * while it runs (ftCo_800B2790). */
+        ftCo_800B4A78(fp);
+        ftCo_800B46B8(fp, CpuCmd_SetLstickX, (u8) o.throw_x);
+        ftCo_800B46B8(fp, CpuCmd_SetLstickY, (u8) o.throw_y);
+        ftCo_800B463C(fp, CpuCmd_PressA);
+        ftCo_800B46B8(fp, CpuCmd_WaitFor, 2);
+        ftCo_800B463C(fp, CpuCmd_ReleaseA);
+        ftCo_800B46B8(fp, CpuCmd_SetLstickX, 0);
+        ftCo_800B46B8(fp, CpuCmd_SetLstickY, 0);
+        ftCo_800B46B8(fp, CpuCmd_WaitFor, 8);
+        ftCo_800B49F4(fp);
+        return;
+    }
     data->xF9_b2 = data->xF9_b3 = data->xF9_b5 = o.fight;
     data->xF9_b6 = o.defend;
     data->xF9_b7 = o.pickup;
