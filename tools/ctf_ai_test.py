@@ -401,6 +401,19 @@ def run_one(args, seed, work):
         if slot == "c":
             cpus.append(p)
     res = metrics(lines, team_by_port, cpus, stop, go)
+    # How far throws fly: each "flag thrown at" to the next "flag landed at"
+    # (itctfflag.c; a throw that leaves the stage has no landing).
+    flights = []
+    thrown_at = None
+    for mm in re.finditer(r"ctf: flag (thrown|landed) at (-?[\d.]+) (-?[\d.]+)|ctf: f\d+ \w+ flag (home)", text):
+        if mm.group(4):
+            thrown_at = None  # scored or lost before it landed
+        elif mm.group(1) == "thrown":
+            thrown_at = (float(mm.group(2)), float(mm.group(3)))
+        elif thrown_at is not None:
+            flights.append((round(float(mm.group(2)) - thrown_at[0], 1), round(float(mm.group(3)) - thrown_at[1], 1)))
+            thrown_at = None
+    res["throw_flights"] = flights
     res.update(seed=seed, status=status, wall_s=round(time.time() - t0, 1), end_frame=stop, go_frame=go, chars=chars,
                winner=m.group(2) if m else None)
     if args.synctest:

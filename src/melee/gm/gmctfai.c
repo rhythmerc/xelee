@@ -655,6 +655,148 @@ static bool ai_escort(Fighter* fp, int team, const CtfAiFlag* own, const CtfAiFl
     return true;
 }
 
+/* ---- carrier skill (plan §4.3, C4) ---------------------------------------------- */
+
+/* Per base (before a side swap): a stretch of floor on the way home from
+ * which a smash throw toward home lands in the zone, and its direction.
+ * Hyrule Temple: red's cave floor right of its zone (thrown left), blue's
+ * main floor left of its zone (thrown right); ctf_test.py's throwred and
+ * throwblue score from 39 and 46 units out with the weakened throw
+ * (CTF_FLAG_THROW_SPEED). C4's first runs: blue's 6 throws from x 135-143
+ * all scored; red's stretch was too narrow to catch a carrier landing from
+ * the tunnel's tip, so it reaches up the slope. */
+typedef struct CtfAiThrowSpot {
+    float x0, x1, y0, y1;
+    s8 dir;
+} CtfAiThrowSpot;
+static const CtfAiThrowSpot ai_throw_temple[2] = {
+    { -62.0f, -25.0f, -100.0f, -84.0f, -1 },
+    { 112.0f, 150.0f, -10.0f, 0.0f, 1 },
+};
+
+/* A flag carrier's smash throw leaves at about 3 units a frame and lands
+ * 45-55 units out on flat ground (C4's runs); a pass aims inside that. */
+#define CTFAI_THROW_REACH 50.0f
+
+static void ai_throw(GmCtfAiOrder* o, int dir)
+{
+    o->throw_now = true;
+    o->throw_x = (s8) (dir > 0 ? 127 : -127);
+    o->throw_y = 0;
+}
+
+/* The way home from a point, in units (the nav graph's path, or a line). */
+static float ai_home_cost(Fighter* fp, const CtfAiFlag* own, float x, float y)
+{
+    int goal, area;
+    if (!gmCtfNav_Active()) {
+        const float dx = x - own->stand.x, dy = y - own->stand.y;
+        return sqrtf(dx * dx + dy * dy);
+    }
+    area = gmCtfNav_NodeArea(gmCtfNav_NodeIn(-1, x, y));
+    goal = gmCtfNav_NodeIn(-1, own->stand.x, own->stand.y);
+    return (float) gmCtfNav_Cost(gmCtfNav_Class(fp), area, x, y, goal) / 10.0f;
+}
+
+/* The carrier's throws: home from a throw spot (level 5+; under pressure
+ * too at 8+), and at 7+ a pass to a teammate nearer home on the same flat
+ * floor. The user allowed a cornered throw-away only at high levels and only
+ * toward home or a teammate, never blind; measured, every other throw lost
+ * the flag (C4's first runs: 8 of 8 cornered or out-of-jumps throws went
+ * down the cave's slope into the pit, off the stage, or to an enemy who
+ * returned it), so a cornered carrier throws only from a throw spot or as
+ * a pass. */
+static void ai_carrier_throws(Fighter* fp, int team, const CtfAiFlag* own, GmCtfAiOrder* o)
+{
+    const int level = fp->cpu.level;
+    const float x = fp->cur_pos.x, y = fp->cur_pos.y;
+    const bool grounded = fp->ground_or_air == GA_Ground;
+    const bool scores = own->home || !gmCtf_HomeRequired();
+    float d2;
+    Fighter* e = ai_nearest_enemy_to(team, x, y, &d2);
+    const bool pressed = e != NULL && d2 < 30.0f * 30.0f;
+    int slot;
+
+    if (!grounded) {
+        return;
+    }
+    /* Home from a throw spot: it scores as it lands if ours is home. */
+    if (level >= 5 && scores && gmCtf_RealLayout()) {
+        const CtfAiThrowSpot* s = &ai_throw_temple[gmCtf_BaseOf(team)];
+        if (x >= s->x0 && x <= s->x1 && y >= s->y0 && y <= s->y1 &&
+            (level >= 8 || e == NULL || d2 > 40.0f * 40.0f))
+        {
+            ai_throw(o, s->dir);
+            return;
+        }
+    }
+    if (level < 7 || !pressed) {
+        return;
+    }
+    /* A pass: a teammate on this floor level, in reach of a throw, nearer
+     * home by 40 units and with no enemy on it. */
+    {
+        const float mine = ai_home_cost(fp, own, x, y);
+        for (slot = 0; slot < 4; slot++) {
+            Fighter* t = ai_fighter(slot);
+            float td2, adx, dy;
+            if (t == NULL || t == fp || gmCtf_TeamOfSlot(slot) != team || !ai_alive(t) ||
+                t->ground_or_air != GA_Ground)
+            {
+                continue;
+            }
+            adx = t->cur_pos.x > x ? t->cur_pos.x - x : x - t->cur_pos.x;
+            dy = t->cur_pos.y - y;
+            if (adx < 25.0f || adx > CTFAI_THROW_REACH || dy > 10.0f || dy < -10.0f ||
+                ai.area[slot] != ai.area[fp->player_idx])
+            {
+                continue;
+            }
+            if (ai_home_cost(fp, own, t->cur_pos.x, t->cur_pos.y) > mine - 40.0f) {
+                continue;
+            }
+            ai_nearest_enemy_to(team, t->cur_pos.x, t->cur_pos.y, &td2);
+            if (td2 < 35.0f * 35.0f) {
+                continue;
+            }
+            ai_throw(o, t->cur_pos.x > x ? 1 : -1);
+            return;
+        }
+    }
+}
+
+/* At level 7+ a carrier jumps over an enemy standing in its way on the
+ * floor (plan §4.3), after the nav layer picked the way point. */
+static void ai_carrier_evade(Fighter* fp, int slot, GmCtfAiOrder* o)
+{
+    int team, dir, s;
+    CtfAiFlag theirs;
+    if (fp->cpu.level < 7 || o->throw_now || o->hop != 0 || o->go != CTFAI_GO_POINT ||
+        fp->ground_or_air != GA_Ground)
+    {
+        return;
+    }
+    team = gmCtf_TeamOfSlot(slot);
+    ai_flag(team ^ 1, &theirs);
+    if (theirs.holder != slot) {
+        return;
+    }
+    dir = o->point.x > fp->cur_pos.x ? 1 : -1;
+    for (s = 0; s < 4; s++) {
+        Fighter* e = ai_fighter(s);
+        float ahead, dy;
+        if (e == NULL || gmCtf_TeamOfSlot(s) == team || !ai_alive(e) || e->ground_or_air != GA_Ground) {
+            continue;
+        }
+        ahead = (e->cur_pos.x - fp->cur_pos.x) * (float) dir;
+        dy = e->cur_pos.y - fp->cur_pos.y;
+        if (ahead > 4.0f && ahead < 22.0f && dy < 12.0f && dy > -12.0f) {
+            o->hop = (s8) dir;
+            return;
+        }
+    }
+}
+
 /* ---- navigation (plan §3c, C3) ------------------------------------------------- */
 
 /* No progress along a path in this long is a stuck bot: it routes around the
@@ -861,6 +1003,7 @@ bool gmCtfAi_Think(Fighter* fp, GmCtfAiOrder* o)
             ai.goal_since[slot] = gmCtf_Frame();
         }
         ai_nav(fp, slot, o);
+        ai_carrier_evade(fp, slot, o);
     } else {
         ai.nav_on[slot] = false;
     }
@@ -907,6 +1050,9 @@ static bool ai_think(Fighter* fp, GmCtfAiOrder* o)
             }
         } else {
             ai.hold_since[slot] = 0;
+        }
+        if (!o->throw_now) {
+            ai_carrier_throws(fp, team, &own, o);
         }
         return true;
     }
