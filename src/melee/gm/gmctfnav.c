@@ -49,6 +49,7 @@ typedef struct NavLink {
     u8 from, to;
     u8 kind;
     u8 reach; /* a jump: the height it needs, in units (0: any class) */
+    u8 extra; /* more cost, in units (a way only some classes need) */
 } NavLink;
 
 typedef struct NavGraph {
@@ -97,6 +98,7 @@ enum {
     N_RED_GUARD,
     N_SHAFT_FOOT,
     N_TIP_FOOT,
+    N_TIP_FOOT_HI,
     N_CAVE_END,
     N_RAMP_TIP,
     N_RAMP_MID,
@@ -127,6 +129,10 @@ static const NavNode temple_nodes[N_TEMPLE_NODES] = {
     /* On the cave's slope under the tunnel's tip: from here the tip is 62
      * degrees up, so the mover jumps (Melee's own hint aims there too). */
     [N_TIP_FOOT] = { -38.0f, -91.7f, T_CAVE },
+    /* Up the cave floor's slope: a 41-unit rise to the tip, for fighters
+     * who can't make 46 (Peach and Ganondorf stuck in red's cave in C3's
+     * runs); farther out, so the others take the lower spot. */
+    [N_TIP_FOOT_HI] = { -50.0f, -86.4f, T_CAVE },
     [N_CAVE_END] = { 2.0f, -110.2f, T_CAVE },
     [N_RAMP_TIP] = { -14.0f, -45.6f, T_RAMP },
     [N_RAMP_MID] = { 8.0f, -33.9f, T_RAMP },
@@ -148,13 +154,16 @@ static const NavNode temple_nodes[N_TEMPLE_NODES] = {
     [N_HIGH_LO] = { 183.0f, 47.0f, T_HIGHLO },
     [N_HIGH_HI] = { 183.0f, 92.2f, T_HIGHHI },
     [N_LEFTPLAT] = { -190.0f, 48.9f, T_LEFTPLAT },
-    [N_BOTTOM] = { 44.0f, -143.7f, T_BOTTOM },
+    /* The bottom island's left part: from its right end a bot walked off
+     * instead of jumping back to the cave (C3's runs). */
+    [N_BOTTOM] = { 35.0f, -143.7f, T_BOTTOM },
 };
 
 /* The links between areas; walking within an area links each node to its
  * neighbours by x (nav_build). Reaches are the jumps' rise in units. */
 static const NavLink temple_links[] = {
     { N_TIP_FOOT, N_RAMP_TIP, LINK_JUMP, 46 },
+    { N_TIP_FOOT_HI, N_RAMP_TIP, LINK_JUMP, 41, 30 },
     { N_RAMP_TIP, N_TIP_FOOT, LINK_HOP, 0 },
     { N_RAMP_TOP, N_PILLAR, LINK_JUMP, 35 },
     { N_PILLAR, N_RAMP_TOP, LINK_HOP, 0 },
@@ -184,17 +193,18 @@ static const NavGraph nav_graphs[] = {
 
 /* ---- the class reaches ------------------------------------------------------- */
 
-/* A class's reach, in units: the highest jump link it may take. Everyone
- * gets the tunnel's tip (46), or red couldn't leave its cave at all. */
-static const u8 nav_class_reach[CTFNAV_CLASSES] = { 46, 58, 62 };
+/* A class's reach, in units: the highest jump link it may take. Every
+ * class gets a way to the tunnel's tip, or red couldn't leave its cave. */
+static const u8 nav_class_reach[CTFNAV_CLASSES] = { 41, 46, 58, 62 };
 /* The fighter's ideal reach (first jump plus air jump, v^2 / 2g each) that
  * puts it in a class: a link needs about 8 more than its rise, for the air
  * jump's timing and landing on top. Measured on the whole cast ("mover"
  * lines, MELEE_DEBUG_CTF_AI_LOG): Falco 93, Yoshi 90, Luigi 76, Sheik and
- * Fox 72 (class 2); Ice Climbers 68, Falcon and DK 67 (class 1); Mewtwo 65,
- * Pikachu 61, Samus, Bowser, Marth, Ness 60, Mario 56, Link 50, Ganondorf 50,
- * Peach 45 (class 0). Kirby and Jigglypuff, with five air jumps, are 2. */
-static const u8 nav_class_min[CTFNAV_CLASSES] = { 0, 66, 70 };
+ * Fox 72 (class 3); Ice Climbers 68, Falcon and DK 67 (class 2); Mewtwo 65,
+ * Pikachu 61, Samus, Bowser, Marth, Ness 60, Mario 56, Link 50 (class 1);
+ * Ganondorf 49.5, Peach 45 (class 0). Kirby and Jigglypuff, with five air
+ * jumps, are 3. */
+static const u8 nav_class_min[CTFNAV_CLASSES] = { 0, 50, 66, 70 };
 
 /* ---- state: the tables, rebuilt at match start ------------------------------- */
 
@@ -263,7 +273,7 @@ static void nav_build(const NavGraph* g)
             if (l->kind == LINK_JUMP && l->reach > nav_class_reach[c]) {
                 continue;
             }
-            nav_edge(c, l->from, l->to, nav_link_cost(g, l->from, l->to, l->kind));
+            nav_edge(c, l->from, l->to, nav_link_cost(g, l->from, l->to, l->kind) + l->extra * 10);
         }
         /* Floyd-Warshall in node order: ties keep the earlier path. */
         for (k = 0; k < g->nodes; k++) {

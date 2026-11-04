@@ -13,7 +13,7 @@
 #include <melee/ft/forward.h>
 
 /* Movement classes: what a fighter's jumps can reach (gmCtfNav_Class). */
-#define CTFNAV_CLASSES 3
+#define CTFNAV_CLASSES 4
 
 /* At a match's start: the stage's graph and its next-hop tables. False if
  * the stage has none (the AI then leaves long moves to Melee's mover). */

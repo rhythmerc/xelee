@@ -47,6 +47,10 @@ typedef struct GmCtfAiOrder {
  * AI. Called from the think step of Melee's CPU AI (ftCo_800B24B8). */
 bool gmCtfAi_Think(Fighter* fp, GmCtfAiOrder* out);
 
+/* MELEE_DEBUG_CTF_AI_COST: around Melee's CPU AI tick (ftCo_800B3900). */
+void gmCtfAi_CostAiBegin(void);
+void gmCtfAi_CostAiEnd(void);
+
 /* At a match's start (gmCtf_MatchInit). */
 void gmCtfAi_MatchInit(void);
 /* Once per frame, after the rules (gmctf.c's tick): plans and event lines. */

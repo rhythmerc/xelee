@@ -1013,19 +1013,127 @@ static void ai_nav(Fighter* fp, int slot, GmCtfAiOrder* o)
 
 #endif /* TARGET_PC */
 
+/* ---- cost (plan §6, C6) ----------------------------------------------------------
+ * MELEE_DEBUG_CTF_AI_COST=1: the time the CTF layer takes (every bot's order
+ * and the planner) and the time Melee's whole CPU AI takes (ftCo_800B3900,
+ * all bots), per frame, logged every 600 frames as "ctfcost:".
+ * MELEE_DEBUG_CTF_AI_OFF=1: no CTF layer (stock VS think in a CTF match),
+ * for the on/off comparison. Host clocks, read for the log only: the sim
+ * never sees them. */
+
+#ifdef TARGET_PC
+static bool ai_off(void)
+{
+    static int v = -1;
+    if (v < 0) {
+        v = getenv("MELEE_DEBUG_CTF_AI_OFF") != NULL;
+    }
+    return v != 0;
+}
+
+#if defined(__linux__) || defined(__ANDROID__) || defined(__APPLE__)
+#include <time.h>
+#define AI_COST_CLOCK 1
+static s64 ai_now_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (s64) ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
+
+static struct {
+    s64 layer_ns, ai_ns, ai_t0; /* this frame's */
+    s64 layer_sum, ai_sum, layer_max, ai_max;
+    int frames;
+} ai_cost;
+
+static bool ai_cost_on(void)
+{
+    static int v = -1;
+    if (v < 0) {
+        v = getenv("MELEE_DEBUG_CTF_AI_COST") != NULL;
+    }
+    return v != 0;
+}
+#endif
+#endif /* TARGET_PC */
+
+static bool ai_think_order(Fighter* fp, GmCtfAiOrder* o);
+static void ai_tick(void);
+
 /* ---- the interface ------------------------------------------------------------ */
+
+void gmCtfAi_CostAiBegin(void)
+{
+#ifdef AI_COST_CLOCK
+    if (ai_cost_on()) {
+        ai_cost.ai_t0 = ai_now_ns();
+    }
+#endif
+}
+
+void gmCtfAi_CostAiEnd(void)
+{
+#ifdef AI_COST_CLOCK
+    if (ai_cost_on()) {
+        ai_cost.ai_ns += ai_now_ns() - ai_cost.ai_t0;
+    }
+#endif
+}
+
+bool gmCtfAi_Think(Fighter* fp, GmCtfAiOrder* o)
+{
+#ifdef AI_COST_CLOCK
+    if (ai_cost_on()) {
+        const s64 t0 = ai_now_ns();
+        const bool ok = ai_think_order(fp, o);
+        ai_cost.layer_ns += ai_now_ns() - t0;
+        return ok;
+    }
+#endif
+    return ai_think_order(fp, o);
+}
+
+void gmCtfAi_Tick(void)
+{
+#ifdef AI_COST_CLOCK
+    if (ai_cost_on()) {
+        const s64 t0 = ai_now_ns();
+        ai_tick();
+        ai_cost.layer_ns += ai_now_ns() - t0;
+        /* The frame's totals: this tick runs after every fighter's AI. */
+        ai_cost.layer_sum += ai_cost.layer_ns;
+        ai_cost.ai_sum += ai_cost.ai_ns;
+        if (ai_cost.layer_ns > ai_cost.layer_max) {
+            ai_cost.layer_max = ai_cost.layer_ns;
+        }
+        if (ai_cost.ai_ns > ai_cost.ai_max) {
+            ai_cost.ai_max = ai_cost.ai_ns;
+        }
+        ai_cost.layer_ns = ai_cost.ai_ns = 0;
+        if (++ai_cost.frames == 600) {
+            OSReport("ctfcost: f%d layer %.2f us/frame (max %.2f) cpu-ai %.2f us/frame (max %.2f)%s\n",
+                     gmCtf_Frame(), ai_cost.layer_sum / 600.0 / 1000.0, ai_cost.layer_max / 1000.0,
+                     ai_cost.ai_sum / 600.0 / 1000.0, ai_cost.ai_max / 1000.0, ai_off() ? " (layer off)" : "");
+            memset(&ai_cost, 0, sizeof ai_cost);
+        }
+        return;
+    }
+#endif
+    ai_tick();
+}
 
 #ifdef TARGET_PC
 static bool ai_think(Fighter* fp, GmCtfAiOrder* o);
 #endif
 
-bool gmCtfAi_Think(Fighter* fp, GmCtfAiOrder* o)
+static bool ai_think_order(Fighter* fp, GmCtfAiOrder* o)
 {
 #ifdef TARGET_PC
     const int slot = fp->player_idx;
     bool ok;
     /* Nana follows Popo, as in VS. */
-    if (!gmCtf_Active() || fp->is_sub_fighter) {
+    if (!gmCtf_Active() || fp->is_sub_fighter || ai_off()) {
         return false;
     }
     ok = ai_think(fp, o);
@@ -1207,7 +1315,7 @@ void gmCtfAi_MatchInit(void)
 #endif
 }
 
-void gmCtfAi_Tick(void)
+static void ai_tick(void)
 {
 #ifdef TARGET_PC
     const int frame = gmCtf_Frame();
@@ -1236,7 +1344,9 @@ void gmCtfAi_Tick(void)
             ai.area[slot] = (s8) gmCtfNav_AreaOfLine(fp->coll_data.floor.index);
         }
     }
-    ai_planner(frame);
+    if (!ai_off()) {
+        ai_planner(frame);
+    }
     /* A goal counts for the tick whose think set it: on a tick when stock
      * think takes over (a hazard, a Starman), the stuck check reads x54. */
     for (slot = 0; slot < 4; slot++) {

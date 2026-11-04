@@ -8756,12 +8756,18 @@ void ftCo_800B3900(Fighter_GObj* gobj)
     Fighter* fp = GET_FIGHTER(gobj);
     PAD_STACK(8);
 
+#ifdef TARGET_PC
+    gmCtfAi_CostAiBegin(); /* MELEE_DEBUG_CTF_AI_COST: a host clock, for a log */
+#endif
     ftCo_800B33B0(fp);
     ftCo_800B2AFC(fp);
     ftCo_800B2790(fp);
     ftCo_800B3E04(fp);
     ftCo_800B0AF4(fp);
     fp->cpu.x7C += 1;
+#ifdef TARGET_PC
+    gmCtfAi_CostAiEnd();
+#endif
 }
 
 bool ftCo_800B395C(Fighter_GObj* gobj, int arg1)

@@ -77,7 +77,7 @@ def read_graph(path):
         nodes[m.group(1)] = (float(m.group(2)), float(m.group(3)), m.group(4))
     links = []
     block = re.search(r"temple_links\[\] = \{(.*?)\};", src, re.S).group(1)
-    for m in re.finditer(r"\{ (N_[A-Z_]+), (N_[A-Z_]+), (LINK_[A-Z]+), (\d+) \}", block):
+    for m in re.finditer(r"\{ (N_[A-Z_]+), (N_[A-Z_]+), (LINK_[A-Z]+), (\d+)(?:, \d+)? \}", block):
         links.append((m.group(1), m.group(2), m.group(3), int(m.group(4))))
     block = re.search(r"temple_line_area\[\d+\] = \{(.*?)\};", src, re.S).group(1)
     line_area = re.findall(r"\b(T_[A-Z]+)\b", block)
