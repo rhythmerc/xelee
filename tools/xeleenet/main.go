@@ -43,6 +43,7 @@ type Config struct {
 	Joins       int           // joins by code a minute per address, so codes can't be guessed
 	IPHeader    string
 	GeoHeaders  bool
+	AnyRev      bool // match lobbies across app revisions (a playtest stopgap)
 }
 
 type Service struct {
@@ -78,6 +79,7 @@ func main() {
 	flag.IntVar(&cfg.Hosts, "limit-host", 6, "lobbies opened a minute per player (0: no limit)")
 	logsDir := flag.String("logs", "", "keep Send logs uploads in this folder (logs.go); off without it")
 	logsCap := flag.Int64("logs-cap", 1<<30, "bytes of logs kept in all; uploads past it are refused")
+	flag.BoolVar(&cfg.AnyRev, "any-rev", false, "let builds of any app revision share lobbies (protocol and disc still have to match)")
 	flag.IntVar(&cfg.Joins, "limit-join", 20, "joins by code a minute per address (0: no limit)")
 	flag.Parse()
 

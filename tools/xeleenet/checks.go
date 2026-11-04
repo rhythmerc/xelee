@@ -158,6 +158,15 @@ type Compat struct {
 var revRe = regexp.MustCompile(`^[A-Za-z0-9._+\-]{1,40}$`)
 var discRe = regexp.MustCompile(`^[A-Za-z0-9]{1,32}$`)
 
+// sameBuild is whether two builds may share a lobby: all of Compat, or with
+// -any-rev everything but the revision.
+func (s *Service) sameBuild(a, b Compat) bool {
+	if s.cfg.AnyRev {
+		return a.Proto == b.Proto && a.Disc == b.Disc
+	}
+	return a == b
+}
+
 func compat(v any) Compat {
 	m, _ := v.(map[string]any)
 	proto, ok := integer(m["proto"])

@@ -180,7 +180,7 @@ func (s *Service) list(c Compat, full bool, from Geo) map[string]any {
 		if !l.Public {
 			continue
 		}
-		if l.Compat != c {
+		if !s.sameBuild(l.Compat, c) {
 			others++
 			continue
 		}
@@ -391,7 +391,7 @@ func (s *Service) closeBy(l *Lobby, key string) answer {
 // join decides a join by code. With "Ask before joining" it returns the
 // request to wait on instead.
 func (s *Service) join(l *Lobby, j Joiner) (answer, *pending) {
-	if l.Compat != j.Compat {
+	if !s.sameBuild(l.Compat, j.Compat) {
 		return refused(refuse(409, "version", "This lobby is on a different Xelee version; both need the same one")), nil
 	}
 	if contains(l.Banned, j.Key) {
