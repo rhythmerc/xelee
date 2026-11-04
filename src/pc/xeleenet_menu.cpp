@@ -2951,11 +2951,11 @@ struct Banner : Rml::EventListener {
             // The lobby's seats' doors stand centred (mncharsel.c moves them).
             const int seats = s_css.seats >= 2 && s_css.seats <= 4 ? s_css.seats : 4;
             const float shift = (4 - seats) * kDoorPitch / 2;
-            // The first open seat a spare pad of ours can take (docs/lan-multipad-plan.md).
-            int open = -1;
-            for (int i = 0; i < seats && open < 0; i++)
-                if (!(s_css.humans & (1u << i)))
-                    open = i;
+            // The seat a spare pad of ours would take (docs/lan-multipad-plan.md):
+            // an empty one, else the highest-port CPU's (docs/xeleenet-cpus-plan.md).
+            int open = s_css.humans != 0 ? pc_xn_seat_port(s_css.humans, s_css.cpus, seats) : -1;
+            if (open >= seats)
+                open = -1;
             // Our doors carry their controller's number once we play more
             // than one, or a spare pad could join.
             const bool tags = __builtin_popcount(s_css.local & 15u) > 1 || s_css.spare >= 0;
@@ -2963,7 +2963,8 @@ struct Banner : Rml::EventListener {
                 const unsigned bit = 1u << i;
                 const float x = css_zoom(kDoorX0 + i * kDoorPitch + shift) * d.x, w = kDoorW * PC_XN_CSS_ZOOM * d.x;
                 const float y = css_zoom(kDoorY0) * d.y, h = kDoorH * PC_XN_CSS_ZOOM * d.y;
-                if (i == open && (s_css.spare >= 0 || s_css.claimed != 0)) {
+                // A CPU's door stays in sight: its OPEN tag says a pad's START takes it.
+                if (i == open && !(s_css.cpus & bit) && (s_css.spare >= 0 || s_css.claimed != 0)) {
                     const bool adding = s_css.claimed != 0;
                     const int pad = (adding ? __builtin_ctz(s_css.claimed) : s_css.spare) + 1;
                     r += "<div class=\"door spare\" style=\"left: " + fmt(x) + "px; top: " + fmt(y) + "px; width: " +
@@ -4140,6 +4141,8 @@ extern "C" void pc_xn_css_frame(const PcXnCssState* state) {
     s_css = *state;
     s_css_at = SDL_GetTicks();
     test_apply_frame();
+    pc_xn_punch_set_cpus(state->cpus); // the host's next seats bump a CPU only when none is empty
+    pc_xn_set_cpus(state->cpus, state->cpu_level, state->ckind); // the listing's open CPU seats
     // tools/xn_preview.py's CSS states: three players, as the wireframe's R1-R3
     // and L1 (P1 holding B), with the real hand.
     const auto sample = [](uint8_t humans, uint8_t ready, uint8_t picked, uint8_t waiting, int countdown, int hold) {

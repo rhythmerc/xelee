@@ -117,6 +117,13 @@ int pc_xn_members(PcXnMember* out, int max);
  * bits a port (net_punch.c's XnStart.owners), so the list names an extra seat
  * after the player whose pad it is. */
 void pc_xn_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra, uint8_t owners);
+/* Host: the CSS's CPU doors (port bits; docs/xeleenet-cpus-plan.md), each
+ * with its level (1-9) and fighter (a CharacterKind, 0xFF none). The
+ * heartbeat, or LAN's announcement, lists them as open seats; the service and
+ * LAN give a joiner an empty seat first, else the highest-port CPU's.
+ * pc_xn_cpus reads them back (the mask; level and ckind filled). */
+void pc_xn_set_cpus(unsigned mask, const uint8_t level[4], const uint8_t ckind[4]);
+unsigned pc_xn_cpus(uint8_t level[4], uint8_t ckind[4]);
 /* Leave the lobby (a host closes it) and stop the thread. */
 void pc_xn_stop(void);
 /* A game is running (VS to the results) or not: the host's heartbeat says so

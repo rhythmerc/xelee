@@ -130,8 +130,31 @@ func (s *Service) route(w http.ResponseWriter, r *http.Request, ip string) answe
 			}
 			return out
 		}
+		// The CSS's CPU doors (docs/xeleenet-cpus-plan.md): {port, level, ckind}.
+		cpus := []CpuSeat{}
+		if list, ok := b["cpus"].([]any); ok {
+			for i, v := range list {
+				if i == 3 {
+					break
+				}
+				c, _ := v.(map[string]any)
+				port, okPort := integer(c["port"])
+				level, okLevel := integer(c["level"])
+				ckind, okKind := integer(c["ckind"])
+				if !okPort || port < 1 || port > 3 {
+					continue
+				}
+				if !okLevel || level < 1 || level > 9 {
+					level = 1
+				}
+				if !okKind || ckind < 0 || ckind >= fighterBits {
+					ckind = -1
+				}
+				cpus = append(cpus, CpuSeat{Port: port, Level: level, Ckind: ckind})
+			}
+		}
 		hb := beat{State: state, Roster: roster, Extra: ports("extra"), Owners: ports("owners"), Score: score,
-			XR: isTrue(b["xr"])}
+			XR: isTrue(b["xr"]), Cpus: cpus}
 		return s.locked(func() answer { return s.heartbeat(s.lobby(id), me.Pubkey, hb) })
 	case "PUT settings", "POST settings": // POST: the game only speaks GET and POST
 		name, vis, ask, st := s.lobbyName(b["name"]), visibility(b["visibility"]), isTrue(b["ask"]), settings(b["settings"])

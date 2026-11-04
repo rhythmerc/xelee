@@ -20,6 +20,7 @@
 #include "compat.h"
 #include "pc/net_internal.h"
 #include "pc/net_mdns.h"
+#include "pc/net_punch.h"
 #include "pc/pc.h"
 #include "pc/xr_scene.h"
 #include "xeleenet_backend.h"
@@ -285,6 +286,17 @@ static void set_address(const char* ip, uint16_t port) {
 
 /* ---- the host --------------------------------------------------------------- */
 
+/* The CPU doors as one number, to tell when the announcement is stale. */
+static uint32_t s_cpus_announced;
+static uint32_t cpus_signature(void) {
+    uint8_t level[4], ckind[4];
+    uint32_t s = pc_xn_cpus(level, ckind);
+    for (int q = 0; q < 4; q++) {
+        s = s * 31u + (uint32_t)(level[q] << 8 | ckind[q]);
+    }
+    return s;
+}
+
 /* One seat in the announcement's `p`, with nothing to escape: its port, XR
  * (0/1), its tag in 8 characters, its name's length in a hex digit and the
  * name. A machine's other pad is its port, its machine's port and
@@ -298,6 +310,8 @@ static size_t seat_txt(char* out, size_t cap, int port, bool xr, const char* tag
 static void host_announce(void) {
     char proto[8], seats[4], taken[4], port[8], instance[32];
     char name[40], settings[320], fm[12] = "", sm[12] = "", seat_list[128];
+    uint8_t level[4], ckind[4];
+    const unsigned cpus = pc_xn_cpus(level, ckind);
     SDL_LockMutex(s_lock);
     snprintf(name, sizeof name, "%s", s_opts.name[0] ? s_opts.name : s_args.name);
     snprintf(settings, sizeof settings, "%s", s_opts.settings);
@@ -315,8 +329,20 @@ static void host_announce(void) {
         }
         if (s_extra & (1u << q)) {
             o += (size_t)snprintf(seat_list + o, sizeof seat_list - o, "%d%d--------0", q, (s_owners >> (2 * q)) & 3);
+        } else if (cpus & (1u << q)) {
+            bool held = false;
+            for (int i = 0; i < s_nmembers; i++) {
+                held |= s_members[i].port == q;
+            }
+            /* A CPU's seat (docs/xeleenet-cpus-plan.md): its port, 'c', its
+             * level and its fighter in hex (ff none), then "-----0". */
+            if (!held) {
+                o += (size_t)snprintf(seat_list + o, sizeof seat_list - o, "%dc%d%02x-----0", q, level[q] % 10,
+                                      ckind[q]);
+            }
         }
     }
+    s_cpus_announced = cpus_signature();
     s_opts.announce = false;
     SDL_UnlockMutex(s_lock);
     /* The masks don't fit in `s` (a TXT value is 255 bytes at most): they
@@ -326,9 +352,9 @@ static void host_announce(void) {
     unsigned f = 0, st = 0;
     /* So do the CPUs, after them: "c" is 0 Off, 1 Host, 2 Anyone. */
     const char* cp = strstr(settings, ",\"cpus\":\"");
-    char cpus[2] = "0";
+    char cpus_rule[2] = "0";
     if (cp != NULL) {
-        cpus[0] = strncmp(cp + 9, "host", 4) == 0 ? '1' : strncmp(cp + 9, "anyone", 6) == 0 ? '2' : '0';
+        cpus_rule[0] = strncmp(cp + 9, "host", 4) == 0 ? '1' : strncmp(cp + 9, "anyone", 6) == 0 ? '2' : '0';
     }
     if (masks != NULL && sscanf(masks, ",\"fighter_mask\":%u,\"stage_mask\":%u", &f, &st) == 2) {
         snprintf(fm, sizeof fm, "%x", f);
@@ -342,7 +368,7 @@ static void host_announce(void) {
     const char* keys[] = {"v", "rev", "disc", "id", "name", "host", "tag", "seats", "taken", "port", "s", "fm", "sm",
                           "g", "p", "c"};
     const char* values[] = {proto, pc_app_rev(), pc_net_disc_id(), s_lobby_hex, name, s_args.name, s_args.tag,
-                            seats, taken, port, settings, fm, sm, pc_xn_playing() ? "1" : "0", seat_list, cpus};
+                            seats, taken, port, settings, fm, sm, pc_xn_playing() ? "1" : "0", seat_list, cpus_rule};
     static bool logged;
     if (!logged) {
         logged = true;
@@ -405,12 +431,19 @@ static void on_join(const LJoin* j, const struct sockaddr_in* from) {
             refuse(from, j->nonce, "full");
             return;
         }
-        int port = 1;
-        for (bool used = true; used && port < 4; port += used) {
-            used = (s_extra & (1u << port)) != 0;
-            for (int i = 0; i < s_nmembers; i++) {
-                used |= s_members[i].port == port;
-            }
+        /* An empty seat first, else the highest-port CPU's: that CPU leaves at
+         * the join's session (docs/xeleenet-cpus-plan.md). */
+        unsigned taken = 1u | s_extra;
+        for (int i = 0; i < s_nmembers; i++) {
+            taken |= 1u << s_members[i].port;
+        }
+        const unsigned cpus = pc_xn_cpus(NULL, NULL);
+        int port = pc_xn_seat_port(taken, cpus, s_opts.seats ? s_opts.seats : s_args.seats);
+        if (port < 1) {
+            port = 1;
+        }
+        if (cpus & (1u << port)) {
+            pc_log_line("xeleenet: LAN: the joiner takes P%d's CPU seat", port + 1);
         }
         at = s_nmembers++;
         PcXnMember* m = &s_members[at];
@@ -488,7 +521,7 @@ static void on_leave(const LLeave* l) {
 static void host_roster(void) {
     bool changed = false;
     SDL_LockMutex(s_lock);
-    changed = s_extra != s_extra_announced; /* the list's seats taken */
+    changed = s_extra != s_extra_announced || s_cpus_announced != cpus_signature(); /* the list's seats */
     for (int i = 0; i < s_nmembers;) {
         bool linked = false;
         for (int r = 0; r < s_nroster; r++) {

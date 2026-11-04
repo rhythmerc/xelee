@@ -157,6 +157,7 @@ static int s_want_x;
 static uint8_t s_want_seq;
 static uint8_t s_dropped;   /* host: extra seats given up, not to be kept */
 static int s_seats_live;    /* host: the lobby's seats now (its settings may change) */
+static uint8_t s_cpus;      /* the CSS's CPU doors (pc_xn_punch_set_cpus) */
 /* Our pads: the ones that asked for a seat and have none yet (oldest first),
  * and which pad plays each of our other seats once given. */
 static int s_claim[2], s_nclaim;
@@ -923,14 +924,17 @@ static void roster_build(uint8_t* ports_out, uint8_t* owners_out, const XnStart*
         have[o]++;
         used++;
     }
+    /* An empty seat first, else the highest-port CPU's (docs/xeleenet-cpus-plan.md). */
     for (int o = 0; o < 4; o++) {
-        for (int q = 0; q < 4 && own[o] == o && have[o] < want[o] && used < seats; q++) {
-            if (!(ports & (1u << q))) {
-                ports |= (uint8_t)(1u << q);
-                own[q] = o;
-                have[o]++;
-                used++;
+        while (own[o] == o && have[o] < want[o] && used < seats) {
+            const int q = pc_xn_seat_port(ports, s_cpus, seats);
+            if (q < 0) {
+                break;
             }
+            ports |= (uint8_t)(1u << q);
+            own[q] = o;
+            have[o]++;
+            used++;
         }
     }
     uint8_t owners = 0;
@@ -953,6 +957,10 @@ static void start_build(void) {
     s_start.seed[3] = (uint8_t)seed;
     roster_build(&s_start.ports, &s_start.owners, &prev);
     s_dropped = 0;
+    if (s_start.ports & s_cpus & ~prev.ports) {
+        pc_log_line("xeleenet: new seats %02x take CPUs' seats (CPU doors %02x)", s_start.ports & s_cpus & ~prev.ports,
+            s_cpus);
+    }
     s_start.reason = s_restart_req ? s_restart_reason : PC_XN_SWITCH_ROSTER;
     s_restart_req = false;
     put64(s_start.nonces[0], s_nonce);
@@ -1202,6 +1210,7 @@ bool pc_xn_punch_start(const char* url, const char* name, const char* code, int 
     s_lobby_code[0] = '\0';
     s_start_req = false;
     s_restart_req = false;
+    s_cpus = 0;
     s_want_x = 0;
     s_want_seq = 0;
     s_dropped = 0;
@@ -1373,6 +1382,33 @@ bool pc_xn_punch_claim_refused(void) {
 
 void pc_xn_punch_set_seats(int seats) {
     s_seats_live = seats;
+}
+
+void pc_xn_punch_set_cpus(unsigned cpus) {
+    if ((cpus & 15u) != s_cpus) {
+        pc_log_line("xeleenet: CPU doors %02x", cpus & 15u);
+    }
+    s_cpus = (uint8_t)(cpus & 15u);
+}
+
+int pc_xn_seat_port(unsigned taken, unsigned cpus, int seats) {
+    cpus &= ~taken & 15u;
+    for (int q = 0; q < 4 && q < seats; q++) {
+        if (!((taken | cpus) & (1u << q))) {
+            return q;
+        }
+    }
+    for (int q = 3; q >= 0; q--) {
+        if (cpus & (1u << q)) {
+            return q;
+        }
+    }
+    for (int q = 0; q < 4; q++) {
+        if (!(taken & (1u << q))) {
+            return q;
+        }
+    }
+    return -1;
 }
 
 void pc_xn_punch_restart(int reason) {

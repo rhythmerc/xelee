@@ -466,7 +466,7 @@ static bool host(void) {
 }
 
 static bool heartbeat(void) {
-    char body[384], path[96];
+    char body[640], path[96];
     int status = 0;
     PcSlippiJson* r;
     size_t o = (size_t)snprintf(body, sizeof body, "{\"state\":\"%s\",\"xr\":%s,\"roster\":[",
@@ -492,6 +492,18 @@ static bool heartbeat(void) {
         }
     }
     SDL_UnlockMutex(s_lock);
+    /* The CPU doors (docs/xeleenet-cpus-plan.md): open seats the list shows. */
+    o += (size_t)snprintf(body + o, sizeof body - o, "],\"cpus\":[");
+    {
+        uint8_t level[4], ckind[4];
+        const unsigned cpus = pc_xn_cpus(level, ckind);
+        for (int q = 1, k = 0; q < 4; q++) {
+            if (cpus & (1u << q)) {
+                o += (size_t)snprintf(body + o, sizeof body - o, "%s{\"port\":%d,\"level\":%d,\"ckind\":%d}",
+                                      k++ ? "," : "", q, level[q], ckind[q] < 26 ? ckind[q] : -1);
+            }
+        }
+    }
     snprintf(body + o, sizeof body - o, "]}");
     snprintf(path, sizeof path, "/v1/lobbies/%s/heartbeat", s_lobby);
     if (!call_auth(path, body, &status, &r)) {
@@ -953,6 +965,36 @@ void pc_xn_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra, uint8_t o
 
 void pc_xn_stop(void) {
     backend()->stop();
+    pc_xn_set_cpus(0, NULL, NULL);
+}
+
+/* The CPU doors, a port each (any thread reads them): 0 none, else bit 16,
+ * the level in bits 8-11 and the fighter in bits 0-7. */
+static SDL_AtomicInt s_cpu_seat[4];
+
+void pc_xn_set_cpus(unsigned mask, const uint8_t level[4], const uint8_t ckind[4]) {
+    for (int q = 0; q < 4; q++) {
+        const bool on = (mask & (1u << q)) && level != NULL && ckind != NULL;
+        const int lv = on ? (level[q] >= 1 && level[q] <= 9 ? level[q] : 1) : 0;
+        SDL_SetAtomicInt(&s_cpu_seat[q], on ? 0x10000 | lv << 8 | ckind[q] : 0);
+    }
+}
+
+unsigned pc_xn_cpus(uint8_t level[4], uint8_t ckind[4]) {
+    unsigned mask = 0;
+    for (int q = 0; q < 4; q++) {
+        const int v = SDL_GetAtomicInt(&s_cpu_seat[q]);
+        if (v != 0) {
+            mask |= 1u << q;
+        }
+        if (level != NULL) {
+            level[q] = (uint8_t)((v >> 8) & 15);
+        }
+        if (ckind != NULL) {
+            ckind[q] = v != 0 ? (uint8_t)(v & 0xFF) : 0xFF;
+        }
+    }
+    return mask;
 }
 
 void pc_xn_set_playing(bool playing) {

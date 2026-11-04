@@ -61,6 +61,16 @@ bool pc_xn_punch_claim_refused(void);
 bool pc_xn_punch_seat_left(int port);
 /* Host: the lobby's seats now, which caps the seats other pads get. */
 void pc_xn_punch_set_seats(int seats);
+/* The CSS's CPU doors (port bits; docs/xeleenet-cpus-plan.md), as the CSS
+ * last showed them. A CPU never keeps a person out: a seat for another pad
+ * goes to an empty port first, else to the highest-port CPU's, which leaves
+ * at the next session. */
+void pc_xn_punch_set_cpus(unsigned cpus);
+/* The port a new seat gets among `taken` (port bits) with `cpus` and
+ * `seats`: the lowest empty port inside the seats, else the highest-port
+ * CPU's, else the lowest free one at all; -1 none. The service's and LAN's
+ * joiner picks follow the same rule. */
+int pc_xn_seat_port(unsigned taken, unsigned cpus, int seats);
 /* Host: the next session with the same players, as a join would start it
  * (docs/xeleenet-settings-overlay-plan.md, O2): the Lobby Settings' Apply.
  * Its handshake carries the new rules, and every CSS reloads on its agreed
