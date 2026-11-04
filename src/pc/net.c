@@ -3386,6 +3386,8 @@ static bool wait_remote(int32_t need) {
         /* The last held frame goes out; the tick's own frame starts fresh,
          * on a tick of its own. */
         pc_present_held_frame(true);
+    } else if (in_fight()) {
+        pc_restamp_waited_frame(); /* a short wait: onto a tick it can make */
     }
     uint64_t dt = SDL_GetTicksNS() - t0;
     if (held > 0 && dt > 250000000ull) {

@@ -586,6 +586,41 @@ void pc_present_held_frame(bool new_tick) {
     }
 }
 
+/* A netplay wait for a slower peer's input ended mid-tick, before the open
+ * frame drew anything. Started that late, the frame went out after its slot
+ * and the headset dropped it (SpaceWarp's late drop), and the boundary after
+ * it was due on a tick already under way, so that one was late too: in the
+ * 2026-11-04 CTF match the remote ran ~39 fps for a minute at a time and the
+ * headset showed 4-16 frames a second, with the virtual screen flashing
+ * through the gaps. Moved onto the next tick instead, the frame starts with
+ * the whole slot in front of it; the tick it gives up is one this side was
+ * waiting through anyway (it is the peer ahead). The next boundary is due a
+ * tick after it, as for a held frame (pc_present_held_frame). The age a tick
+ * may still be started at: MELEE_XR_NET_START_MS, 2 by default (a frame's
+ * slack in a 4-player fight measured 0.2-2 ms). */
+void pc_restamp_waited_frame(void) {
+#ifdef AURORA_ENABLE_OPENXR
+    static int start_us = -1;
+    if (start_us < 0) {
+        const char* e = getenv("MELEE_XR_NET_START_MS");
+        start_us = e != NULL ? (int)(atof(e) * 1000) : 2000;
+        start_us = start_us < 0 ? 0 : start_us;
+    }
+    if (!s_in_frame || s_begun_tick == 0) {
+        return;
+    }
+    const u64 tick = aurora_xr_pace_restamp(s_begun_tick, (u64)start_us * 1000);
+    if (tick == 0) {
+        return;
+    }
+    s_begun_tick = tick;
+    s_begun_ns = SDL_GetTicksNS();
+    if (s_xr_due != 0 && s_xr_due <= tick) {
+        s_xr_due = tick + 1;
+    }
+#endif
+}
+
 /* The game's frame is as tall as the picture it's shown as, not the render
  * scale's, while the headset shows the virtual screen (on the Quest the
  * scale's 480 lines were resampled up to a 1080-line screen) or XeleeNet's
