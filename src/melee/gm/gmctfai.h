@@ -12,6 +12,32 @@
 #include <melee/ft/forward.h>
 #include <melee/it/forward.h>
 
+/* What a CPU player should do this tick: the inputs of Melee's behaviour
+ * selector (ftCo_800ADE48), set by ftCo_CtfThink in ftCo_0A01.c. */
+typedef enum GmCtfAiGo {
+    CTFAI_GO_STOCK,   /* stock VS think: fight the nearest enemy */
+    CTFAI_GO_ITEM,    /* fetch `item` (ftCo_800A866C) */
+    CTFAI_GO_FIGHTER, /* go where `follow` stands (ftCo_800A75DC) */
+    CTFAI_GO_POINT,   /* go to `point`, a floor point */
+} GmCtfAiGo;
+
+typedef struct GmCtfAiOrder {
+    u8 go;           /* GmCtfAiGo */
+    bool fight;      /* the attack masks (cpu.xF9_b2, b3, b5) */
+    bool defend;     /* shield, dodge, roll (cpu.xF9_b6) */
+    bool pickup;     /* pick up `item` in reach (cpu.xF9_b7) */
+    bool nav;        /* `point` is the nav layer's: written as is, no stage hints */
+    Fighter* target; /* cpu.x44, whom to fight, or NULL */
+    Fighter* follow; /* CTFAI_GO_FIGHTER */
+    Item* item;      /* cpu.x4C: this tick's flag, never kept */
+    Vec2 point;      /* CTFAI_GO_POINT */
+    float tol;       /* arrival distance */
+} GmCtfAiOrder;
+
+/* A CPU's order for this tick; false outside CTF, or to leave it to stock
+ * AI. Called from the think step of Melee's CPU AI (ftCo_800B24B8). */
+bool gmCtfAi_Think(Fighter* fp, GmCtfAiOrder* out);
+
 /* At a match's start (gmCtf_MatchInit). */
 void gmCtfAi_MatchInit(void);
 /* Once per frame, after the rules (gmctf.c's tick): plans and event lines. */

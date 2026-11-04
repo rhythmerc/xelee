@@ -29,6 +29,10 @@
 #include <melee/ft/kinds/ftPopo/ftpopospeciallw.h>
 #include <melee/ft/types.h>
 #include <melee/gm/gm_unsplit.h>
+#ifdef TARGET_PC
+#include <melee/gm/gmctf.h>
+#include <melee/gm/gmctfai.h>
+#endif
 #include <melee/gr/grbigblue.h>
 #include <melee/gr/grcastle.h>
 #include <melee/gr/grcorneria.h>
@@ -7913,6 +7917,78 @@ void ftCo_800B21C8(Fighter* fp)
     ftCo_800ADE48(fp);
 }
 
+#ifdef TARGET_PC
+/* Capture the Flag's CPU players (gm/gmctfai.c, docs/ctf-ai-plan.md): the
+ * stock VS think below with its targets replaced by the CTF layer's order:
+ * whom to fight (x44), the item to fetch (x4C), the destination (x54) and
+ * the behaviour masks. Stage hazards, Starman/Hammer threats, the behaviour
+ * selector (ftCo_800ADE48) and everything it runs (attacks, shield, DI,
+ * ledges, recovery) stay Melee's. Only called in a CTF match, so every other
+ * match runs the decomp's path unchanged. */
+static void ftCo_CtfThink(Fighter* fp)
+{
+    struct CpuFighter* data = &fp->cpu;
+    GmCtfAiOrder o;
+    Vec3 sp28;
+    s32 cmd;
+    Fighter* target;
+
+    cmd = ftCo_800A229C(fp, &sp28);
+    if (cmd != 0) {
+        ftCo_800AE7AC(fp, &sp28, cmd);
+        return;
+    }
+    target = ftCo_800A5CE0(fp);
+    data->x44 = target;
+    if (target != NULL) {
+        ftCo_CpuSetTargetFlags(data);
+        ftCo_CpuTargetAct(fp);
+        ftCo_800ADE48(fp);
+        return;
+    }
+    ftCo_CpuInitNoTarget(fp, true);
+    if (!gmCtfAi_Think(fp, &o) || o.go == CTFAI_GO_STOCK) {
+        ftCo_CpuUpdateCommonItemTarget(fp);
+        ftCo_CpuUpdateSpecialItemTarget(fp);
+        ftCo_CpuActOnNoTarget(fp, data);
+        return;
+    }
+    data->xF9_b2 = data->xF9_b3 = data->xF9_b5 = o.fight;
+    data->xF9_b6 = o.defend;
+    data->xF9_b7 = o.pickup;
+    data->x44 = o.target;
+    data->x4C = o.item; /* fresh every tick, as stock think sets it */
+    data->x50 = NULL;
+    if (data->x18 != data->x20 && data->x18 != data->x1C) {
+        data->x60 = 0;
+    }
+    /* Recovering (state 4) keeps its own destination, as in stock think. */
+    if (data->x18 != 4) {
+        data->xFA_b2 = false;
+        switch (o.go) {
+        case CTFAI_GO_ITEM:
+            ftCo_800A866C(fp);
+            break;
+        case CTFAI_GO_FIGHTER:
+            ftCo_800A75DC(fp, o.follow);
+            break;
+        case CTFAI_GO_POINT:
+            if (o.nav) {
+                /* The nav layer's waypoint: no hold timer, no stage hint
+                 * redirect (ftCo_800A1CC4), which would fight the path. */
+                data->x60 = 0;
+                data->x54 = o.point;
+                data->x38 = o.tol;
+            } else {
+                ftCo_800A1F3C(fp, o.point.x, o.point.y, o.tol);
+            }
+            break;
+        }
+    }
+    ftCo_800ADE48(fp);
+}
+#endif
+
 void ftCo_800B24B8(Fighter* fp)
 {
     struct CpuFighter* data = &fp->cpu;
@@ -7921,6 +7997,12 @@ void ftCo_800B24B8(Fighter* fp)
     Fighter* target;
     PAD_STACK(0x14);
 
+#ifdef TARGET_PC
+    if (gmCtf_Active()) {
+        ftCo_CtfThink(fp);
+        return;
+    }
+#endif
     cmd = ftCo_800A229C(fp, &sp28);
     if (cmd != 0) {
         ftCo_800AE7AC(fp, &sp28, cmd);
