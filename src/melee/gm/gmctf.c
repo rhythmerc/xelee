@@ -207,9 +207,15 @@ static int ctf_team_of_fighter(HSD_GObj* fighter)
     return ctf_team_of_slot(GET_FIGHTER(fighter)->player_idx);
 }
 
+/* A zone's bottom is its stand's height, but a floor can slope under the
+ * zone: Temple's main floor rises 2.6 units across blue's, so a carrier at x
+ * 197.5 stood at y -5.6, under the bottom (-5.3), and couldn't score; only x
+ * above about 206 counted. This much below the bottom still counts. */
+#define CTF_ZONE_FLOOR_SLACK 4.0f
+
 static bool ctf_in_box(const CtfBox* b, const Vec3* p)
 {
-    return p->x >= b->l && p->x <= b->r && p->y >= b->b && p->y <= b->t;
+    return p->x >= b->l && p->x <= b->r && p->y >= b->b - CTF_ZONE_FLOOR_SLACK && p->y <= b->t;
 }
 
 static HSD_GObj* ctf_spawn_flag(Vec3 pos, int team)

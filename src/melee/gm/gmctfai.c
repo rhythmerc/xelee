@@ -201,10 +201,11 @@ static void ai_flag(int team, CtfAiFlag* f)
     gmCtf_Base(team, &f->stand, &f->zl, &f->zr, &f->zb, &f->zt);
 }
 
-/* (x, y) is in the capture zone of the team whose flag `f` is. */
+/* (x, y) is in the capture zone of the team whose flag `f` is (with the
+ * rules' slack under a zone's bottom, gmctf.c CTF_ZONE_FLOOR_SLACK). */
 static bool ai_in_zone(const CtfAiFlag* f, float x, float y)
 {
-    return x >= f->zl && x <= f->zr && y >= f->zb - 2.0f && y <= f->zt;
+    return x >= f->zl && x <= f->zr && y >= f->zb - 4.0f && y <= f->zt;
 }
 
 /* Their flag lies free in our zone: it scores the moment ours is home (the
