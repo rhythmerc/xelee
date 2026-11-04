@@ -64,15 +64,18 @@ if [[ -f "${BUILD_DIR}/libphonon.so" ]]; then
     EXTRA_LINUXDEPLOY_ARGS+=("-l" "${BUILD_DIR}/libphonon.so")
 fi
 
+# The program is xelee in the packages (process lists, the desktop file's
+# Exec); the build tree keeps melee, which the tools and tests run.
+cp "${BUILD_DIR}/melee" "${BUILD_DIR}/xelee"
 "${TOOLS_DIR}/linuxdeploy" \
     --appdir "${APPDIR}" \
-    -e "${BUILD_DIR}/melee" \
+    -e "${BUILD_DIR}/xelee" \
     -i "${ROOT_DIR}/platforms/linux/xelee.png" \
     -d "${ROOT_DIR}/platforms/linux/xelee.desktop" \
     "${EXTRA_LINUXDEPLOY_ARGS[@]}"
 # linuxdeploy leaves a binary whose rpath starts with $ORIGIN (libphonon's)
 # unstripped, ~180MB of DWARF; ship it stripped, as in the tarball below.
-strip --strip-debug "${APPDIR}/usr/bin/melee"
+strip --strip-debug "${APPDIR}/usr/bin/xelee"
 
 # Copy resources beside the binary
 cp -r "${ROOT_DIR}/resources" "${APPDIR}/usr/bin/resources"
@@ -86,9 +89,9 @@ echo "=== Generating Portable Tarball ==="
 TAR_STAGE="${BUILD_DIR}/xelee-linux-${ARCH}"
 rm -rf "${TAR_STAGE}"
 mkdir -p "${TAR_STAGE}"
-cp "${BUILD_DIR}/melee" "${TAR_STAGE}/"
+cp "${BUILD_DIR}/xelee" "${TAR_STAGE}/"
 # RelWithDebInfo leaves ~180MB of DWARF in the binary; ship it stripped.
-strip --strip-debug "${TAR_STAGE}/melee"
+strip --strip-debug "${TAR_STAGE}/xelee"
 cp -r "${ROOT_DIR}/resources" "${TAR_STAGE}/"
 gzip -dc "${ROOT_DIR}/tools/initial_pipeline_cache.db.gz" \
     > "${TAR_STAGE}/initial_pipeline_cache.db"
@@ -109,7 +112,7 @@ HERE="$(dirname "$(readlink -f "$0")")"
 if [[ -d "${HERE}/lib" ]]; then
     export LD_LIBRARY_PATH="${HERE}/lib:${LD_LIBRARY_PATH:-}"
 fi
-exec "${HERE}/melee" "$@"
+exec "${HERE}/xelee" "$@"
 APP_RUN
 chmod +x "${TAR_STAGE}/run.sh"
 

@@ -5,9 +5,9 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>melee</string>
+    <string>Xelee</string>
     <key>CFBundleIconFile</key>
-    <string>melee</string>
+    <string>xelee</string>
     <key>CFBundleIdentifier</key>
     <string>org.melee-pc.melee</string>
     <key>CFBundleInfoDictionaryVersion</key>

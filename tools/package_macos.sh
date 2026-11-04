@@ -34,10 +34,10 @@ if [ -z "${APP_VERSION}" ]; then
 fi
 sed "s/@MELEE_VERSION@/${APP_VERSION#v}/g" "${ROOT_DIR}/platforms/macos/Info.plist" \
     > "${APP}/Contents/Info.plist"
-cp "${ROOT_DIR}/platforms/macos/melee.icns" "${APP}/Contents/Resources/"
-cp "${BUILD_DIR}/melee" "${APP}/Contents/MacOS/melee"
+cp "${ROOT_DIR}/platforms/macos/xelee.icns" "${APP}/Contents/Resources/"
+cp "${BUILD_DIR}/melee" "${APP}/Contents/MacOS/Xelee"
 # RelWithDebInfo carries the DWARF in the binary on Mach-O too; ship it stripped.
-strip -S "${APP}/Contents/MacOS/melee"
+strip -S "${APP}/Contents/MacOS/Xelee"
 # SDL_GetBasePath() is Contents/Resources/ inside a bundle; the launcher and
 # aurora look for resources/ and the pipeline cache there.
 cp -r "${ROOT_DIR}/resources" "${APP}/Contents/Resources/resources"
@@ -95,12 +95,12 @@ bundle_deps() {
         fi
     done
 }
-bundle_deps "${APP}/Contents/MacOS/melee" "${BUILD_DIR}/melee"
-install_name_tool -add_rpath "@executable_path/../Frameworks" "${APP}/Contents/MacOS/melee"
+bundle_deps "${APP}/Contents/MacOS/Xelee" "${BUILD_DIR}/melee"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "${APP}/Contents/MacOS/Xelee"
 ls "${FRAMEWORKS}"
 # Every @rpath load command must now name a bundled file; a miss here is a
 # launch-time "Library not loaded" on any Mac without the same Homebrew.
-for f in "${APP}/Contents/MacOS/melee" "${FRAMEWORKS}"/*.dylib; do
+for f in "${APP}/Contents/MacOS/Xelee" "${FRAMEWORKS}"/*.dylib; do
     otool -L "${f}" | awk 'NR > 1 { print $1 }' | grep '^@rpath/' | while read -r dep; do
         [[ "${dep}" == "@rpath/$(basename "${f}")" ]] && continue
         if [[ ! -f "${FRAMEWORKS}/${dep#@rpath/}" ]]; then

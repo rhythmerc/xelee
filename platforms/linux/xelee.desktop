@@ -2,7 +2,7 @@
 Type=Application
 Name=Xelee
 Comment=Native PC port of Super Smash Bros. Melee
-Exec=melee %f
+Exec=xelee %f
 Icon=xelee
 Terminal=false
 Categories=Game;ActionGame;

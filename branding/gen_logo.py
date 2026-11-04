@@ -9,6 +9,13 @@ Run it to rewrite the SVGs beside it; the PNG is
 and the Android app icon (platforms/android/app/src/main/res/mipmap/icon.png) is
     magick xelee-badge-1024.png -trim +repage -resize 472x472 -gravity center \
         -background none -extent 512x512 icon.png
+The desktop icons come from the same PNG with the same framing (the badge
+trimmed, 92% of a transparent square), with Pillow:
+    platforms/linux/xelee.png     512 px (AppImage, tarball)
+    platforms/windows/xelee.ico   16-256 px (the exe, via xelee.rc)
+    platforms/macos/xelee.icns    16-1024 px (Xelee.app)
+    resources/xelee-icon.png      128 px (the window icon, src/pc/window_icon.c;
+                                  X11 dropped a 256 px one)
 """
 import os
 

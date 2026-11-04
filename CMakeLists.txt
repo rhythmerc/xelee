@@ -385,6 +385,7 @@ set(PC_SOURCES
         src/pc/widescreen.c
         src/pc/xr_scene.c
         src/pc/xr_place.c
+        src/pc/window_icon.c
         src/pc/xr_calibrate.c
         src/pc/room_chime.c
         src/pc/xr_pointer.c
@@ -513,8 +514,8 @@ if (WIN32)
     else ()
         target_link_options(melee PRIVATE -static-libstdc++ -static-libgcc -Wl,--image-base,0x10000000 -Wl,--disable-dynamicbase -Wl,--disable-high-entropy-va -Wl,-u,WinMain)
     endif ()
-    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/platforms/windows/melee.rc")
-        target_sources(melee PRIVATE platforms/windows/melee.rc)
+    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/platforms/windows/xelee.rc")
+        target_sources(melee PRIVATE platforms/windows/xelee.rc)
     endif ()
     include("${CMAKE_CURRENT_SOURCE_DIR}/extern/aurora/cmake/AuroraCopyRuntimeDLLs.cmake" OPTIONAL)
     if (COMMAND aurora_copy_runtime_dlls)

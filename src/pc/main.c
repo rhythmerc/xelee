@@ -429,6 +429,7 @@ static void usage(const char* argv0) {
 }
 
 #include "pc/input_poll.h"
+#include "pc/window_icon.h"
 #include "pc/net.h"
 #include "pc/net_match.h"
 #include "pc/xeleenet.h"
@@ -809,6 +810,7 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
     /* Before aurora_initialize -> SDL_Init(JOYSTICK): claims the GC adapter's
      * hidapi hint so SDL's rescaling driver leaves it for our raw path. */
     pc_gcadapter_init();
+    pc_app_identity(&config, config.resourcesPath);
     pc_launcher_configure(&config);
     pc_fight_map_configure(config.userPath);
 
