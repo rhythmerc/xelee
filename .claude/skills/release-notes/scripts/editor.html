@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Xelee release notes</title>
+<style>
+:root{--bg:#0d1020;--panel:#171c34;--line:#2c3560;--text:#e8ecf8;--dim:#99a3c4;--accent:#ffd34d;--ok:#3ddc84}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,sans-serif}
+header{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+header h1{font-size:16px;margin:0 auto 0 0}
+button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:8px;padding:6px 12px}
+button.on{background:var(--accent);color:#222;border-color:var(--accent);font-weight:600}
+button.save{background:#1e5a3a;border-color:#2c7a50}
+button.save.dirty{background:var(--ok);color:#06210f;font-weight:700}
+#status{font-size:12px;color:var(--dim);width:100%}
+main{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px;max-width:1300px;margin:0 auto}
+@media (max-width:800px){main{grid-template-columns:1fr}main.edit #preview,main.preview #ed{display:none}}
+@media (min-width:801px){.tabs{display:none}}
+textarea{width:100%;min-height:75vh;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:12px;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+#preview{background:#fff;color:#1f2328;border-radius:10px;padding:4px 18px 18px;min-height:75vh;overflow-wrap:anywhere}
+#preview h2{border-bottom:1px solid #d0d7de;padding-bottom:.3em}
+#preview code{background:#eff1f3;padding:.1em .35em;border-radius:5px;font-size:90%}
+#preview a{color:#0969da}
+details{max-width:1300px;margin:0 auto;padding:0 12px}
+details>div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:4px 14px;margin-bottom:8px}
+summary{cursor:pointer;color:var(--accent);padding:8px 0}
+.hist a{color:#9fb4ff;display:block;padding:3px 0}
+</style></head><body>
+<header>
+  <h1>Xelee · release notes</h1>
+  <span class="tabs"><button id="tEdit" class="on">Edit</button> <button id="tPrev">Preview</button></span>
+  <button id="save" class="save">Save</button>
+  <div id="status">Loading…</div>
+</header>
+
+<details open id="cn" hidden><summary>Claude's notes on this draft</summary><div id="cnBody"></div></details>
+
+<main id="main" class="edit">
+  <textarea id="ed" spellcheck="true"></textarea>
+  <article id="preview"></article>
+</main>
+
+<details><summary>Earlier saves</summary><div class="hist" id="hist">None yet.</div></details>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script>
+const ed=document.getElementById('ed'),pv=document.getElementById('preview'),st=document.getElementById('status'),sv=document.getElementById('save');
+let saved='';
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function render(){pv.innerHTML=window.marked?marked.parse(ed.value):'<pre>'+esc(ed.value)+'</pre>'}
+function dirty(){const d=ed.value!==saved;sv.classList.toggle('dirty',d);return d}
+async function load(){
+  const r=await fetch('notes.md',{cache:'no-store'});saved=await r.text();
+  const local=localStorage.getItem('xelee-notes-draft');
+  ed.value=(local&&local!==saved&&confirm('You have unsaved edits from earlier on this device. Restore them?'))?local:saved;
+  render();dirty();st.textContent='Loaded. Saves go straight to the file Claude reads.';hist();
+}
+async function save(){
+  st.textContent='Saving…';
+  try{const r=await fetch('save',{method:'POST',body:ed.value});const j=await r.json();
+    saved=ed.value;localStorage.removeItem('xelee-notes-draft');dirty();st.textContent='Saved at '+j.saved+'.';hist();}
+  catch(e){st.textContent='Save failed: '+e+'. Your text is kept on this device.'}
+}
+async function claudeNotes(){
+  const r=await fetch('claude-notes.md',{cache:'no-store'});if(!r.ok)return;
+  const t=await r.text();if(!t.trim())return;
+  document.getElementById('cnBody').innerHTML=window.marked?marked.parse(t):'<pre>'+esc(t)+'</pre>';
+  document.getElementById('cn').hidden=false;
+}
+async function hist(){
+  const r=await fetch('history',{cache:'no-store'});const l=await r.json();
+  document.getElementById('hist').innerHTML=l.length?l.map(f=>'<a href="history/'+f+'" target="_blank">'+f+'</a>').join(''):'None yet.';
+}
+let t;ed.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(render,250);localStorage.setItem('xelee-notes-draft',ed.value);if(dirty())st.textContent='Unsaved changes.'});
+sv.onclick=save;
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();save()}});
+const m=document.getElementById('main'),te=document.getElementById('tEdit'),tp=document.getElementById('tPrev');
+te.onclick=()=>{m.className='edit';te.classList.add('on');tp.classList.remove('on')};
+tp.onclick=()=>{render();m.className='preview';tp.classList.add('on');te.classList.remove('on')};
+window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue=''}});
+load();claudeNotes();
+</script>
+</body></html>
