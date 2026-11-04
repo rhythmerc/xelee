@@ -26,6 +26,7 @@ A new team mode on Hyrule Temple: grab the other team's flag and bring it back t
 - Lobby Settings changes apply about a second sooner.
 - Leaving mid-match now sends everyone back to the character select screen instead of a stuck No Contest.
 - Name tag selection disabled in XeleeNet (unintended feature that crashed sessions. Name is now locked to XeleeNet name as intended)
+- Run rollback snapshots every 3 frames instead of every 1 frame to lighten CPU load in heavy netplay fights
 
 ### GameCube adapter
 
