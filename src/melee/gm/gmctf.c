@@ -15,9 +15,12 @@
  *   MELEE_DEBUG_CTF_FLAG=1|x,y    one stray flag, outside a CTF match (M0)
  *   MELEE_DEBUG_CTF_TEAM=0|1      that stray flag's team
  *   MELEE_DEBUG_CTF_LOG=N         port 1's and the flags' state every N frames
+ *   MELEE_DEBUG_CTF_AI_LOG=1      event lines for tools/ctf_ai_test.py ("ctfev:"):
+ *                                 pickups, throws, drops, returns, KOs, stuck CPUs
  *   MELEE_DEBUG_CTF_SURVEY=1      the stage's collision, bounds and points */
 
 #include "gmctf.h"
+#include "gmctfai.h"
 
 #include <Runtime/platform.h>
 
@@ -94,6 +97,18 @@ static const CtfLayout ctf_layouts[] = {
 /* MELEE_DEBUG_CTF_BASES: stands placed by a test, zones and spawns around them. */
 static CtfLayout ctf_debug_layout;
 
+/* getenv scans the whole environment, and ctf_layout runs several times a
+ * frame for each CPU player (gmCtf_Active, the bases): read it once. The
+ * same on every peer, so the snapshot holding it is harmless. */
+static const char* ctf_env(const char* name, const char** cache, bool* have)
+{
+    if (!*have) {
+        *cache = getenv(name);
+        *have = true;
+    }
+    return *cache;
+}
+
 /* READY's length: the camera frames both bases and the beams stand. */
 #define CTF_READY_FRAMES 150
 
@@ -126,13 +141,16 @@ static struct {
     HSD_GObj* stray;   /* MELEE_DEBUG_CTF_FLAG's flag */
     CmSubject* cam[2]; /* READY: the camera frames both bases too */
     bool stray_spawned;
+    s8 last_holder[2]; /* the flag's carrier's port last tick, or -1 (ctf_events) */
 } ctf;
 
 /* ---- helpers ------------------------------------------------------------- */
 
 static const CtfLayout* ctf_layout(void)
 {
-    const char* env = getenv("MELEE_DEBUG_CTF_BASES");
+    static const char* bases_env;
+    static bool bases_have;
+    const char* env = ctf_env("MELEE_DEBUG_CTF_BASES", &bases_env, &bases_have);
     int i;
     if (env != NULL) {
         float v[4];
@@ -293,6 +311,10 @@ static void ctf_update_flags(void)
             ip->xDD4_itemVar.ctfflag.return_left = 0;
             if (ctf_team_of_fighter(holder) == team) {
                 /* Your own team picked it up away from home: it goes home. */
+                if (gmCtf_EventLog()) {
+                    OSReport("ctfev: f%d return p%d flag%d at %.0f %.0f\n", ctf.frame,
+                             GET_FIGHTER(holder)->player_idx, team, pos.x, pos.y);
+                }
                 ctf_send_home(team, "returned by its team");
             } else {
                 ctf.home[team] = false;
@@ -349,6 +371,36 @@ static void ctf_check_captures(void)
             ctf.winner = (s8) team;
             OSReport("ctf: f%d %s wins\n", ctf.frame, team ? "blue" : "red");
         }
+    }
+}
+
+/* The tools' event lines (tools/ctf_ai_test.py): who lifts a flag and how
+ * it is let go, a throw or a drop. The only state is last tick's carrier. A
+ * send-home (a capture, a return) lets go too, but leaves the flag home: no
+ * line, the send-home logs its own. */
+static void ctf_events(void)
+{
+    int team;
+    for (team = 0; team < 2; team++) {
+        HSD_GObj* holder = NULL;
+        Vec3 pos = { 0.0f, 0.0f, 0.0f };
+        const bool present = ctf_flag_pos(ctf.flag[team], &pos, &holder);
+        const int now = holder != NULL ? GET_FIGHTER(holder)->player_idx : -1;
+        if (now == ctf.last_holder[team]) {
+            continue;
+        }
+        if (gmCtf_EventLog()) {
+            if (ctf.last_holder[team] >= 0 && present && !ctf.home[team]) {
+                OSReport("ctfev: f%d release p%d flag%d %s at %.0f %.0f\n", ctf.frame, ctf.last_holder[team],
+                         team, GET_ITEM(ctf.flag[team])->xDD4_itemVar.ctfflag.thrown ? "throw" : "drop", pos.x,
+                         pos.y);
+            }
+            if (now >= 0) {
+                OSReport("ctfev: f%d pickup p%d team%d flag%d at %.0f %.0f\n", ctf.frame, now,
+                         ctf_team_of_slot(now), team, pos.x, pos.y);
+            }
+        }
+        ctf.last_holder[team] = (s8) now;
     }
 }
 
@@ -599,9 +651,15 @@ static void ctf_tick(HSD_GObj* gobj)
     if (gmCtf_Active()) {
         ctf_update_flags();
         ctf_check_captures();
+        ctf_events();
     }
     ctf_update_carriers();
     ctf_debug_log();
+    if (gmCtf_Active()) {
+        /* The CPU players' plans, from this tick's outcome, for the next
+         * tick's AI (Fighter_procCpu runs before this process). */
+        gmCtfAi_Tick();
+    }
 }
 
 #endif /* TARGET_PC */
@@ -647,6 +705,8 @@ void gmCtf_MatchInit(void)
 #ifdef TARGET_PC
     memset(&ctf, 0, sizeof ctf);
     ctf.winner = -1;
+    ctf.last_holder[0] = ctf.last_holder[1] = -1;
+    gmCtfAi_MatchInit();
     if (gmCtf_Active() || getenv("MELEE_DEBUG_CTF_LOG") != NULL || getenv("MELEE_DEBUG_CTF_FLAG") != NULL ||
         getenv("MELEE_DEBUG_CTF_SURVEY") != NULL)
     {
@@ -827,8 +887,63 @@ u32 gmCtf_Checksum(void)
         h = h * 31u + (u32) (s32) (pos.x * 16.0f);
         h = h * 31u + (u32) (s32) (pos.y * 16.0f);
     }
+    /* The CPU players' plans too, so a split shows on the frame they part
+     * (docs/ctf-ai-plan.md §5.2 rule 8). */
+    h = h * 31u + gmCtfAi_Checksum();
     return h * 31u + (u32) (ctf.winner + 1);
 #else
     return 0;
 #endif
 }
+
+#ifdef TARGET_PC
+
+int gmCtf_TeamOfSlot(int slot)
+{
+    return ctf_team_of_slot(slot);
+}
+
+HSD_GObj* gmCtf_FlagItem(int team)
+{
+    return ctf.flag[team & 1];
+}
+
+bool gmCtf_FlagWhere(int team, Vec3* pos, int* holder, bool* home)
+{
+    HSD_GObj* h;
+    if (!ctf_flag_pos(ctf.flag[team & 1], pos, &h)) {
+        return false;
+    }
+    *holder = h != NULL ? GET_FIGHTER(h)->player_idx : -1;
+    *home = ctf.home[team & 1];
+    return true;
+}
+
+void gmCtf_Base(int team, Vec2* stand, float* zone_l, float* zone_r, float* zone_b, float* zone_t)
+{
+    const CtfBase* b = ctf_base(team);
+    *stand = b->stand;
+    *zone_l = b->zone.l;
+    *zone_r = b->zone.r;
+    *zone_b = b->zone.b;
+    *zone_t = b->zone.t;
+}
+
+bool gmCtf_HomeRequired(void)
+{
+    return ctf_rules.home_required != 0;
+}
+
+int gmCtf_Frame(void)
+{
+    return ctf.frame;
+}
+
+bool gmCtf_EventLog(void)
+{
+    static const char* env;
+    static bool have;
+    return ctf_env("MELEE_DEBUG_CTF_AI_LOG", &env, &have) != NULL;
+}
+
+#endif

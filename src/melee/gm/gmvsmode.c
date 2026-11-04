@@ -235,15 +235,16 @@ static void fillDebugVs(GameModeState* state, UNUSED bool dummy)
     if (getenv("MELEE_DEBUG_VS") != NULL && strcmp(getenv("MELEE_DEBUG_VS"), "cpu") == 0) {
         start->players[1].slot_type = Gm_PKind_Cpu;
     } else if (getenv("MELEE_DEBUG_VS") != NULL && (strcmp(getenv("MELEE_DEBUG_VS"), "cpu4") == 0 ||
+                                                     strcmp(getenv("MELEE_DEBUG_VS"), "cpu3") == 0 ||
                                                      strcmp(getenv("MELEE_DEBUG_VS"), "cpu2") == 0)) {
         /* Four CPUs fighting each other: the worst-case scene for a
          * frame-time gate, with no input needed to keep it busy. cpu2: two
          * of them, the common singles fight (cpu leaves player 1 an idle
-         * human). */
+         * human); cpu3: three (CTF's 2v1, tools/ctf_ai_test.py). */
         CharacterKind kinds[4] = {
             CKind_Link, CKind_Mario, CKind_Fox, CKind_Donkey,
         };
-        const int n = strcmp(getenv("MELEE_DEBUG_VS"), "cpu2") == 0 ? 2 : 4;
+        const int n = getenv("MELEE_DEBUG_VS")[3] - '0';
         /* MELEE_DEBUG_VS_CHARS=<k,k,...>: other fighters (CharacterKind
          * numbers), e.g. for a pipeline sweep of the whole cast. */
         if (getenv("MELEE_DEBUG_VS_CHARS") != NULL) {
@@ -287,12 +288,43 @@ static void fillDebugVs(GameModeState* state, UNUSED bool dummy)
             start->rules.time_limit = (u32) minutes * 60; /* seconds */
         }
     }
+    /* "9,1,9,1": a level per port (a CTF level ladder, tools/ctf_ai_test.py);
+     * one number sets every port. */
     if (getenv("MELEE_DEBUG_VS_CPU_LEVEL") != NULL) {
-        int level = atoi(getenv("MELEE_DEBUG_VS_CPU_LEVEL"));
-        if (level >= 1 && level <= 9) {
-            for (i = 0; i < Gm_Player_NumMax; i++) {
+        const char* p = getenv("MELEE_DEBUG_VS_CPU_LEVEL");
+        int level = 0;
+        for (i = 0; i < Gm_Player_NumMax; i++) {
+            if (*p != '\0') {
+                char* end;
+                level = (int) strtol(p, &end, 10);
+                p = *end == ',' ? end + 1 : end;
+            }
+            if (level >= 1 && level <= 9) {
                 start->players[i].cpu_level = (u8) level;
             }
+        }
+    }
+    /* MELEE_DEBUG_VS_SLOTS=<c|h|- per port>, e.g. "cchc": who plays each
+     * port (CPU, an idle or scripted human, nobody), after MELEE_DEBUG_VS;
+     * the fighters are MELEE_DEBUG_VS_CHARS' or Link, Mario, Fox, DK. */
+    if (getenv("MELEE_DEBUG_VS_SLOTS") != NULL) {
+        static const CharacterKind dflt[4] = { CKind_Link, CKind_Mario, CKind_Fox, CKind_Donkey };
+        const char* slots = getenv("MELEE_DEBUG_VS_SLOTS");
+        const char* p = getenv("MELEE_DEBUG_VS_CHARS");
+        for (i = 0; i < 4 && slots[i] != '\0'; i++) {
+            CharacterKind k = dflt[i];
+            if (p != NULL && *p != '\0') {
+                char* end;
+                const long v = strtol(p, &end, 0);
+                if (end != p && v >= 0 && v < CKind_Playable_Count) {
+                    k = (CharacterKind) v;
+                }
+                p = *end == ',' ? end + 1 : end;
+            }
+            start->players[i].ckind = k;
+            start->players[i].slot_type = slots[i] == 'c'   ? Gm_PKind_Cpu
+                                          : slots[i] == 'h' ? Gm_PKind_Human
+                                                            : Gm_PKind_NA;
         }
     }
     /* MELEE_DEBUG_VS_ITEMS=<0-4>: items on, very low to very high (off by
@@ -348,6 +380,14 @@ static void fillDebugVs(GameModeState* state, UNUSED bool dummy)
         start->rules.is_teams = true;
         for (i = 0; i < Gm_Player_NumMax; i++) {
             start->players[i].team = (u8) (i & 1);
+        }
+        /* MELEE_DEBUG_CTF_TEAMS=<0|1 per port>, e.g. "0001": red or blue by
+         * port instead of by parity (a 3v1). */
+        if (getenv("MELEE_DEBUG_CTF_TEAMS") != NULL) {
+            const char* t = getenv("MELEE_DEBUG_CTF_TEAMS");
+            for (i = 0; i < Gm_Player_NumMax && t[i] != '\0'; i++) {
+                start->players[i].team = (u8) (t[i] == '1');
+            }
         }
         if (!start->rules.timer_enabled && getenv("MELEE_DEBUG_CTF_NOTIME") == NULL) {
             start->rules.timer_enabled = 1; /* MELEE_DEBUG_CTF_NOTIME: no time limit */

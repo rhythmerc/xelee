@@ -107,6 +107,7 @@ static void flag_spawned(Item_GObj* gobj)
     Item* ip = GET_ITEM(gobj);
     ip->xDD4_itemVar.ctfflag.team = 0; /* the spawner sets the real team */
     ip->xDD4_itemVar.ctfflag.return_left = 0;
+    ip->xDD4_itemVar.ctfflag.thrown = 0;
     Item_80268E5C(gobj, ip->ground_or_air == GA_Air ? FLAG_FALL : FLAG_GROUND, ITEM_ANIM_UPDATE);
 }
 
@@ -125,6 +126,7 @@ static void flag_picked_up(Item_GObj* gobj)
 static void flag_dropped(Item_GObj* gobj)
 {
     Item_80268E5C(gobj, FLAG_THROWN, 6);
+    GET_ITEM(gobj)->xDD4_itemVar.ctfflag.thrown = 0;
     OSReport("ctf: flag dropped\n");
 }
 
@@ -132,6 +134,7 @@ static void flag_thrown(Item_GObj* gobj)
 {
     Item* ip = GET_ITEM(gobj);
     Item_80268E5C(gobj, FLAG_THROWN, 6);
+    ip->xDD4_itemVar.ctfflag.thrown = 1;
     /* Item_8026AD20 set the launch velocity just before this callback: a
      * shorter throw, the same arc time (CTF_FLAG_THROW_SPEED). */
     ip->x40_vel.x *= CTF_FLAG_THROW_SPEED;

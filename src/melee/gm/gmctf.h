@@ -68,4 +68,24 @@ int gmCtf_TeamScore(int melee_team);
 /* The CTF state folded into the per-frame netplay checksum (0 when off). */
 u32 gmCtf_Checksum(void);
 
+/* ---- for the CPU players (gmctfai.c): read-only views of the rules' state.
+ * Teams are 0 red, 1 blue. Never keep a flag's item across ticks: every
+ * send-home destroys it and spawns a new one (ctf_send_home). */
+
+/* The CTF team a port plays for. */
+int gmCtf_TeamOfSlot(int slot);
+/* A team's flag item now, or NULL for the frame after a loss. */
+HSD_GObj* gmCtf_FlagItem(int team);
+/* Where a team's flag is (its carrier's position while carried), its
+ * carrier's port or -1, and whether it is home. False while it is gone. */
+bool gmCtf_FlagWhere(int team, Vec3* pos, int* holder, bool* home);
+/* A team's stand and capture zone, after this game's side swap. */
+void gmCtf_Base(int team, Vec2* stand, float* zone_l, float* zone_r, float* zone_b, float* zone_t);
+/* Your own flag must be home to score. */
+bool gmCtf_HomeRequired(void);
+/* The CTF tick's frame counter (1 on the first tick of a match). */
+int gmCtf_Frame(void);
+/* The tools' event lines (MELEE_DEBUG_CTF_AI_LOG): pickups, throws, KOs. */
+bool gmCtf_EventLog(void);
+
 #endif
