@@ -294,9 +294,11 @@ void gm_Scene_Title_OnFrame(void)
     frame_count++;
 #ifdef TARGET_PC
     /* No attract demo in XR: a fight springing up unasked in the room is
-     * jarring, and it would be held for placing its stage. */
+     * jarring, and it would be held for placing its stage. Nor in netplay
+     * (or a recording): the title is part of the shared sim there, and
+     * every machine must make the same call, headset or not. */
     if (getenv("MELEE_NO_ATTRACT") != NULL || pc_boot_scene() == GM_ONLINE ||
-        pc_xr_presenting())
+        pc_xr_presenting() || pc_net_deterministic())
     {
         if (frame_count > 600) {
             frame_count = 0;
@@ -312,8 +314,10 @@ void gm_Scene_Title_OnFrame(void)
 
 #ifdef TARGET_PC
     /* In XR, A starts too: a click on the screen (pc/xr_pointer.h) is A,
-     * and bare hands have no Start. */
-    if (pc_xr_presenting() && (input & HSD_PAD_A)) {
+     * and bare hands have no Start. Not in netplay (or a recording): only
+     * the headset would take it, and leave the title alone (a Quest in a
+     * direct session left it on frame 4, and the session, 2026-11-04). */
+    if (pc_xr_presenting() && !pc_net_deterministic() && (input & HSD_PAD_A)) {
         input = (input & ~HSD_PAD_A) | HSD_PAD_START;
     }
 #endif
