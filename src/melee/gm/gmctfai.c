@@ -69,8 +69,9 @@ enum {
     ROLE_RETURN,
     ROLE_CARRY,
     ROLE_ESCORT,
+    ROLE_STOCK, /* stock VS play this plan (a weak bot's lapse of focus) */
 };
-static const char* const ai_role_name[] = { "none", "attack", "defend", "hunt", "return", "carry", "escort" };
+static const char* const ai_role_name[] = { "none", "attack", "defend", "hunt", "return", "carry", "escort", "stock" };
 
 /* The flag situation, from one team's side (plan §4.1's rows). Their flag
  * free is played as their flag home: attackers fetch it either way. */
@@ -92,6 +93,7 @@ static const Vec2 ai_guard_temple[2] = { { -85.0f, -88.6f }, { 180.0f, -6.1f } }
 
 static struct {
     u8 role[4];
+    u8 hrole[4];        /* a human's role as the planner reads it (plan §4.9) */
     u8 sit[2];          /* the situation the team last planned for */
     bool avail[4];      /* last plan's idea of who could play */
     int plan_at[2];     /* the team plans again on this frame */
@@ -420,7 +422,8 @@ static void ai_plan(int team, int frame)
     static const u8 order[] = { ROLE_RETURN, ROLE_DEFEND, ROLE_HUNT, ROLE_ESCORT, ROLE_ATTACK };
     CtfAiFlag own, theirs;
     u8 roles[3];
-    int bots[4], nbots = 0, carrier = -1;
+    bool used[3] = { false, false, false };
+    int bots[4], nbots = 0, carrier = -1, humans = 0;
     bool taken[4] = { false, false, false, false };
     int n, i, k, slot, sit;
     const int level = ai_team_level(team);
@@ -431,7 +434,27 @@ static void ai_plan(int team, int frame)
     ai.sit[team] = (u8) sit;
     for (slot = 0; slot < 4; slot++) {
         Fighter* fp = ai_fighter(slot);
-        if (fp == NULL || !ai_is_cpu(slot) || gmCtf_TeamOfSlot(slot) != team) {
+        if (fp == NULL || gmCtf_TeamOfSlot(slot) != team || fp->is_sub_fighter) {
+            continue;
+        }
+        if (!ai_is_cpu(slot)) {
+            /* Humans are counted, not ordered (plan §4.9): a role read from
+             * what they do, with a margin so it doesn't flicker. */
+            if (!ai_alive(fp)) {
+                ai.hrole[slot] = ROLE_NONE;
+                continue;
+            }
+            humans++;
+            if (slot == theirs.holder) {
+                ai.hrole[slot] = ROLE_CARRY;
+            } else {
+                const float d = ai_dist(&fp->cur_pos, own.stand.x, own.stand.y);
+                if (d < CTFAI_GUARD_RADIUS || (ai.hrole[slot] == ROLE_DEFEND && d < 90.0f)) {
+                    ai.hrole[slot] = ROLE_DEFEND;
+                } else {
+                    ai.hrole[slot] = ROLE_ATTACK;
+                }
+            }
             continue;
         }
         ai.avail[slot] = ai_alive(fp);
@@ -449,13 +472,36 @@ static void ai_plan(int team, int frame)
     if (nbots == 0) {
         return;
     }
-    n = ai_table(sit, nbots + (carrier >= 0 ? 1 : 0), level,
+    n = ai_table(sit, nbots + humans + (carrier >= 0 ? 1 : 0), level,
                  level >= 7 && frame - ai.scored_at[team] >= ai_flip_frames(level), roles);
-    /* The carrier's row entry is the carrier's; a carrier who isn't a bot of
-     * ours (a human, later) takes it the same way. */
+    /* The carrier's row entry is the carrier's, bot or human. */
     k = 0;
     if (theirs.holder >= 0 && gmCtf_TeamOfSlot(theirs.holder) == team) {
         k = 1;
+    }
+    /* A human's role is taken first: bots fill the rest of the row and never
+     * take the human's goal (plan §4.9). */
+    for (slot = 0; slot < 4; slot++) {
+        int j;
+        if (ai_is_cpu(slot) || ai_fighter(slot) == NULL || gmCtf_TeamOfSlot(slot) != team ||
+            slot == theirs.holder || ai.hrole[slot] == ROLE_NONE)
+        {
+            continue;
+        }
+        for (j = k; j < n; j++) {
+            if (!used[j] && roles[j] == ai.hrole[slot]) {
+                used[j] = true;
+                break;
+            }
+        }
+    }
+    /* No teamwork at levels 1-2: every bot attacks (plan §4.8). */
+    if (level <= 2) {
+        for (i = k; i < n; i++) {
+            if (roles[i] != ROLE_RETURN) {
+                roles[i] = ROLE_ATTACK;
+            }
+        }
     }
     /* A lone bot returns our flag only if it beats every enemy to it, and
      * hunts their carrier only if it is near (plan §4.1's 1-bot column). */
@@ -474,7 +520,7 @@ static void ai_plan(int team, int frame)
         for (j = k; j < n; j++) {
             float best = 1e30f;
             int pick = -1, b;
-            if (roles[j] != order[i]) {
+            if (roles[j] != order[i] || used[j]) {
                 continue;
             }
             for (b = 0; b < nbots; b++) {
@@ -503,6 +549,16 @@ static void ai_plan(int team, int frame)
     for (i = 0; i < nbots; i++) {
         if (!taken[i]) {
             ai_set_role(bots[i], ROLE_ATTACK, frame);
+        }
+    }
+    /* Objective focus (plan §4.8): below level 7 a share of plans leaves a
+     * bot to stock VS play, fighting the nearest enemy; 0.4 at level 1, 0.8
+     * at 5. A free flag of ours is always fetched. */
+    if (level < 7) {
+        for (i = 0; i < nbots; i++) {
+            if (ai.role[bots[i]] != ROLE_RETURN && ai_rand(team, 10) >= 3 + level) {
+                ai_set_role(bots[i], ROLE_STOCK, frame);
+            }
         }
     }
 }
@@ -1069,6 +1125,8 @@ static bool ai_think(Fighter* fp, GmCtfAiOrder* o)
         return ai_hunt(fp, team, &own, &theirs, o);
     case ROLE_ESCORT:
         return ai_escort(fp, team, &own, &theirs, o);
+    case ROLE_STOCK:
+        return false;
     case ROLE_ATTACK:
     case ROLE_CARRY: /* stale: the plan hasn't seen the flag go yet */
     default:
