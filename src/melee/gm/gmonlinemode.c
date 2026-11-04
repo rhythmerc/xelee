@@ -1182,6 +1182,21 @@ void onEnterVs(GameModeState* state)
 #ifdef TARGET_PC
     pc_log_line("online: enter VS at frame %d", pc_net_frame());
     pc_xn_set_playing(true);
+    if (online_kind == ONLINE_KIND_XN) {
+        /* Who plays: a person or a CPU (its level), the fighter and the team
+         * (tools/net_test_xn_menu.py --scenario cpus). */
+        char line[128];
+        int o = 0;
+        for (int i = 0; i < 4; i++) {
+            const PlayerInitData* p = &online_vs.start.players[i];
+            if (p->slot_type == Gm_PKind_Human || p->slot_type == Gm_PKind_Cpu) {
+                o += snprintf(line + o, sizeof line - o, " P%d:%s%d/%d/t%d", i + 1,
+                              p->slot_type == Gm_PKind_Cpu ? "cpu" : "hmn",
+                              p->slot_type == Gm_PKind_Cpu ? p->cpu_level : 0, p->ckind, p->team);
+            }
+        }
+        pc_log_line("online: XeleeNet match%s", line);
+    }
 #endif
 #ifdef TARGET_PC
     PcNetSlippiMatch sm;
