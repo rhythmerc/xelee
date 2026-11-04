@@ -2905,7 +2905,16 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                             mnCharSel_8025FB50(cursor->x4, 1);
                         }
                     }
-                    if (mnCharSel_803F0DFC.doors[cursor->x4].p_kind == 0) {
+                    if (mnCharSel_803F0DFC.doors[cursor->x4].p_kind == 0
+#ifdef TARGET_PC
+                        /* XeleeNet: a person whose seat went (left, or a
+                         * pad gave it up) never turns into a CPU, which
+                         * the lobby would keep (docs/xeleenet-cpus-plan.md);
+                         * the next session's CSS shuts the door. */
+                        && !gmOnline_XnFlow()
+#endif
+                    )
+                    {
                         mnCharSel_803F0DFC.doors[cursor->x4].p_kind = 1;
                         mnCharSel_804D6CB0->vs.start.players[cursor->x4]
                             .slot_type = 1;
