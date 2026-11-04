@@ -5165,11 +5165,52 @@ static bool take_refuse_test(void) {
  * (the frame cannot be rolled back to anyway); when the buffer cannot be
  * grown, disable further prediction without invalidating older snapshots.
  * The caller must wait for real input before running this frame. */
+/* MELEE_NET_SNAP_EVERY=K (default 3; 1 is one per predicted frame, the
+ * Slippi cadence): a predicted frame takes a snapshot only when the
+ * newest one still standing is K or more frames old; a rollback to a frame
+ * without one restores the newest before it and re-runs the frames between
+ * (rollback_to), whose inputs it already has. A take copies the whole state
+ * (7.7 MB in a fight) and a re-run took one for nearly every frame it
+ * re-ran: on the headset, over half of a rollback frame's game-thread time
+ * (tools/quest_net_bench.py, 2026-11-04), against ~0.7 ms per re-run tick.
+ * Measured there: every-frame 51.5 fps vs K=3 54.8 with every link at
+ * 95 +-40 ms, the same within noise on lighter links; no desyncs. */
+static int snap_every(void) {
+    static int k = -1;
+    if (k < 0) {
+        const char* e = getenv("MELEE_NET_SNAP_EVERY");
+        k = e != NULL ? atoi(e) : 3;
+        if (k < 1) {
+            k = 1;
+        }
+        if (k > SNAPS / 2) {
+            k = SNAPS / 2;
+        }
+        pc_log_line("net: a snapshot every %d predicted frames (MELEE_NET_SNAP_EVERY)", k);
+    }
+    return k;
+}
+static unsigned s_takes_skipped;
+
 static bool snap_predicted(int32_t f) {
-    Snapshot* s = snap_slot(f);
     if (s_lockstep || f <= net.rb_barrier || scene_exit_lockstep(f)) {
         return false;
     }
+    if (snap_every() > 1) {
+        /* A snapshot on this timeline no more than K - 1 frames back covers
+         * this frame: a rollback to it re-runs from there. Any older copy of
+         * f itself was taken on a timeline since replaced. */
+        Snapshot* prev = snap_newest(f - snap_every() + 1, f - 1);
+        if (prev != NULL && prev->frame > net.rb_barrier && snapshot_unusable(prev) == NULL) {
+            Snapshot* own = snap_find(f);
+            if (own != NULL) {
+                own->frame = -1;
+            }
+            s_takes_skipped++;
+            return true;
+        }
+    }
+    Snapshot* s = snap_slot(f);
     if (take_refuse_test()) {
         s->frame = -1; /* what snapshot_take does when it refuses */
         return false;
@@ -5445,10 +5486,18 @@ static bool resim_prepare(int32_t f) {
 }
 
 static bool rollback_to(int32_t f) {
-    Snapshot* s = snap_slot(f);
-    const char* why = s->buf == NULL || s->frame != f ? "no snapshot" :
-                      f <= net.rb_barrier             ? "behind the barrier" :
-                                                        snapshot_unusable(s);
+    Snapshot* s = snap_find(f);
+    if (s == NULL && snap_every() > 1) {
+        /* Sparse snapshots (snap_every): the newest one before f, and the
+         * frames between it and f re-run on the inputs they already had. */
+        s = snap_newest(net.rb_barrier + 1, f - 1);
+        if (s != NULL) {
+            f = s->frame;
+        }
+    }
+    const char* why = s == NULL || s->buf == NULL || s->frame != f ? "no snapshot" :
+                      f <= net.rb_barrier                          ? "behind the barrier" :
+                                                                     snapshot_unusable(s);
     if (why != NULL) {
         /* The misprediction stays in the timeline: the peers have diverged
          * unless the inputs happened to match. Everything simulated so far
@@ -5462,6 +5511,8 @@ static bool rollback_to(int32_t f) {
         return false;
     }
     int depth = simulated_upto() - f + 1;
+    /* Every later snapshot holds the timeline being replaced. */
+    snap_drop_after(f);
     /* The pad queue and its bookkeeping sit inside the snapshot but belong
      * to the present: keep the live copy so raw samples queued since the
      * snapshot survive, and the re-run ticks consume slots unconsume() hands
@@ -6026,6 +6077,11 @@ static void fresh_tick(PADStatus* head, bool raw) {
         stats_peers_report();
         SDL_UnlockMutex(s_rx_lock);
         snap_stats_report();
+        if (s_takes_skipped != 0) {
+            pc_log_line("net:   snapshot takes skipped (a snapshot every %d frames) %u", snap_every(),
+                s_takes_skipped);
+            s_takes_skipped = 0;
+        }
         sfx_stats_report();
     }
 #ifdef MELEE_FP_PERTURB_NAME
@@ -6287,6 +6343,10 @@ static void audit_after_run2(void) {
 }
 
 bool pc_net_after_tick(bool scene_ending) {
+    extern unsigned long long pc_net_resim_ticks_total;
+    if (net.resim) {
+        pc_net_resim_ticks_total++; /* frame_probe.c: re-run ticks per present */
+    }
     s_aj_on = false; /* the tick is over: later audio queries are not its own */
     net_sfx_end();
     head_check(); /* did this tick consume the inputs write_head wrote? */
@@ -6329,8 +6389,8 @@ bool pc_net_after_tick(bool scene_ending) {
              * carried the stale state into the live session (a DESYNC at
              * f4676 under --delay 50 --loss 3 --jitter, one frame after a
              * rollback to 4675). Drop it instead. */
-            Snapshot* stale = snap_slot(g);
-            if (g <= s_remote_have && stale->frame == g) {
+            Snapshot* stale = snap_find(g);
+            if (g <= s_remote_have && stale != NULL) {
                 stale->frame = -1;
             }
             s_resim_run++;
@@ -6357,7 +6417,7 @@ bool pc_net_after_tick(bool scene_ending) {
         (net.frame % AUDIT_EVERY) == 0 && net.frame != s_audit_done)
     {
         int32_t f = net.frame - s_audit_k;
-        Snapshot* s = f > 0 ? snap_slot(f) : NULL;
+        Snapshot* s = f > 0 ? snap_find(f) : NULL;
         if (s != NULL && s->frame == f && f > net.rb_barrier && snapshot_unusable(s) == NULL &&
             snapshot_take(&s_audit_after, net.frame))
         {

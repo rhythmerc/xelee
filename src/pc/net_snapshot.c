@@ -777,6 +777,11 @@ static int regions_now(Region* r) {
  * the periodic report; the *_worst pair is never reset. */
 static uint64_t s_take_ns, s_take_ns_max, s_restore_ns, s_restore_ns_max;
 static uint64_t s_take_ns_worst, s_restore_ns_worst;
+/* Running totals for the frame probe's rollback table (frame_probe.c):
+ * what one present spent on snapshots, by difference. */
+unsigned long long pc_snap_takes_total, pc_snap_restores_total, pc_snap_take_ns_total,
+    pc_snap_restore_ns_total, pc_net_resim_ticks_total;
+
 static unsigned s_takes, s_restores;
 static int s_resim_n_max;        /* re-run ticks per present, worst */
 static unsigned s_take_inflight; /* takes refused over in-flight transfers */
@@ -856,6 +861,8 @@ bool snapshot_take(Snapshot* s, int32_t frame) {
     uint64_t dt = SDL_GetTicksNS() - t0;
     s_take_ns += dt;
     s_takes++;
+    pc_snap_takes_total++;
+    pc_snap_take_ns_total += dt;
     if (dt > s_take_ns_max) {
         s_take_ns_max = dt;
     }
@@ -907,6 +914,8 @@ void snapshot_restore(const Snapshot* s) {
     uint64_t dt = SDL_GetTicksNS() - t0;
     s_restore_ns += dt;
     s_restores++;
+    pc_snap_restores_total++;
+    pc_snap_restore_ns_total += dt;
     if (dt > s_restore_ns_max) {
         s_restore_ns_max = dt;
     }
@@ -1201,8 +1210,74 @@ static uint64_t s_hash_first;
 static int s_retick; /* 0 normal, 1 first tick done, 2 retick done */
 static unsigned s_sync_fail, s_sync_skipped;
 
+/* MELEE_NET_PAGE_STATS=1 (with the sync test, which takes a snapshot every
+ * tick): which 4 KB pages of the state ever change from one tick to the next,
+ * and how many change per tick, logged every 600 frames. Measures how much
+ * of a snapshot a fight actually writes. */
+static void page_stats(const Snapshot* s) {
+    static int on = -1;
+    static uint8_t* prev;
+    static size_t prev_len;
+    static uint8_t* ever; /* one byte per page */
+    static unsigned long long changed_sum, ticks;
+    static unsigned per_tick_max;
+    if (on < 0) {
+        on = getenv("MELEE_NET_PAGE_STATS") != NULL;
+    }
+    if (!on || s->frame < 0) {
+        return;
+    }
+    const size_t pages = (s->used + 4095) / 4096;
+    if (prev == NULL || prev_len != s->used) {
+        free(prev);
+        free(ever);
+        prev = malloc(s->used);
+        ever = calloc(pages, 1);
+        prev_len = s->used;
+        memcpy(prev, s->buf, s->used);
+        changed_sum = ticks = per_tick_max = 0;
+        return;
+    }
+    unsigned changed = 0;
+    for (size_t p = 0; p < pages; p++) {
+        size_t off = p * 4096, len = s->used - off < 4096 ? s->used - off : 4096;
+        if (memcmp(prev + off, s->buf + off, len) != 0) {
+            changed++;
+            ever[p] = 1;
+        }
+    }
+    memcpy(prev, s->buf, s->used);
+    changed_sum += changed;
+    ticks++;
+    if (changed > per_tick_max) {
+        per_tick_max = changed;
+    }
+    if ((s->frame % 600) == 0) {
+        size_t ever_n = 0;
+        for (size_t p = 0; p < pages; p++) {
+            ever_n += ever[p];
+        }
+        /* By region: pages that ever changed in each. */
+        char line[700];
+        int o = 0;
+        size_t off = 0;
+        for (int i = 0; i < s->nregions; i++) {
+            size_t a = off / 4096, b = (off + s->regions[i].len + 4095) / 4096, n = 0;
+            for (size_t p = a; p < b && p < pages; p++) {
+                n += ever[p];
+            }
+            o += snprintf(line + o, sizeof line - o, " %s %zu/%zu", s->regions[i].name, n, b - a);
+            off += s->regions[i].len;
+        }
+        pc_log_line("net: page stats frame %d: %zu of %zu pages ever changed (%.2f of %.2f MB); per tick mean %.0f, max %u;%s",
+            s->frame, ever_n, pages, ever_n * 4096 / 1048576.0, s->used / 1048576.0,
+            ticks ? (double)changed_sum / ticks : 0.0, per_tick_max, line);
+    }
+}
+
 void synctest_before_tick(void) {
     snapshot_take(&s_snap, net.frame); /* frame stays -1 on failure: the retick is skipped */
+    page_stats(&s_snap);
 }
 
 bool synctest_after_tick(void) {
@@ -1245,12 +1320,64 @@ bool synctest_after_tick(void) {
 }
 
 /* ---- rollback ring ----------------------------------------------------
- * One snapshot per predicted frame (Slippi cadence), taken right before the
- * tick that consumes the prediction (net.c snap_predicted / rollback_to). */
+ * Snapshots of predicted frames, taken right before the tick that consumes
+ * the prediction (net.c snap_predicted / rollback_to): one per predicted
+ * frame (Slippi cadence), or one every MELEE_NET_SNAP_EVERY frames. Slots
+ * are found by the frame they hold rather than by frame & (SNAPS - 1): with
+ * snapshots sparser than every frame, the one a deep rollback needs can be
+ * further back than the ring's width in frames. */
 static Snapshot s_snaps[SNAPS];
 
+Snapshot* snap_find(int32_t f) {
+    for (int i = 0; i < SNAPS; i++) {
+        if (s_snaps[i].frame == f && f >= 0) {
+            return &s_snaps[i];
+        }
+    }
+    return NULL;
+}
+
+/* The newest snapshot of a frame in [lo, f]. */
+Snapshot* snap_newest(int32_t lo, int32_t f) {
+    Snapshot* best = NULL;
+    for (int i = 0; i < SNAPS; i++) {
+        Snapshot* s = &s_snaps[i];
+        if (s->frame >= lo && s->frame <= f && (best == NULL || s->frame > best->frame)) {
+            best = s;
+        }
+    }
+    return best;
+}
+
+/* Every snapshot of a frame after f: taken on a timeline a rollback to f is
+ * replacing. */
+void snap_drop_after(int32_t f) {
+    for (int i = 0; i < SNAPS; i++) {
+        if (s_snaps[i].frame > f) {
+            s_snaps[i].frame = -1;
+        }
+    }
+}
+
+/* The slot a take of frame f writes: f's own, else an empty one (a paged-in
+ * one first), else the oldest frame's. */
 Snapshot* snap_slot(int32_t f) {
-    return &s_snaps[f & (SNAPS - 1)];
+    Snapshot* own = snap_find(f);
+    if (own != NULL) {
+        return own;
+    }
+    Snapshot* pick = NULL;
+    for (int i = 0; i < SNAPS; i++) {
+        Snapshot* s = &s_snaps[i];
+        if (s->frame < 0) {
+            if (pick == NULL || pick->frame >= 0 || s->faulted > pick->faulted) {
+                pick = s;
+            }
+        } else if (pick == NULL || (pick->frame >= 0 && s->frame < pick->frame)) {
+            pick = s;
+        }
+    }
+    return pick;
 }
 
 /* Behind the barrier, on the lockstep frames just before a fight can

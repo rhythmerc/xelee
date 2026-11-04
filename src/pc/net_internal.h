@@ -692,7 +692,10 @@ void snapshot_restore(const Snapshot* s);
 /* Non-NULL for missing/invalid simulation ranges. Normal builds provide
  * validated ELF, PE or Mach-O sections; fixtures can exercise the fallback. */
 const char* snapshot_state_region_missing(void);
-Snapshot* snap_slot(int32_t f); /* rollback ring entry for frame f */
+Snapshot* snap_slot(int32_t f); /* the ring entry a take of frame f writes */
+Snapshot* snap_find(int32_t f);  /* the ring entry holding frame f, or NULL */
+Snapshot* snap_newest(int32_t lo, int32_t f); /* newest held frame in [lo, f], or NULL */
+void snap_drop_after(int32_t f); /* forget every frame after f */
 /* Size and page in every rollback slot for the state as it stands, so the
  * first predicted frame pays neither the allocation nor the faults. */
 void snaps_reserve(void);

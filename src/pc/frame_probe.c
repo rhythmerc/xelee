@@ -13,9 +13,28 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 bool pc_frame_probe_on;
+
+/* Netplay's running totals (net_snapshot.c), for what each frame spent on
+ * rollback: frames are grouped by the ticks they re-ran, and every 10 s a
+ * line gives each group's count, sim time and snapshot cost. */
+extern unsigned long long pc_snap_takes_total, pc_snap_restores_total, pc_snap_take_ns_total,
+    pc_snap_restore_ns_total, pc_net_resim_ticks_total;
+enum { RB_GROUPS = 5 }; /* re-ran 0, 1-2, 3-4, 5-6, 7+ ticks */
+static struct {
+    unsigned long long takes, restores, take_ns, restore_ns, resims; /* at the frame's start */
+    unsigned n[RB_GROUPS], over6[RB_GROUPS], over9[RB_GROUPS];
+    double sim[RB_GROUPS], snap[RB_GROUPS], takes_n[RB_GROUPS];
+    unsigned long long windowStart;
+} R;
+
+static int rb_group(unsigned long long resims)
+{
+    return resims == 0 ? 0 : resims <= 2 ? 1 : resims <= 4 ? 2 : resims <= 6 ? 3 : 4;
+}
 
 typedef struct Slowest {
     const void* fn;
@@ -62,6 +81,11 @@ void pc_frame_probe_begin(void)
         return;
     }
     P.start = pc_frame_probe_now();
+    R.takes = pc_snap_takes_total;
+    R.restores = pc_snap_restores_total;
+    R.take_ns = pc_snap_take_ns_total;
+    R.restore_ns = pc_snap_restore_ns_total;
+    R.resims = pc_net_resim_ticks_total;
     if (P.lastDrawn != 0) {
         P.sumBoundary += P.start - P.lastDrawn;
     }
@@ -156,6 +180,41 @@ void pc_frame_probe_drawn(void)
             P.sumStart = now;
             P.sumPad = P.sumSim = P.sumDraw = P.sumBoundary = 0;
             P.sumFrames = 0;
+        }
+    }
+    {
+        const unsigned long long rdy = P.ready != 0 ? P.ready : P.start;
+        const unsigned long long end = P.simEnd != 0 ? P.simEnd : now;
+        const unsigned long long resims = pc_net_resim_ticks_total - R.resims;
+        const int g = rb_group(resims);
+        const double sim = (end - rdy) / 1e6;
+        R.n[g]++;
+        R.sim[g] += sim;
+        R.snap[g] += (pc_snap_take_ns_total - R.take_ns + pc_snap_restore_ns_total - R.restore_ns) / 1e6;
+        R.takes_n[g] += (double) (pc_snap_takes_total - R.takes);
+        R.over6[g] += sim > 6.0;
+        R.over9[g] += sim > 9.0;
+        if (R.windowStart == 0) {
+            R.windowStart = now;
+        } else if (now - R.windowStart >= 10000000000ull) {
+            static const char* names[RB_GROUPS] = { "0", "1-2", "3-4", "5-6", "7+" };
+            char line[600];
+            int o = 0;
+            for (int k = 0; k < RB_GROUPS; k++) {
+                if (R.n[k] == 0) {
+                    continue;
+                }
+                o += snprintf(line + o, sizeof line - o, " | re-ran %s: %u frames, sim %.1f ms, snapshots %.1f ms (%.1f takes), over 6 ms %u, over 9 ms %u",
+                              names[k], R.n[k], R.sim[k] / R.n[k], R.snap[k] / R.n[k], R.takes_n[k] / R.n[k], R.over6[k], R.over9[k]);
+            }
+            pc_log_line("frame probe: rollback frames (10 s)%s", line);
+            memset(&R.n, 0, sizeof R.n);
+            memset(&R.over6, 0, sizeof R.over6);
+            memset(&R.over9, 0, sizeof R.over9);
+            memset(&R.sim, 0, sizeof R.sim);
+            memset(&R.snap, 0, sizeof R.snap);
+            memset(&R.takes_n, 0, sizeof R.takes_n);
+            R.windowStart = now;
         }
     }
     if (now - P.windowStart > 10000000000ull) {
