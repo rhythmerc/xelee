@@ -114,6 +114,27 @@ does (`src/pc/fight_menu.cpp`, `pc_controls_screen`):
 
 It registers the same way.
 
+## A game mode's rules page
+
+VS Mode > Game Modes (`src/melee/mn/mnmodes.c`) lists the offline game
+modes; each row opens the mode's rules page, which stands in for Melee's
+Rules page before the CSS. Capture the Flag's is the example
+(`src/pc/ctf_rules_menu.cpp`, `pc_ctf_rules_screen`). It is an entry in
+`mnPage_pages` like an Options page, with three more fields:
+- `parent` is `MENU_KIND_GAME_MODES` (0 for Options), and `row` is that
+  menu's row. Options' rows, labels and previews come only from the entries
+  without a parent.
+- `name` and `about` are lang keys (`modes.ctf.tab`), not literal text.
+- `start` runs on START from any row, and on the screen's
+  `PC_SCREEN_GO_START` (its bottom button): `mnModes_StartCtf` goes on to
+  the mode (`GM_CTF`).
+
+A mode's page is menu kind `MENU_KIND_MODE_PAGE`, with Name Entry's panel
+frames: VS. Mode's red frame, its tab's sub-title swapped for the page's
+name. B goes back to the parent's row. Back from the mode's CSS, the menu
+scene opens the page again (`gmmenumode.c` sets `MENU_KIND_MODE_PAGE`, and
+`mnMain_Scene_OnEnter` opens it over Game Modes).
+
 ## How a stock menu screen is built
 
 Three pieces are on screen at once, and they belong to different code:

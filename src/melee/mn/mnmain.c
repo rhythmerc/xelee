@@ -27,12 +27,14 @@
 #include "mnmainrule.h"
 #include "mnname.h"
 #include "mnonline.h"
+#include "mnmodes.h"
 #include "mnsnap.h"
 #include "mnsound.h"
 #include "mnsoundtest.h"
 #include "mnvibration.h"
 #include "types.h"
 #include <dolphin/pad.h>
+#include <string.h>
 #include <melee/gm/gm_unsplit.h>
 #include <melee/gm/gmevent.h>
 #include <melee/gm/gmmain_lib.h>
@@ -113,7 +115,7 @@ static u16 mn_803EAE7C[] = {
     0x2, 0x3, 0x4, 0x9, 0xB, 0xC, 0xD, 0x0,
 };
 #ifdef TARGET_PC
-#define MENU_KIND_TABLE_LEN (MENU_KIND_ONLINE_XN + 1)
+#define MENU_KIND_TABLE_LEN (MENU_KIND_MODE_PAGE + 1)
 #else
 #define MENU_KIND_TABLE_LEN 0x22
 #endif
@@ -317,6 +319,18 @@ static AnimLoopSettings mn_803EAE8C[MENU_KIND_TABLE_LEN][3] = {
         { 450, 499, 450 },
         { 500, 599, 500 },
     },
+    { /* MENU_KIND_GAME_MODES: Special Melee's (VS. Mode's red frame with a
+       * sub-title tab); mnpage.c swaps the sub-title for Game Modes */
+        { 2600, 2649, 2620 },
+        { 2650, 2699, 2670 },
+        { 2700, 2799, 2720 },
+    },
+    { /* MENU_KIND_MODE_PAGE: Name Entry's, as the Slippi pages (a plain inside
+       * in VS. Mode's frame); mnpage.c swaps the sub-title for the mode's */
+        { 3000, 3049, 3020 },
+        { 3050, 3099, 3070 },
+        { 3100, 3199, 3120 },
+    },
 #endif
 };
 
@@ -360,6 +374,9 @@ static AnimLoopSettings mn_803EB480 = { 3500, 3549, 3520 };
 static AnimLoopSettings mn_803EB48C[] = {
     { 700, 749, 720 }, { 750, 799, 770 }, { 800, 849, 820 },
     { 850, 899, 870 }, { 900, 949, 920 },
+#ifdef TARGET_PC
+    { 700, 749, 720 }, /* Game Modes: the Melee (CSS) preview */
+#endif
 };
 
 #ifdef TARGET_PC
@@ -372,6 +389,10 @@ static AnimLoopSettings mn_OnlineXnPreview[3] = {
 };
 static AnimLoopSettings mn_OnlineSlippiPreview[4] = {
     { 700, 749, 720 }, { 700, 749, 720 }, { 700, 749, 720 }, { 700, 749, 720 },
+};
+/* MENU_KIND_GAME_MODES: each mode goes to the CSS, as Melee does */
+static AnimLoopSettings mn_GameModesPreview[SEL_GAME_MODES_COUNT] = {
+    { 700, 749, 720 },
 };
 #endif
 
@@ -436,7 +457,12 @@ static u16 mn_803EB660[] = { 0x81, 0x82, 0x82, 0x83, 0x84, 0x85, 0x00 };
 static u16 mn_803EB660[] = { 0x81, 0x82, 0x83, 0x84, 0x85, 0x00 };
 #endif
 static u16 mn_803EB66C[] = { 0x86, 0x87, 0x88, 0x89, 0x8A, 0x00 };
+#ifdef TARGET_PC
+/* + Game Modes, whose description is literal (mnModes_Description) */
+static u16 mn_803EB678[] = { 0x8E, 0x8F, 0x90, 0x91, 0x92, 0x92, 0x00 };
+#else
 static u16 mn_803EB678[] = { 0x8E, 0x8F, 0x90, 0x91, 0x92, 0x00 };
+#endif
 #ifdef TARGET_PC
 /* + Place Stage, Controls and Credits, whose descriptions are literal
  * (mnOnline_Description) */
@@ -486,7 +512,11 @@ MenuKindData mn_803EB6B0[MENU_KIND_TABLE_LEN] = {
         mn_803EB48C,
         40,
         mn_803EB678,
+#ifdef TARGET_PC
+        0x06, /* + SEL_VS_GAME_MODES */
+#else
         0x05,
+#endif
         mn_8022D594,
     },
     {
@@ -741,6 +771,20 @@ MenuKindData mn_803EB6B0[MENU_KIND_TABLE_LEN] = {
         NULL,
         ARRAY_SIZE(mn_OnlineXnPreview),
         mnOnline_XnThink,
+    },
+    { /* MENU_KIND_GAME_MODES: labels and descriptions from mnmodes.c */
+        mn_GameModesPreview,
+        40,
+        NULL,
+        SEL_GAME_MODES_COUNT,
+        mnModes_Think,
+    },
+    { /* MENU_KIND_MODE_PAGE: its own GObjs (mnpage.c) */
+        NULL,
+        0,
+        NULL,
+        0x01,
+        NULL,
     },
 #endif
 };
@@ -1167,7 +1211,9 @@ static void mn_UpdatePcLabels(MainMenuData* data, bool alive)
             data->pc_label[i] = text;
             text->default_alignment = 1;
             text->default_kerning = 1;
-            text->font_size.x = label_size;
+            /* A long label is condensed to the pill, as Melee's own long
+             * ones are (Super Sudden Death): 11 letters fill it. */
+            text->font_size.x = strlen(label) > 11 ? label_size * 10.5f / (float) strlen(label) : label_size;
             text->font_size.y = label_size;
             HSD_SisLib_803A6B98(text, 0.0f, 0.0f, "%s", label);
             mn_pcLabelFollow[i].text = text;
@@ -1870,9 +1916,11 @@ static void mn_PcStackRow(MenuKind kind, HSD_JObj* row, int index, int count)
     float at = index - (count - 1) * 0.5f;
     Vec3 pos;
 
+    /* Game Modes stacks its one row too: the stock one-row layout is
+     * Melee's unused, and sits nowhere near the middle. */
     if ((kind != MENU_KIND_ONLINE && kind != MENU_KIND_ONLINE_SLIPPI &&
-         kind != MENU_KIND_ONLINE_XN) ||
-        count < 2)
+         kind != MENU_KIND_ONLINE_XN && kind != MENU_KIND_GAME_MODES) ||
+        (count < 2 && kind != MENU_KIND_GAME_MODES))
     {
         return;
     }
@@ -2380,6 +2428,8 @@ int mn_8022C010(int menu_kind, int selection)
     case MENU_KIND_ONLINE_SLIPPI:
     case MENU_KIND_ONLINE_XN:
     case MENU_KIND_SLIPPI_PAGE:
+    case MENU_KIND_GAME_MODES:
+    case MENU_KIND_MODE_PAGE:
 #endif
         return 1;
     case MENU_KIND_TOY:
@@ -3180,6 +3230,12 @@ void mn_8022D594(HSD_GObj* gp)
             mnName_8023AC40();
             HSD_GObjFree(gp);
             break;
+#ifdef TARGET_PC
+        case SEL_VS_GAME_MODES:
+            sfxForward();
+            mn_80229894(MENU_KIND_GAME_MODES, SEL_GAME_MODES_CTF, 1);
+            break;
+#endif
         }
     } else if (buttons & MenuInput_Back) {
         sfxBack();
@@ -3445,6 +3501,7 @@ void mnMain_Scene_OnEnter(void* user_data)
     MenuEnterData* data = user_data;
 #ifdef TARGET_PC
     int open_page = -1;
+    MenuKind open_parent = 0; /* Options' */
 #endif
 
     u8 _[0x14];
@@ -3462,6 +3519,13 @@ void mnMain_Scene_OnEnter(void* user_data)
     if (data->menu_kind == MENU_KIND_SETTINGS_PAGE) {
         open_page = data->hovered_selection;
         data->menu_kind = MENU_KIND_SETTINGS;
+    }
+    /* Back from a game mode's CSS (gmmenumode.c): its rules page, over Game
+     * Modes on the mode's row. */
+    if (data->menu_kind == MENU_KIND_MODE_PAGE) {
+        open_page = data->hovered_selection;
+        open_parent = MENU_KIND_GAME_MODES;
+        data->menu_kind = MENU_KIND_GAME_MODES;
     }
 #endif
     menu_kind = data->menu_kind;
@@ -3734,7 +3798,7 @@ void mnMain_Scene_OnEnter(void* user_data)
         HSD_GObj_SetupProc(temp_r3_8, var_r4, 0);
         mn_8022B3A0(0);
 #ifdef TARGET_PC
-        if (open_page >= 0 && mnPage_Open(open_page)) {
+        if (open_page >= 0 && mnPage_OpenIn(open_parent, open_page)) {
             HSD_GObjFree(temp_r3_8);
         }
 #endif

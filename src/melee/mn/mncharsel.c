@@ -9,6 +9,9 @@
 #include <string.h>
 extern bool pc_net_slippi_active(void);
 #include <melee/gm/gmonlinemode.h>
+#ifdef TARGET_PC
+#include <melee/gm/gmctfmode.h>
+#endif
 
 /* The online CSS: Slippi's order puts it before any connection (the local
  * player is port 1), and a session left over from the old order has one too. */
@@ -382,6 +385,8 @@ static struct CSSDoorsData2 data2 = {
 #include "pc/region.h"
 #include "pc/xr_pointer.h"
 #include "pc/xeleenet_menu.h"
+#include "pc/lang.h"
+#include <stdio.h>
 #include "pc/net_punch.h"
 #include <dolphin/pad.h>
 #include <aurora/aurora.h>
@@ -493,6 +498,12 @@ void mnCharSel_8025BD30(void)
          * or on XeleeNet's banner. The text is built in string 0x4A, so leave
          * that one empty. */
         css_pal_string(0x4A)[0] = 0;
+        return;
+    }
+    if (gmCtfMode_InForce()) {
+        /* Offline CTF writes its own line over the emptied banner
+         * (cssCtfBanner). */
+        css_pal_string(pc_region_pal ? CSS_PAL_SCRATCH : 0x4A)[0] = 0;
         return;
     }
 #endif
@@ -2649,15 +2660,104 @@ static inline void updateGrabbedSlider(struct CSSCursorData* cursor,
 }
 
 #ifdef TARGET_PC
-/* Capture the Flag is red against blue: its lobbies' doors cycle the two. */
+/* Capture the Flag is red against blue: its lobbies' doors cycle the two,
+ * and so do offline CTF's (VS Mode > Game Modes). */
 static int cssTeamCount(void)
 {
     PcNetMode m;
+    if (gmCtfMode_InForce()) {
+        return 2;
+    }
     if (!gmOnline_XnFlow()) {
         return 3;
     }
     pc_net_rules_mode(&m);
     return m.mode == PC_NET_MODE_CTF ? 2 : 3;
+}
+#endif
+
+#ifdef TARGET_PC
+/* Offline CTF's rules banner: its own line where VS says "2-minute KO
+ * fest!" (the stock line is emptied, mnCharSel_8025BD30), which says for a
+ * moment why START was refused. A text of its own in the CSS's canvas, made
+ * with the stock one and freed with it. */
+enum { CSS_CTF_REFUSE_FRAMES = 150 };
+static HSD_Text* css_ctf_banner;
+static int css_ctf_refuse;
+
+static void cssCtfBannerLine(void)
+{
+    char line[96];
+    if (css_ctf_refuse > 0) {
+        snprintf(line, sizeof line, "%s", pc_tr("modes.ctf.both_teams"));
+    } else {
+        gmCtfMode_Banner(line, sizeof line);
+    }
+    HSD_SisLib_803A70A0(css_ctf_banner, 0, "%s", line);
+}
+
+static void cssCtfBannerCreate(HSD_Text* stock, int ctx)
+{
+    HSD_Text* t;
+    css_ctf_banner = NULL;
+    css_ctf_refuse = 0;
+    if (!gmCtfMode_InForce()) {
+        return;
+    }
+    /* Placed and sized as the stock line (its box, centred, fitted); made as
+     * a text of lines (803A6754), which 803A6B98 can write. */
+    t = HSD_SisLib_803A6754(0, ctx);
+    /* A line of this kind is centred on its position, not in its box: the
+     * box's middle (its width is in glyph units, scaled by the font). */
+    t->pos_x = stock->pos_x + stock->box_size_x * stock->font_size.x / 2.0f;
+    t->pos_y = stock->pos_y;
+    t->pos_z = stock->pos_z;
+    t->box_size_x = stock->box_size_x;
+    t->box_size_y = stock->box_size_y;
+    t->default_alignment = stock->default_alignment;
+    t->default_kerning = stock->default_kerning;
+    t->default_fitting = stock->default_fitting;
+    t->font_size = stock->font_size;
+    HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "%s", "");
+    css_ctf_banner = t;
+    cssCtfBannerLine();
+}
+
+static void cssCtfBannerRefuse(void)
+{
+    if (css_ctf_banner == NULL) {
+        return;
+    }
+    css_ctf_refuse = CSS_CTF_REFUSE_FRAMES;
+    cssCtfBannerLine();
+    pc_log_line("css: ctf start refused, both teams need a player");
+}
+
+static void cssCtfBannerFrame(void)
+{
+    if (css_ctf_banner != NULL && css_ctf_refuse > 0 && --css_ctf_refuse == 0) {
+        cssCtfBannerLine();
+    }
+}
+
+/* Offline CTF: the players in (humans and CPUs) don't make two teams. */
+static bool cssCtfOneTeam(void)
+{
+    int i, first = -1;
+    if (!gmCtfMode_InForce()) {
+        return false;
+    }
+    for (i = 0; i < (int) mnCharSel_804D6CF5; i++) {
+        if (mnCharSel_803F0DFC.doors[i].p_kind == 3) {
+            continue;
+        }
+        if (first < 0) {
+            first = mnCharSel_803F0DFC.doors[i].team;
+        } else if (mnCharSel_803F0DFC.doors[i].team != first) {
+            return false;
+        }
+    }
+    return true;
 }
 #endif
 
@@ -3267,6 +3367,8 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                      * (fixed rules) has no use for. XeleeNet's banner stands
                      * over it: its rules are the host's (Lobby Settings). */
                     && !cssOnline(&unused_local) && !gmOnline_XnFlow()
+                    /* Offline CTF's rules are its own page's, a B away. */
+                    && !gmCtfMode_InForce()
 #endif
                     ) {
                     f32 cx3 = cursor->xC;
@@ -3293,8 +3395,9 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                 if (cursor->xC < -25.5f && cursor->x10 > 22.0f
 #ifdef TARGET_PC
                     /* The rules bar's Teams: under XeleeNet's banner, and the
-                     * host's to set (Lobby Settings), not any hand's. */
-                    && !gmOnline_XnFlow()
+                     * host's to set (Lobby Settings), not any hand's. Offline
+                     * CTF is always teams. */
+                    && !gmOnline_XnFlow() && !gmCtfMode_InForce()
 #endif
                 ) {
                     switch ((s32) mnCharSel_804D6CB0->match_type) {
@@ -4196,6 +4299,17 @@ void fn_80262F44(HSD_GObj* gobj)
                 lbAudioAx_80024030(3);
             }
         }
+#ifdef TARGET_PC
+        /* Offline CTF: START with everyone on one team (or one player alone)
+         * is refused with the error sound and says why in the banner; the
+         * stock check above stays quiet in its cooldown (re-armed every
+         * frame the banner is hidden). */
+        if ((trigger & HSD_PAD_START) && mnCharSel_804D6CF7 == 0 && cssCtfOneTeam()) {
+            lbAudioAx_80024030(3);
+            cssCtfBannerRefuse();
+        }
+        cssCtfBannerFrame();
+#endif
     }
 }
 
@@ -5662,6 +5776,9 @@ s32 mnCharSel_802640A0(void)
         HSD_SisLib_803A6368(text, 0x4A);
 #endif
         mnCharSel_8025BD30();
+#ifdef TARGET_PC
+        cssCtfBannerCreate(text, ctx);
+#endif
         mt = mnCharSel_804D6CB0->match_type;
         if ((s32) mt < 3) {
             if ((s32) mt == 0) {
@@ -6395,6 +6512,20 @@ void mnCharSel_Scene_OnEnter(void* arg0)
         }
     }
     cssXnCardsEnter();
+    if (gmCtfMode_InForce()) {
+        /* Offline CTF is red against blue. Coming in from its rules page the
+         * doors are dealt by port (P1 and P3 red, P2 and P4 blue), so two
+         * players are on two teams at once; back from a match they keep
+         * what was picked, Melee's green aside. */
+        const bool deal = gmCtfMode_TakeDeal();
+        int k;
+        for (k = 0; k < 4; k++) {
+            if (deal || mnCharSel_803F0DFC.doors[k].team > 1) {
+                mnCharSel_803F0DFC.doors[k].team = (u8) (k & 1);
+            }
+            mnCharSel_804D6CB0->vs.start.players[k].team = mnCharSel_803F0DFC.doors[k].team;
+        }
+    }
 #endif
     mnCharSel_802640A0();
 #ifdef TARGET_PC
@@ -7019,6 +7150,9 @@ void mnCharSel_Scene_OnFrame(void)
         sfxForward();
         break;
     case 4:
+#ifdef TARGET_PC
+        css_ctf_banner = NULL; /* freed with every SIS text, next */
+#endif
         mn_8022F138(1, 8);
         HSD_SisLib_803A5E70();
         mnNameNew_EnterFromMnCharSel(mnCharSel_804D6CD4, mnCharSel_804D6CF9);
@@ -7067,6 +7201,7 @@ void mnCharSel_Scene_OnExit(void* unused)
 #ifdef TARGET_PC
     HSD_MObjPcDimClear(); /* the portraits' materials go with the scene */
     mnOnlineCss_Destroy();
+    css_ctf_banner = NULL; /* every SIS text goes with the scene, next */
 #endif
     HSD_SisLib_803A5FBC();
     if (mnCharSel_804D6CD0 != NULL) {

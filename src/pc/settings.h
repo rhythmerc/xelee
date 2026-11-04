@@ -71,6 +71,22 @@ void pc_settings_gameplay(PcGameplaySettings* out);
 void pc_settings_set_gameplay(const PcGameplaySettings* s);
 void pc_settings_gameplay_defaults(PcGameplaySettings* out);
 
+/* VS Mode > Game Modes > Capture the Flag's rules (ctf_rules_menu.cpp), read
+ * as each match starts (gmctfmode.c). */
+typedef struct PcCtfSettings {
+    int captures; /* to win, 1-9 */
+    int minutes;  /* the time limit; 0 none */
+    int return_s; /* a free flag goes home after this long; 0 never */
+    bool home;    /* your own flag must be on its stand to score */
+    bool slow;    /* carriers walk and dash slower */
+    bool items;   /* Melee's own item settings (Custom Rules), or none */
+} PcCtfSettings;
+
+void pc_settings_ctf(PcCtfSettings* out);
+/* Saves. */
+void pc_settings_set_ctf(const PcCtfSettings* s);
+void pc_settings_ctf_defaults(PcCtfSettings* out);
+
 /* The one-time "XeleeNet unlocked" special message (ifprize.c): whether it
  * has shown, and marking it shown (saved). */
 bool pc_settings_xn_notice_seen(void);

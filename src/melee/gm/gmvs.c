@@ -2503,7 +2503,12 @@ void gm_Scene_Vs_OnExit(void* user_data)
     data->x8 = Ground_801C5ABC();
 
     if (gm_8016B3D8() || gm_8016E9C8_inline() ||
-        gm_GetCurrentGameMode() == GM_VS)
+        gm_GetCurrentGameMode() == GM_VS
+#ifdef TARGET_PC
+        /* Offline CTF's matches count as VS matches, as Special Melee's do. */
+        || gm_GetCurrentGameMode() == GM_CTF
+#endif
+    )
     {
         if (controller.state.match_result != OUTCOME_NO_CONTEST &&
             controller.state.match_result != OUTCOME_RETRY)

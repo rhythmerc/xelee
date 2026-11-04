@@ -31,6 +31,49 @@ online:
   # placed this launch (39 at most).
   place: PLACE THE STAGE
 
+# VS Mode > Game Modes, offline (docs/xeleenet-modes-plan.md §2.3). Melee-drawn:
+# VS Mode's row, the Game Modes menu and its tab, the rules page's tab, its
+# hints, and the CSS's rules banner. The rules page's rows are RmlUi-drawn.
+modes:
+  label: Game Modes
+  desc: Matches with their own rules, like Capture the Flag.
+  tab: Game Modes
+  ctf:
+    label: Capture the Flag
+    desc: Two teams. Steal the other team's flag and bring it home.
+    tab: Capture the Flag
+    groups:
+      win: TO WIN
+      flags: FLAGS
+      match: THE MATCH
+    rows:
+      caps: Captures to win
+      time: Time limit
+      home: Flag must be home
+      return: Auto-return
+      slow: Carrying slows you
+      items: Items
+      start: Choose characters
+    hints:
+      caps: The first team to this many captures wins at once.
+      time: "Most captures when time runs out wins. A tie is no contest."
+      home: "On: your own flag must be on its stand for a capture to count."
+      return: A dropped flag nobody picks up goes home after this long.
+      slow: Whoever carries a flag walks and runs a little slower.
+      items: "On: items as Custom Rules set them. Off: only the flags."
+      start: On to the characters. START does it from any row.
+    values:
+      no_limit: No limit
+      minutes: "{n}:00"
+      seconds: "{n} s"
+      "off": "Off"
+    # The CSS's rules banner, where VS says "2-minute KO fest!" (Melee's
+    # font: no ';').
+    banner: "Capture the Flag: first to {n}!"
+    # START with every player on one team (or alone): Melee's error sound, and
+    # this in the banner for a moment.
+    both_teams: Both teams need a player!
+
 # Online Mode > Slippi (Melee-drawn): its row, its tab, and its own menu.
 # Signed out it is Login and Register; signed in it is Unranked, Direct,
 # Place Stage (only with a headset presenting) and Logout.

@@ -130,6 +130,12 @@ typedef enum MenuKind {
     MENU_KIND_SLIPPI_PAGE = 37,
     /* PC: VS Mode > Online > XeleeNet (Host Lobby, Join with Code, Name). */
     MENU_KIND_ONLINE_XN = 38,
+    /* PC: VS Mode > Game Modes (Capture the Flag; docs/xeleenet-modes-plan.md
+     * §2.3). */
+    MENU_KIND_GAME_MODES = 39,
+    /* PC: a game mode's rules page (mnpage.c), opened from Game Modes: one
+     * kind for every mode's page, as MENU_KIND_SETTINGS_PAGE is Options'. */
+    MENU_KIND_MODE_PAGE = 40,
 #endif
 } MenuKind;
 
@@ -185,7 +191,18 @@ typedef enum VsMenuSelection {
     SEL_VS_SPECIAL = 2,
     SEL_VS_RULES = 3,
     SEL_VS_NAME = 4,
+#ifdef TARGET_PC
+    SEL_VS_GAME_MODES = 5, ///< PC only: Game Modes, after Name Entry
+#endif
 } VsMenuSelection;
+
+#ifdef TARGET_PC
+/* VS Mode > Game Modes: one row per mode, each opening its rules page. */
+typedef enum GameModesMenuSelection {
+    SEL_GAME_MODES_CTF = 0,
+    SEL_GAME_MODES_COUNT,
+} GameModesMenuSelection;
+#endif
 
 #ifdef TARGET_PC
 /* Online Mode: XeleeNet (its lobby screens), Slippi (a submenu of its

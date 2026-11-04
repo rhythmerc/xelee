@@ -333,6 +333,7 @@ set(PC_SOURCES
         src/pc/fight_menu.cpp
         src/pc/audio_menu.cpp
         src/pc/gameplay_menu.cpp
+        src/pc/ctf_rules_menu.cpp
         src/pc/credits_menu.cpp
         src/pc/graphics_menu.cpp
         src/pc/settings_page.cpp

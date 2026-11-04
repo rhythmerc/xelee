@@ -7,6 +7,7 @@
 #include "gmapproach.h"
 #include "gmcameramode.h"
 #include "gmclassic.h"
+#include "gmctfmode.h"
 #include "gmdebugmode.h"
 #include "gmfixedcamera.h"
 #include "gmgiant.h"
@@ -756,6 +757,14 @@ static GameMode modes[] = {
         NULL,
         NULL,
         gm_Mode_Online_States,
+    },
+    {
+        false,
+        GM_CTF,
+        gmCtfMode_OnLoad,
+        gmCtfMode_OnUnload,
+        gmCtfMode_OnInit,
+        gm_Mode_Ctf_States,
     },
     {
         false,

@@ -25,6 +25,9 @@ void gmCtf_SetRules(const GmCtfRules* rules);
 /* CTF rules are set and the stage has a CTF layout. */
 bool gmCtf_Active(void);
 
+/* The stage (StKind) has a CTF layout, so CTF can be played on it. */
+bool gmCtf_StageLegal(int stkind);
+
 /* At a match's start, after the item system is up. */
 void gmCtf_MatchInit(void);
 

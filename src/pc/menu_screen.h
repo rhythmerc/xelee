@@ -32,6 +32,7 @@ enum {
     PC_SCREEN_GO_ERASE_DATA,  /* Melee's Erase Data page; B there comes back */
     PC_SCREEN_GO_PLACE_STAGE, /* the stage-placement scene; it comes back */
     PC_SCREEN_GO_CALIBRATE,   /* the room light calibration (that scene's); it comes back */
+    PC_SCREEN_GO_START,       /* a mode's rules page: on to its fight (START does the same) */
 };
 
 typedef struct PcMenuScreen {
@@ -56,6 +57,8 @@ extern const PcMenuScreen pc_graphics_screen;
 extern const PcMenuScreen pc_audio_screen;
 extern const PcMenuScreen pc_gameplay_screen;
 extern const PcMenuScreen pc_credits_screen;
+/* VS Mode > Game Modes > Capture the Flag's rules. */
+extern const PcMenuScreen pc_ctf_rules_screen;
 
 #ifdef __cplusplus
 }

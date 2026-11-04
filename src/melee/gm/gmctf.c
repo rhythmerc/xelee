@@ -627,6 +627,21 @@ bool gmCtf_Active(void)
 #endif
 }
 
+bool gmCtf_StageLegal(int stkind)
+{
+#ifdef TARGET_PC
+    /* A stage is a CTF map when it has a layout (plan §2.1): a capability,
+     * not a list, so a map that brings one becomes legal by itself. */
+    int i;
+    for (i = 0; i < (int) (sizeof ctf_layouts / sizeof ctf_layouts[0]); i++) {
+        if (ctf_layouts[i].stkind == stkind) {
+            return true;
+        }
+    }
+#endif
+    return false;
+}
+
 void gmCtf_MatchInit(void)
 {
 #ifdef TARGET_PC
