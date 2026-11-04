@@ -46,6 +46,23 @@ static bool cssXnPreviewSeat(int port)
  * (CSS_DOOR_X). */
 static int css_xn_seats = 4;
 static float css_xn_dx;
+
+/* XeleeNet's CPUs (docs/xeleenet-cpus-plan.md): whether port `port`'s hand
+ * may add, remove or set up a CPU, by the lobby's CPUs setting in force.
+ * Host: only the host's machine's seats (its own and its other pads');
+ * Anyone: every hand. From the RULES in force and the session's owners, so
+ * every player's CSS gives the same answer to the same press. */
+static bool cssXnCpuHand(int port)
+{
+    switch (pc_net_rules_cpus()) {
+    case PC_NET_CPUS_ANYONE:
+        return true;
+    case PC_NET_CPUS_HOST:
+        return !pc_net_active() || pc_net_port_owner(port) == 0;
+    default:
+        return false;
+    }
+}
 #define CSS_DOOR_PITCH 15.4F /* the doors' spacing (MELEE_CSS_DUMP: joints 41-44) */
 #define CSS_DOOR_X(cursor) ((cursor)->xC - css_xn_dx)
 
@@ -2654,6 +2671,13 @@ static inline void updateGrabbedSlider(struct CSSCursorData* cursor,
             door->is_hold_handicap_slider = 0;
         } else {
             door->is_hold_cpu_slider = 0;
+#ifdef TARGET_PC
+            if (gmOnline_XnFlow()) {
+                /* tools/net_test_xn_menu.py --scenario cpus */
+                pc_log_line("css: P%d's level %d (P%d's hand)", (int) door_idx + 1,
+                            mnCharSel_804D6CB0->vs.start.players[door_idx].cpu_level, cursor->x4 + 1);
+            }
+#endif
         }
         lbAudioAx_800237A8(0xB7, 0x7F, 0x40);
     }
@@ -3485,22 +3509,41 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
 #ifdef TARGET_PC
                                 /* A Slippi match is 1v1 between two humans:
                                  * no CPU fighters, no closing a slot. In
-                                 * XeleeNet the roster sets the doors: an
-                                 * empty seat waits for a joiner, and the
-                                 * name box holds the player's name. Only
-                                 * the team button works there. */
+                                 * XeleeNet the roster sets the people's
+                                 * doors, and a person's name box holds their
+                                 * name: only the team button works there.
+                                 * An open seat's button cycles NA and CPU,
+                                 * and a CPU door is set up as offline, for
+                                 * the hands the lobby's CPUs setting allows
+                                 * (docs/xeleenet-cpus-plan.md). */
                                 {
                                     int unused;
                                     if (cssOnline(&unused)) {
                                         continue;
                                     }
                                     if (gmOnline_XnFlow()) {
-                                        if (mnCharSel_804D6CB0->vs.start.rules.is_teams == 1 &&
-                                            mnCharSel_803F0DFC.doors[door].p_kind != 3)
-                                        {
-                                            cycleTeam(cursor, &mnCharSel_803F0DFC.doors[door], door);
+                                        const u8 pk = mnCharSel_803F0DFC.doors[door].p_kind;
+                                        if (pk == Gm_PKind_Human) {
+                                            if (mnCharSel_804D6CB0->vs.start.rules.is_teams == 1) {
+                                                cycleTeam(cursor, &mnCharSel_803F0DFC.doors[door], door);
+                                            }
+                                            continue;
                                         }
-                                        continue;
+                                        if (door >= css_xn_seats) {
+                                            continue;
+                                        }
+                                        if (!cssXnCpuHand(cursor->x4)) {
+                                            const CSSDoor* dp = &mnCharSel_803F0DFC.doors[door];
+                                            if (CSS_DOOR_X(cursor) > dp->togglebtn_left &&
+                                                CSS_DOOR_X(cursor) < dp->togglebtn_right && cursor->x10 < 0.2F &&
+                                                cursor->x10 > -4.6F)
+                                            {
+                                                /* tools/net_test_xn_menu.py --scenario cpus */
+                                                pc_log_line("css: P%d's hand may not change P%d's door (CPUs %d)",
+                                                            cursor->x4 + 1, door + 1, pc_net_rules_cpus());
+                                            }
+                                            continue;
+                                        }
                                     }
                                 }
 #endif
@@ -3547,7 +3590,14 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                                 case 4:
                                                     if (HSD_PadCopyStatus
                                                             [(u8) door]
-                                                                .err != 0)
+                                                                .err != 0
+#ifdef TARGET_PC
+                                                        /* XeleeNet: NA and CPU
+                                                         * only; a person comes
+                                                         * in by joining */
+                                                        || gmOnline_XnFlow()
+#endif
+                                                    )
                                                     {
                                                         mnCharSel_803F0DFC
                                                             .doors[door]
@@ -3583,6 +3633,17 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                                         (u8) door, 1);
                                                 }
                                             }
+#ifdef TARGET_PC
+                                            if (gmOnline_XnFlow()) {
+                                                /* tools/net_test_xn_menu.py --scenario cpus */
+                                                pc_log_line("css: P%d's door %s (P%d's hand), fighter %d level %d", door + 1,
+                                                            mnCharSel_803F0DFC.doors[door].p_kind == Gm_PKind_Cpu ? "CPU"
+                                                                                                                  : "NA",
+                                                            cursor->x4 + 1,
+                                                            mnCharSel_804D6CB0->vs.start.players[door].ckind,
+                                                            mnCharSel_804D6CB0->vs.start.players[door].cpu_level);
+                                            }
+#endif
                                             mnCharSel_8025DB34((u8) door);
                                             sfxMove();
                                             break;
@@ -3645,7 +3706,13 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                     {
                                         GameRules* rules3 =
                                             gmMainLib_GetGameRules();
-                                        if (rules3->handicap == 2) {
+                                        if (rules3->handicap == 2
+#ifdef TARGET_PC
+                                            /* XeleeNet's handicap sliders stay
+                                             * put, a CPU's as a person's */
+                                            && !gmOnline_XnFlow()
+#endif
+                                        ) {
                                             u8 pk =
                                                 mnCharSel_803F0DFC.doors[door]
                                                     .p_kind;
@@ -3766,7 +3833,14 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                     if (pk2 != 3 &&
                                         mnCharSel_803F0DFC.doors[ci].sel_icon <
                                             0x19U &&
-                                        (pk2 != 0 || (s32) cursor->x4 == ci))
+                                        (pk2 != 0 || (s32) cursor->x4 == ci)
+#ifdef TARGET_PC
+                                        /* XeleeNet: a CPU's coin, for the
+                                         * hands the CPUs setting allows */
+                                        && (!gmOnline_XnFlow() || (s32) cursor->x4 == ci ||
+                                            (ci < css_xn_seats && cssXnCpuHand(cursor->x4)))
+#endif
+                                    )
                                     {
                                         struct CSSCharModel* mc =
                                             mnCharSel_804A0BD0[ci];
@@ -3794,6 +3868,12 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                 mnCharSel_804A0BC0[cport4]->x6 = closest_door;
                                 mnCharSel_803F0DFC.doors[closest_door]
                                     .sel_icon = 0xD;
+#ifdef TARGET_PC
+                                if (gmOnline_XnFlow() && closest_door != cport4) {
+                                    /* tools/net_test_xn_menu.py --scenario cpus */
+                                    pc_log_line("css: P%d's hand took P%d's coin", cport4 + 1, closest_door + 1);
+                                }
+#endif
                                 HSD_GObjGXLink_803909D8(
                                     mnCharSel_804A0BD0[(u8) closest]->gobj,
                                     mnCharSel_804A0BC0[cport4]->gobj);
@@ -6029,20 +6109,26 @@ static void cssXnOverlayCreate(void)
  * into the next CSS (gmOnline_XnKeepPicks), for everyone still in it. */
 static void cssXnKeepPicks(void)
 {
-    u8 ckind[4], color[4], team[4], mask = 0;
+    u8 ckind[4], color[4], team[4], level[4], mask = 0, cpus = 0;
     int i;
     for (i = 0; i < 4; i++) {
         const PlayerInitData* p = &mnCharSel_804D6CB0->vs.start.players[i];
         ckind[i] = p->ckind;
         color[i] = p->color;
         team[i] = p->team;
+        level[i] = p->cpu_level;
         /* A pick off the list (a new one, just committed) goes too: every
          * player's xnPicksTake drops it, and says so. */
         if (i < (s32) mnCharSel_804D6CF5 && cssXnPicked(i) && p->ckind < ChKind_Max) {
             mask |= 1 << i;
         }
+        /* A CPU door goes on with its fighter, costume and level, its coin
+         * down or in a hand (docs/xeleenet-cpus-plan.md). */
+        if (i < (s32) mnCharSel_804D6CF5 && mnCharSel_803F0DFC.doors[i].p_kind == Gm_PKind_Cpu) {
+            cpus |= 1 << i;
+        }
     }
-    gmOnline_XnKeepPicks(ckind, color, team, mask);
+    gmOnline_XnKeepPicks(ckind, color, team, mask, cpus, level);
 }
 
 static void cssXnReadyReset(void)
@@ -6250,7 +6336,9 @@ static bool cssXnReadyFrame(void)
     }
     /* mnCharSel_804D6CF7: Melee's READY TO FIGHT test (fn_80262F44), last
      * frame's: everyone picked and the teams valid. */
-    if (humans != 0 && (css_xn_ready & humans) == humans && mnCharSel_804D6CF7 != 0) {
+    /* A match needs a session: the host alone with CPUs (Melee's check
+     * passes on two doors) waits for a player (docs/xeleenet-cpus-plan.md). */
+    if (humans != 0 && (css_xn_ready & humans) == humans && mnCharSel_804D6CF7 != 0 && pc_net_active()) {
         if (css_xn_count < 0) {
             css_xn_count = CSS_XN_COUNTDOWN;
             pc_log_line("css: everyone ready; the stage select in %d frames", CSS_XN_COUNTDOWN);
@@ -6339,6 +6427,39 @@ static bool cssXnReadyFrame(void)
                                       (icons[k].bound_u + icons[k].bound_d) / 2);
                     }
                     pc_log_line("css: portraits%s", line);
+                    /* The doors' type buttons, where a hand presses them
+                     * (docs/xeleenet-cpus-plan.md). */
+                    for (k = 0, o = 0; k < css_xn_seats && k < (s32) mnCharSel_804D6CF5; k++) {
+                        o += snprintf(line + o, sizeof line - o, " %d:%.1f,%.1f", k + 1,
+                                      (mnCharSel_803F0DFC.doors[k].togglebtn_left +
+                                       mnCharSel_803F0DFC.doors[k].togglebtn_right) / 2 + css_xn_dx,
+                                      -2.2);
+                    }
+                    pc_log_line("css: toggles%s", line);
+                }
+                if (test_hand && mnCharSel_804D6CEC % 30 == 0) {
+                    /* Each CPU door's coin and level slider (where a hand
+                     * grabs it), wherever the hands are. */
+                    int k;
+                    for (k = 0; k < css_xn_seats && k < (s32) mnCharSel_804D6CF5; k++) {
+                        HSD_JObj* sj = NULL;
+                        Point3d sp;
+                        if (mnCharSel_803F0DFC.doors[k].p_kind != Gm_PKind_Cpu || mnCharSel_804A0BD0[k] == NULL) {
+                            continue;
+                        }
+                        lb_80011E24(mnCharSel_804D6CC0, &sj,
+                                    gmMainLib_GetGameRules()->handicap != 0 ? mnCharSel_803F0DFC.doors[k].cpuslider2_joint
+                                                                            : mnCharSel_803F0DFC.doors[k].cpuslider_joint,
+                                    -1);
+                        if (sj == NULL) {
+                            continue;
+                        }
+                        lb_8000B1CC(sj, NULL, &sp);
+                        pc_log_line("css: P%d cpu token %.1f %.1f held %d slider %.1f %.1f level %d fighter %d", k + 1,
+                                    mnCharSel_804A0BD0[k]->x8, mnCharSel_804A0BD0[k]->xC, mnCharSel_804A0BD0[k]->x5,
+                                    -2.9F + sp.x, 1.7F + sp.y, mnCharSel_804D6CB0->vs.start.players[k].cpu_level,
+                                    mnCharSel_804D6CB0->vs.start.players[k].ckind);
+                    }
                 }
                 if (test_hand && mnCharSel_804D6CEC % 30 == 0) {
                     int k;
@@ -6906,6 +7027,12 @@ static void cssXnCardsFrame(void)
         td->text->pos_x = cssXnShifted(&css_xn_tag_shift[i], td->text->pos_x, css_xn_dx);
         if (!seat) {
             cssHideDoor(i);
+        }
+        if (seat && mnCharSel_803F0DFC.doors[i].p_kind == Gm_PKind_Cpu) {
+            /* A CPU's box says so (docs/xeleenet-cpus-plan.md); the overlay's
+             * OPEN tag over it says a joiner takes the seat. */
+            snprintf(names[i], sizeof names[i], "CPU");
+            named |= 1u << i;
         }
         if (!seat || !(named & (1u << i)) || mnCharSel_803F0DFC.doors[i].p_kind == 3) {
             td->text->hidden = 1;

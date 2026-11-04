@@ -78,8 +78,11 @@ bool gmOnline_XnFlow(void);
 int gmOnline_XnLeave(int port);
 /* The CSS is about to reload for a new player set: each port's character and
  * costume, and the ports whose pick stands (bits). The host's go to everyone,
- * a newcomer included, and every CSS starts from them. */
-void gmOnline_XnKeepPicks(const u8 ckind[4], const u8 color[4], const u8 team[4], u8 mask);
+ * a newcomer included, and every CSS starts from them. `cpus`: the CPU doors
+ * (bits), each with its fighter and costume in ckind/color and its level
+ * (docs/xeleenet-cpus-plan.md); they stay unless a player takes the seat. */
+void gmOnline_XnKeepPicks(const u8 ckind[4], const u8 color[4], const u8 team[4], u8 mask, u8 cpus,
+                          const u8 level[4]);
 /* The Lobby Settings' Apply (docs/xeleenet-settings-overlay-plan.md, O2): the
  * host's settings as Host gives them (pc_xn_menu_rules) go to every player's
  * CSS on the same frame. In a session the next one starts with the same
