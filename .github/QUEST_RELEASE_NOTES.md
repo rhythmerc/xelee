@@ -60,13 +60,13 @@ Download `Xelee-Windows-x86_64.zip`, extract it, and run `xelee.exe`. Keep the D
 
 ### macOS
 
-Download `Xelee-macOS-arm64.zip` for Apple Silicon Macs (M1 and later) or `Xelee-macOS-x86_64.zip` for Intel Macs. Open the zip and move `Melee.app` into **Applications**. It needs macOS 13 or later.
+Download `Xelee-macOS-arm64.zip` for Apple Silicon Macs (M1 and later) or `Xelee-macOS-x86_64.zip` for Intel Macs. Open the zip and move `Xelee.app` into **Applications**. It needs macOS 13 or later.
 
 Xelee isn't notarized by Apple, so macOS blocks the first launch:
-1. Open `Melee.app`. macOS says it can't verify the app: choose **Done**.
-2. Open **System Settings**, then **Privacy & Security**, scroll down and choose **Open Anyway** next to Melee, and confirm.
+1. Open `Xelee.app`. macOS says it can't verify the app: choose **Done**.
+2. Open **System Settings**, then **Privacy & Security**, scroll down and choose **Open Anyway** next to Xelee, and confirm.
 
-If macOS says the app is damaged, or there's no **Open Anyway**, run this in Terminal instead: `xattr -dr com.apple.quarantine /Applications/Melee.app`
+If macOS says the app is damaged, or there's no **Open Anyway**, run this in Terminal instead: `xattr -dr com.apple.quarantine /Applications/Xelee.app`
 
 ### Steam Deck
 

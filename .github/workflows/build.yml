@@ -22,6 +22,10 @@ on:
         description: "XeleeNet service these builds talk to (empty: the XELEENET_URL variable), e.g. a playtest service behind Tailscale Funnel"
         required: false
         default: ''
+      version:
+        description: "Mac builds only: the version to build as (e.g. v0.4.0-beta), to rebuild a release's Mac zips with the same lobby version"
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -341,7 +345,7 @@ jobs:
 
       - name: Build and package
         env:
-          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version || '' }}
           MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
           MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}

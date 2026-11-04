@@ -5,12 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build/macos}"
 DIST_DIR="${ROOT_DIR}/dist"
-APP="${BUILD_DIR}/Melee.app"
+APP="${BUILD_DIR}/Xelee.app"
 ARCH="$(uname -m)"
 
 # Apple's clang builds the C++ (aurora, Dawn glue, launcher); the decomp's C
 # goes through Homebrew GCC via tools/gcc_launcher.py. See CMakeLists.txt.
-echo "=== Building Melee PC (macOS ${ARCH}) ==="
+echo "=== Building Xelee (macOS ${ARCH}) ==="
 cmake -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_C_COMPILER=clang \
@@ -113,7 +113,8 @@ done
 echo "=== Signing (ad hoc) ==="
 # No Developer ID: an ad-hoc signature keeps the arm64 kernel happy after
 # install_name_tool rewrote the load commands. First launch of a downloaded
-# copy still needs right-click > Open (Gatekeeper), see README.
+# copy still needs Open Anyway in Privacy & Security (Gatekeeper); see the
+# release notes.
 codesign --force --deep --sign - --timestamp=none "${APP}"
 codesign --verify --deep --strict "${APP}"
 
