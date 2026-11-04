@@ -5725,6 +5725,57 @@ static void hitch_test(void) {
     }
 }
 
+/* MELEE_NET_SLOW_TEST=fps:on:off (fixture): THIS peer runs its fights at
+ * `fps` for `on` seconds, then at full speed for `off`, and so on, standing
+ * in for a machine that cannot hold 60 through heavy stretches (the
+ * 2026-11-04 CTF match: the remote ran ~39 fps for 30-60 s at a time). The
+ * fresh tick is held until 1/fps after the last one began, so the rate is
+ * the same however long the frame's own work takes, and catch-up (which
+ * runs late boundaries back to back) cannot buy the frames back. The
+ * harness sets it on one instance only. */
+static void slow_test(void) {
+    static int fps = -1, on, off;
+    static int32_t from = -1;
+    static uint64_t last_ns;
+    static bool was_slow;
+    if (fps < 0) {
+        const char* s = getenv("MELEE_NET_SLOW_TEST");
+        fps = 0;
+        if (s != NULL && sscanf(s, "%d:%d:%d", &fps, &on, &off) != 3) {
+            on = 1, off = 0; /* "fps" alone: slow for the whole fight */
+        }
+        if (fps <= 0 || fps >= 60 || on <= 0 || off < 0) {
+            fps = 0;
+        }
+    }
+    if (fps == 0) {
+        return;
+    }
+    if (!in_fight()) {
+        from = -1;
+        last_ns = 0;
+        return;
+    }
+    if (from < 0) {
+        from = net.frame;
+    }
+    int32_t sec = (net.frame - from) / 60;
+    bool slow = sec % (on + off) < on;
+    if (slow != was_slow) {
+        pc_log_line("net: slow test: %s at frame %d", slow ? "slow" : "full speed", net.frame);
+        was_slow = slow;
+    }
+    uint64_t now = SDL_GetTicksNS();
+    if (slow && last_ns != 0) {
+        uint64_t due = last_ns + 1000000000ull / (uint64_t)fps;
+        if (now < due) {
+            SDL_DelayPrecise(due - now);
+            now = SDL_GetTicksNS();
+        }
+    }
+    last_ns = now;
+}
+
 /* A resting port's sample (pc_net_hold_local): nothing pressed, the sticks
  * centred, until it is let go and its pad has come to rest. */
 static void hold_neutral(int q, PADStatus* pad) {
@@ -5852,6 +5903,7 @@ static void fresh_tick(PADStatus* head, bool raw) {
         }
         stall_test();
         hitch_test();
+        slow_test();
         static int timing_debug = -1;
         static uint64_t sample_send_total, sample_send_max;
         static unsigned sample_send_count;

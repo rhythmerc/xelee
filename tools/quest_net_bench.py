@@ -3,6 +3,7 @@
 player of a direct netplay session whose other players run on this PC.
 
     tools/quest_net_bench.py [--minutes 3] [--warmup 40] [--label NAME]
+                             [--cpus [--slow FPS:ON:OFF]]
                              [--link SPEC] [--quest-port 2] [--ctf | --vs]
                              [--cpu-level 3 --gpu-level 2] [--env K=V ...]
 
@@ -44,6 +45,9 @@ GAME_LOG = f"{qp.FILES}/bench-game.log"
 # By machine (each machine's first port): {a} is the laggy player at ~95 ms
 # +-40 to everyone, the 2026-11-02 playtest's worst; the rest ~20 ms.
 DEFAULT_LINK = "{a}:{q}=95~40,{a}:{c}=95~40,{q}:{c}=20~5"
+# --cpus: the 2026-11-04 match's one link, ~57 ms ping (one-way ~28 with the
+# LAN's own few ms).
+CPUS_LINK = "{a}:{q}=26~2"
 
 
 def lan_ip(towards):
@@ -97,21 +101,28 @@ def run(args):
     # the others, instance c the remaining two. Whoever plays P1 hosts.
     # MELEE_NET_SIM_LINK shapes links by machine (a machine's first port),
     # so a laggy player must be a machine of its own: a, by default.
-    others = [k for k in range(4) if k != q]
-    seats = {"q": [q], "a": others[:1], "c": others[1:]}
+    if args.cpus:
+        # Two humans (the Quest and instance a) on P1/P2, CPUs on P3/P4, red
+        # against blue: the 2026-11-04 match that went wrong.
+        if q > 1:
+            sys.exit("--cpus: the Quest plays P1 or P2 (--quest-port 0 or 1)")
+        seats = {"q": [q], "a": [1 - q]}
+    else:
+        others = [k for k in range(4) if k != q]
+        seats = {"q": [q], "a": others[:1], "c": others[1:]}
     order = sorted(seats, key=lambda m: seats[m][0])  # machines in port order
     plays = [seats[m] for m in order]
-    owners = [next(i for i, m in enumerate(order) if k in seats[m]) for k in range(4)]
     base = args.port
-    ports = [base, base + 1, base + 2]
+    ports = [base + i for i in range(len(order))]
     addr = [qip if m == "q" else pc for m in order]
-    qi, ai, ci = order.index("q"), order.index("a"), order.index("c")
-    peers = ",".join("+".join(str(k) for k in plays[m]) + f"={addr[m]}:{ports[m]}" for m in range(3))
-    link = args.link.format(q=q, a=seats["a"][0], c=seats["c"][0])
+    qi = order.index("q")
+    peers = ",".join("+".join(str(k) for k in plays[m]) + f"={addr[m]}:{ports[m]}" for m in range(len(order)))
+    link = (args.link or (CPUS_LINK if args.cpus else DEFAULT_LINK)).format(
+        q=q, a=seats["a"][0], c=seats["c"][0] if "c" in seats else -1)
     frames = int((args.minutes + 3) * 3600) + nt.BOOT_FRAMES
     common = {
         "MELEE_NET_PEERS": peers,
-        "MELEE_DEBUG_VS": "human4",
+        "MELEE_DEBUG_VS": "human2" if args.cpus else "human4",
         "MELEE_NET_EXIT_AFTER_FRAMES": str(frames),
         "MELEE_NET_KEY": nt.NET_KEY,
         "MELEE_SEED": "7",
@@ -124,6 +135,15 @@ def run(args):
     if not args.vs:
         common["MELEE_DEBUG_CTF"] = "1"
         common["MELEE_DEBUG_CTF_NOTIME"] = "1"
+    if args.cpus:
+        common.update({
+            "MELEE_DEBUG_VS_SLOTS": "hhcc",
+            "MELEE_DEBUG_VS_CPU_LEVEL": str(args.cpu_ai_level),
+            "MELEE_DEBUG_CTF_TEAMS": "0011",
+            # Level-9 CPUs against idle humans win first-to-5 in ~80 s; 9
+            # captures keeps a 2-3 minute window inside the match.
+            "MELEE_DEBUG_CTF_WIN": "9",
+        })
     for kv in args.env:
         k, _, v = kv.partition("=")
         common[k] = v
@@ -160,11 +180,14 @@ def run(args):
     shutil.rmtree(args.work, ignore_errors=True)
     os.makedirs(args.work)
     insts, pad_fifos = [], {}
-    for m, name in ((ai, "a"), (ci, "c")):
+    for name in [m for m in ("a", "c") if m in seats]:
+        m = order.index(name)
         if not nt.wait_port_free(ports[m]):
             return False
         env = dict(common)
         env["MELEE_NET_PLAYER"] = str(plays[m][0])
+        if name == "a" and args.slow:
+            env["MELEE_NET_SLOW_TEST"] = args.slow  # the slow remote
         for pad, port in enumerate(plays[m][1:], start=2):
             fifo = os.path.join(args.work, f"{name}.pad{pad}.keys")
             os.mkfifo(fifo)
@@ -196,7 +219,8 @@ def run(args):
         if not ok:
             print("quest_net_bench: the match never started", flush=True)
             return False
-        drive = ntn.Drive([(insts[0 if k in seats["a"] else 1], pad_fifos[k]) for k in range(4) if k != q])
+        humans = [k for m in seats for k in seats[m] if m != "q"]
+        drive = ntn.Drive([(insts[0 if k in seats["a"] else 1], pad_fifos[k]) for k in humans])
         print(f"{args.label}: match on; warming up {args.warmup} s", flush=True)
         time.sleep(args.warmup)
         qp.adb("logcat", "-c")
@@ -233,7 +257,12 @@ def main():
     ap.add_argument("--minutes", type=float, default=3)
     ap.add_argument("--warmup", type=int, default=40)
     ap.add_argument("--label", default="net4")
-    ap.add_argument("--link", default=DEFAULT_LINK)
+    ap.add_argument("--link", help=f"default {DEFAULT_LINK!r}, with --cpus {CPUS_LINK!r}")
+    ap.add_argument("--cpus", action="store_true",
+                    help="two humans (Quest + PC instance a) and two CPUs, red v blue (one PC instance)")
+    ap.add_argument("--cpu-ai-level", type=int, default=9, help="--cpus: the CPUs' level")
+    ap.add_argument("--slow", help="fps:on:off -- PC instance a runs its fight at fps for on s, "
+                                   "then full speed for off s (MELEE_NET_SLOW_TEST)")
     ap.add_argument("--quest-port", type=int, default=1, help="0-based: 0 = P1, the host")
     ap.add_argument("--vs", action="store_true", help="a VS match on the debug stage, not CTF")
     ap.add_argument("--mode", default="mr", choices=("mr", "vr"))
