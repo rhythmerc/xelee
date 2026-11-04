@@ -547,6 +547,47 @@ one to switch between VS and CTF.
   frame and plays CTF on Temple). `tools/xn_preview.py css-settings-ctf`
   shows the overlay with the draft switched.
 
+## 6j. M5 results: offline CTF (2026-11-03)
+
+Built on feat/ctf-offline (from feat/game-modes 4e70c5b6), not pushed.
+- **VS Mode > Xelee Melee:** a row under Special Melee (fa8d45f6; Rules and Name Entry move down one). Xelee Melee is
+  minimal (the user's change to the wireframe): Melee pills in Special
+  Melee's panel, its tab's sub-title swapped for "Xelee Melee", one row,
+  Capture the Flag (`mnmodes.c`, `MENU_KIND_XELEE_MELEE`).
+- **The rules page** stands in for Melee's Rules page: captures to win,
+  time limit, flag must be home, auto-return, carrying slows, items, and a
+  "Choose characters" button; START from any row does the same, B goes
+  back. Built on the Options pages' engine (`ctf_rules_menu.cpp`), hosted
+  by `mnpage.c` as a mode page (`MENU_KIND_MODE_PAGE`, Name Entry's panel:
+  VS. Mode's red frame). Melee's own Rules page was the other candidate; its
+  labels and values are textures, so every row would have needed its label
+  and value hidden and redrawn and a think of its own. The values are saved
+  with the launcher's preferences (`ctf_*`), defaults the lobby's (5, 10:00,
+  home on, no auto-return, slow on, items off). No "more rules" page:
+  handicap, damage ratio, friendly fire and pause come from Melee's Custom
+  Rules, and Items On uses its item settings.
+- **The mode** is `GM_CTF` (`gmctfmode.c`), gmgiant.c's shape on VS
+  Melee's states with its own VsModeData and a start_cb (teams on, a timed
+  match, the CTF rules); never sudden death; the bases swap every other game
+  since the mode was entered.
+- **CSS:** teams forced on; the doors are dealt red/blue by port on the way
+  in from the rules page and keep their picks after a match; the team
+  button cycles red and blue (`cssTeamCount`); the rules bar's Teams and
+  rules link are locked; the banner reads "Capture the Flag: first to N!".
+  START with one team or one player: the error sound and "Both teams need a
+  player!" in the banner for 2.5 s. B in the CSS goes back to the rules
+  page.
+- **SSS:** the off-list path is now "XeleeNet's list, or offline a mode's
+  stages" (a stage with a CTF layout, `gmCtf_StageLegal`); Random draws from
+  it; A on a struck stage plays the error sound offline (a lobby's stays
+  quiet, as before). Melee's Stage Selection rule (Random) never skips it.
+- **Tests:** a played run from boot by inputs (VS Mode > Xelee Melee > CTF,
+  captures changed, 2 humans, the one-team refusal, Temple, a thrown
+  capture ends it, results, back to the CSS, B to the rules page);
+  `ctf_test.py` 17/17; `net_test_xn_menu.py` default and `--scenario ctf`.
+- **Not done:** no .slp recording of offline CTF (`slp.c`'s
+  `recorded_mode`); no MELEE_BOOT_SCENE for it; headset untested.
+
 ## 7. Open questions
 
 All seven from the first draft were answered 2026-11-01 (decisions 10-17).
