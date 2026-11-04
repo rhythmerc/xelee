@@ -13,17 +13,17 @@
 
 #include "pc/lang.h"
 
-/* The Game Modes menu's rows, in SEL_GAME_MODES_* order: a label and a
+/* The Xelee Melee menu's rows, in SEL_XELEE_MELEE_* order: a label and a
  * description each. */
-static const char* const mode_labels[SEL_GAME_MODES_COUNT] = { "modes.ctf.label" };
-static const char* const mode_descriptions[SEL_GAME_MODES_COUNT] = { "modes.ctf.desc" };
+static const char* const mode_labels[SEL_XELEE_MELEE_COUNT] = { "modes.ctf.label" };
+static const char* const mode_descriptions[SEL_XELEE_MELEE_COUNT] = { "modes.ctf.desc" };
 
 const char* mnModes_Label(MenuKind kind, int selection)
 {
-    if (kind == MENU_KIND_VS && selection == SEL_VS_GAME_MODES) {
+    if (kind == MENU_KIND_VS && selection == SEL_VS_XELEE_MELEE) {
         return pc_tr("modes.label");
     }
-    if (kind == MENU_KIND_GAME_MODES && selection >= 0 && selection < SEL_GAME_MODES_COUNT) {
+    if (kind == MENU_KIND_XELEE_MELEE && selection >= 0 && selection < SEL_XELEE_MELEE_COUNT) {
         return pc_tr(mode_labels[selection]);
     }
     return NULL;
@@ -31,16 +31,16 @@ const char* mnModes_Label(MenuKind kind, int selection)
 
 const char* mnModes_Description(MenuKind kind, int selection)
 {
-    if (kind == MENU_KIND_VS && selection == SEL_VS_GAME_MODES) {
+    if (kind == MENU_KIND_VS && selection == SEL_VS_XELEE_MELEE) {
         return pc_tr("modes.desc");
     }
-    if (kind == MENU_KIND_GAME_MODES && selection >= 0 && selection < SEL_GAME_MODES_COUNT) {
+    if (kind == MENU_KIND_XELEE_MELEE && selection >= 0 && selection < SEL_XELEE_MELEE_COUNT) {
         return pc_tr(mode_descriptions[selection]);
     }
     return NULL;
 }
 
-/// @brief VS Mode > Game Modes think: A opens the mode's rules page, B goes
+/// @brief VS Mode > Xelee Melee think: A opens the mode's rules page, B goes
 /// back to VS Mode's row
 void mnModes_Think(HSD_GObj* gp)
 {
@@ -51,19 +51,19 @@ void mnModes_Think(HSD_GObj* gp)
         mn_804D6BC8.cooldown = 5;
         mn_804A04F0.entering_menu = 1;
         sfxForward();
-        if (mnPage_OpenIn(MENU_KIND_GAME_MODES, mn_804A04F0.hovered_selection)) {
+        if (mnPage_OpenIn(MENU_KIND_XELEE_MELEE, mn_804A04F0.hovered_selection)) {
             HSD_GObjFree(gp);
         }
     } else if (buttons & MenuInput_Back) {
         sfxBack();
         mn_804A04F0.entering_menu = 0;
-        mn_80229894(MENU_KIND_VS, SEL_VS_GAME_MODES, 3);
-    } else if (SEL_GAME_MODES_COUNT > 1 && (buttons & (MenuInput_Up | MenuInput_Down))) {
+        mn_80229894(MENU_KIND_VS, SEL_VS_XELEE_MELEE, 3);
+    } else if (SEL_XELEE_MELEE_COUNT > 1 && (buttons & (MenuInput_Up | MenuInput_Down))) {
         /* One mode so far: nothing to move to, so no move sound either. */
         sfxMove();
         mn_804A04F0.hovered_selection =
-            (mn_804A04F0.hovered_selection + ((buttons & MenuInput_Up) ? SEL_GAME_MODES_COUNT - 1 : 1)) %
-            SEL_GAME_MODES_COUNT;
+            (mn_804A04F0.hovered_selection + ((buttons & MenuInput_Up) ? SEL_XELEE_MELEE_COUNT - 1 : 1)) %
+            SEL_XELEE_MELEE_COUNT;
     }
 }
 

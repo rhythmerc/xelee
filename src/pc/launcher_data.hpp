@@ -60,7 +60,7 @@ struct Preferences {
     bool xr_shadow = true;
     bool xr_place_hold = true; // XR: the stage is placed before each fight (off: fights start right away)
     bool xn_notice_seen = false; // the one-time "XeleeNet unlocked" special message has shown (ifprize.c)
-    // VS Mode > Game Modes > Capture the Flag's rules (src/pc/ctf_rules_menu.cpp),
+    // VS Mode > Xelee Melee > Capture the Flag's rules (src/pc/ctf_rules_menu.cpp),
     // kept for next time as Melee keeps its own: the lobby's defaults
     // (docs/xeleenet-modes-plan.md §6h).
     int ctf_caps = 5;        // 1-9

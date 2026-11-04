@@ -36,7 +36,7 @@
 
 /* The Options pages, each in one of the Options rows (SettingsMenuSelection;
  * a row with no page is hidden). The list's order is the rows'. A game
- * mode's rules page is one too, in a row of VS Mode > Game Modes instead
+ * mode's rules page is one too, in a row of VS Mode > Xelee Melee instead
  * (mnmodes.c), with START on to its fight. */
 typedef struct PcOptionsPage {
     int row;              ///< the Options row it opens from and goes back to
@@ -44,7 +44,7 @@ typedef struct PcOptionsPage {
     const char* about;    ///< the row's description and the page's first hint
     AnimLoopSettings preview; ///< the preview pane's frames while the row is lit
     const PcMenuScreen* screen;
-    /* A mode page's: the menu its row is in (MENU_KIND_GAME_MODES; 0 for
+    /* A mode page's: the menu its row is in (MENU_KIND_XELEE_MELEE; 0 for
      * Options), its name and about as lang keys, and what START (and the
      * screen's PC_SCREEN_GO_START) does. */
     MenuKind parent;
@@ -69,10 +69,10 @@ static const PcOptionsPage mnPage_pages[] = {
       &pc_controls_screen },
     /* Language's (unused otherwise). Last: the list's end. */
     { SEL_SETTINGS_CREDITS, "Credits", "Xelee credits.", { 1500, 1549, 1520 }, &pc_credits_screen },
-    /* VS Mode > Game Modes > Capture the Flag: Melee's Rules page's place
+    /* VS Mode > Xelee Melee > Capture the Flag: Melee's Rules page's place
      * before the CSS (docs/xeleenet-modes-plan.md §2.3). */
-    { SEL_GAME_MODES_CTF, "modes.ctf.tab", "modes.ctf.desc", { 700, 749, 720 }, &pc_ctf_rules_screen,
-      MENU_KIND_GAME_MODES, mnModes_StartCtf },
+    { SEL_XELEE_MELEE_CTF, "modes.ctf.tab", "modes.ctf.desc", { 700, 749, 720 }, &pc_ctf_rules_screen,
+      MENU_KIND_XELEE_MELEE, mnModes_StartCtf },
 };
 
 /* Options' pages are the ones without a parent menu of their own. */
@@ -534,8 +534,8 @@ static const char* mnPage_Title(MenuKind kind)
     if (kind == MENU_KIND_SETTINGS_PAGE || kind == MENU_KIND_MODE_PAGE) {
         return mnPage_open != NULL ? mnPage_Name(mnPage_open) : NULL;
     }
-    if (kind == MENU_KIND_GAME_MODES) {
-        /* Special Melee's panel: its sub-title reads Game Modes instead. */
+    if (kind == MENU_KIND_XELEE_MELEE) {
+        /* Special Melee's panel: its sub-title reads Xelee Melee instead. */
         return pc_tr("modes.tab");
     }
     if (kind == MENU_KIND_SLIPPI_PAGE) {

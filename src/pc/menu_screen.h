@@ -57,7 +57,7 @@ extern const PcMenuScreen pc_graphics_screen;
 extern const PcMenuScreen pc_audio_screen;
 extern const PcMenuScreen pc_gameplay_screen;
 extern const PcMenuScreen pc_credits_screen;
-/* VS Mode > Game Modes > Capture the Flag's rules. */
+/* VS Mode > Xelee Melee > Capture the Flag's rules. */
 extern const PcMenuScreen pc_ctf_rules_screen;
 
 #ifdef __cplusplus

@@ -5,19 +5,19 @@
 
 #include <sysdolphin/baselib/forward.h>
 
-/* PC only: VS Mode > Game Modes, offline (docs/xeleenet-modes-plan.md
- * §2.3). VS Mode's sixth row opens a menu of the game modes (Capture the
+/* PC only: VS Mode > Xelee Melee, offline (docs/xeleenet-modes-plan.md
+ * §2.3). VS Mode's row under Special Melee opens a menu of the game modes (Capture the
  * Flag so far), Special Melee's panel with its sub-title swapped; each row
  * opens the mode's rules page (mnpage.c, MENU_KIND_MODE_PAGE), whose START
  * goes on to the mode's CSS (gmctfmode.c). Labels and descriptions are lang
  * keys, drawn as the PC rows are (mnmain.c's mn_UpdatePcLabels). */
 
-/* VS Mode's Game Modes row and the Game Modes menu's rows: the label and
+/* VS Mode's Xelee Melee row and the Xelee Melee menu's rows: the label and
  * the bottom box's text, or NULL for a stock row. */
 const char* mnModes_Label(MenuKind kind, int selection);
 const char* mnModes_Description(MenuKind kind, int selection);
 
-/* The Game Modes menu's think (mn_803EB6B0[MENU_KIND_GAME_MODES]). */
+/* The Xelee Melee menu's think (mn_803EB6B0[MENU_KIND_XELEE_MELEE]). */
 void mnModes_Think(HSD_GObj* gp);
 
 /* Capture the Flag's rules page's START: on to GM_CTF. */

@@ -319,8 +319,8 @@ static AnimLoopSettings mn_803EAE8C[MENU_KIND_TABLE_LEN][3] = {
         { 450, 499, 450 },
         { 500, 599, 500 },
     },
-    { /* MENU_KIND_GAME_MODES: Special Melee's (VS. Mode's red frame with a
-       * sub-title tab); mnpage.c swaps the sub-title for Game Modes */
+    { /* MENU_KIND_XELEE_MELEE: Special Melee's (VS. Mode's red frame with a
+       * sub-title tab); mnpage.c swaps the sub-title for Xelee Melee */
         { 2600, 2649, 2620 },
         { 2650, 2699, 2670 },
         { 2700, 2799, 2720 },
@@ -371,13 +371,18 @@ static AnimLoopSettings mn_803EB444[] = {
 
 static AnimLoopSettings mn_803EB480 = { 3500, 3549, 3520 };
 
+#ifdef TARGET_PC
+/* In row order: Xelee Melee (fourth) has the Melee (CSS) preview */
+static AnimLoopSettings mn_803EB48C[] = {
+    { 700, 749, 720 }, { 750, 799, 770 }, { 800, 849, 820 },
+    { 700, 749, 720 }, { 850, 899, 870 }, { 900, 949, 920 },
+};
+#else
 static AnimLoopSettings mn_803EB48C[] = {
     { 700, 749, 720 }, { 750, 799, 770 }, { 800, 849, 820 },
     { 850, 899, 870 }, { 900, 949, 920 },
-#ifdef TARGET_PC
-    { 700, 749, 720 }, /* Game Modes: the Melee (CSS) preview */
-#endif
 };
+#endif
 
 #ifdef TARGET_PC
 /* MENU_KIND_ONLINE preview pane: the Melee (CSS) preview for every item */
@@ -390,8 +395,8 @@ static AnimLoopSettings mn_OnlineXnPreview[3] = {
 static AnimLoopSettings mn_OnlineSlippiPreview[4] = {
     { 700, 749, 720 }, { 700, 749, 720 }, { 700, 749, 720 }, { 700, 749, 720 },
 };
-/* MENU_KIND_GAME_MODES: each mode goes to the CSS, as Melee does */
-static AnimLoopSettings mn_GameModesPreview[SEL_GAME_MODES_COUNT] = {
+/* MENU_KIND_XELEE_MELEE: each mode goes to the CSS, as Melee does */
+static AnimLoopSettings mn_XeleeMeleePreview[SEL_XELEE_MELEE_COUNT] = {
     { 700, 749, 720 },
 };
 #endif
@@ -458,8 +463,8 @@ static u16 mn_803EB660[] = { 0x81, 0x82, 0x83, 0x84, 0x85, 0x00 };
 #endif
 static u16 mn_803EB66C[] = { 0x86, 0x87, 0x88, 0x89, 0x8A, 0x00 };
 #ifdef TARGET_PC
-/* + Game Modes, whose description is literal (mnModes_Description) */
-static u16 mn_803EB678[] = { 0x8E, 0x8F, 0x90, 0x91, 0x92, 0x92, 0x00 };
+/* In row order: Xelee Melee's (fourth) is literal (mnModes_Description) */
+static u16 mn_803EB678[] = { 0x8E, 0x8F, 0x90, 0x90, 0x91, 0x92, 0x00 };
 #else
 static u16 mn_803EB678[] = { 0x8E, 0x8F, 0x90, 0x91, 0x92, 0x00 };
 #endif
@@ -513,7 +518,7 @@ MenuKindData mn_803EB6B0[MENU_KIND_TABLE_LEN] = {
         40,
         mn_803EB678,
 #ifdef TARGET_PC
-        0x06, /* + SEL_VS_GAME_MODES */
+        0x06, /* + SEL_VS_XELEE_MELEE */
 #else
         0x05,
 #endif
@@ -772,11 +777,11 @@ MenuKindData mn_803EB6B0[MENU_KIND_TABLE_LEN] = {
         ARRAY_SIZE(mn_OnlineXnPreview),
         mnOnline_XnThink,
     },
-    { /* MENU_KIND_GAME_MODES: labels and descriptions from mnmodes.c */
-        mn_GameModesPreview,
+    { /* MENU_KIND_XELEE_MELEE: labels and descriptions from mnmodes.c */
+        mn_XeleeMeleePreview,
         40,
         NULL,
-        SEL_GAME_MODES_COUNT,
+        SEL_XELEE_MELEE_COUNT,
         mnModes_Think,
     },
     { /* MENU_KIND_MODE_PAGE: its own GObjs (mnpage.c) */
@@ -1898,6 +1903,11 @@ static int mn_PcSelectionFrames(MenuKind kind, int selection)
     if (kind == MENU_KIND_MAIN && selection > SEL_MAIN_ONLINE) {
         return 2 * (selection - 1);
     }
+    /* Xelee Melee sits under Special Melee: Rules and Name Entry keep their
+     * stock label textures, one row lower. */
+    if (kind == MENU_KIND_VS && selection > SEL_VS_XELEE_MELEE) {
+        return 2 * (selection - 1);
+    }
     return 2 * selection;
 }
 
@@ -1916,11 +1926,11 @@ static void mn_PcStackRow(MenuKind kind, HSD_JObj* row, int index, int count)
     float at = index - (count - 1) * 0.5f;
     Vec3 pos;
 
-    /* Game Modes stacks its one row too: the stock one-row layout is
+    /* Xelee Melee stacks its one row too: the stock one-row layout is
      * Melee's unused, and sits nowhere near the middle. */
     if ((kind != MENU_KIND_ONLINE && kind != MENU_KIND_ONLINE_SLIPPI &&
-         kind != MENU_KIND_ONLINE_XN && kind != MENU_KIND_GAME_MODES) ||
-        (count < 2 && kind != MENU_KIND_GAME_MODES))
+         kind != MENU_KIND_ONLINE_XN && kind != MENU_KIND_XELEE_MELEE) ||
+        (count < 2 && kind != MENU_KIND_XELEE_MELEE))
     {
         return;
     }
@@ -2428,7 +2438,7 @@ int mn_8022C010(int menu_kind, int selection)
     case MENU_KIND_ONLINE_SLIPPI:
     case MENU_KIND_ONLINE_XN:
     case MENU_KIND_SLIPPI_PAGE:
-    case MENU_KIND_GAME_MODES:
+    case MENU_KIND_XELEE_MELEE:
     case MENU_KIND_MODE_PAGE:
 #endif
         return 1;
@@ -3231,9 +3241,9 @@ void mn_8022D594(HSD_GObj* gp)
             HSD_GObjFree(gp);
             break;
 #ifdef TARGET_PC
-        case SEL_VS_GAME_MODES:
+        case SEL_VS_XELEE_MELEE:
             sfxForward();
-            mn_80229894(MENU_KIND_GAME_MODES, SEL_GAME_MODES_CTF, 1);
+            mn_80229894(MENU_KIND_XELEE_MELEE, SEL_XELEE_MELEE_CTF, 1);
             break;
 #endif
         }
@@ -3524,8 +3534,8 @@ void mnMain_Scene_OnEnter(void* user_data)
      * Modes on the mode's row. */
     if (data->menu_kind == MENU_KIND_MODE_PAGE) {
         open_page = data->hovered_selection;
-        open_parent = MENU_KIND_GAME_MODES;
-        data->menu_kind = MENU_KIND_GAME_MODES;
+        open_parent = MENU_KIND_XELEE_MELEE;
+        data->menu_kind = MENU_KIND_XELEE_MELEE;
     }
 #endif
     menu_kind = data->menu_kind;

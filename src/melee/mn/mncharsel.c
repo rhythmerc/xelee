@@ -2661,7 +2661,7 @@ static inline void updateGrabbedSlider(struct CSSCursorData* cursor,
 
 #ifdef TARGET_PC
 /* Capture the Flag is red against blue: its lobbies' doors cycle the two,
- * and so do offline CTF's (VS Mode > Game Modes). */
+ * and so do offline CTF's (VS Mode > Xelee Melee). */
 static int cssTeamCount(void)
 {
     PcNetMode m;

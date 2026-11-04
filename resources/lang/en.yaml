@@ -31,13 +31,13 @@ online:
   # placed this launch (39 at most).
   place: PLACE THE STAGE
 
-# VS Mode > Game Modes, offline (docs/xeleenet-modes-plan.md §2.3). Melee-drawn:
-# VS Mode's row, the Game Modes menu and its tab, the rules page's tab, its
+# VS Mode > Xelee Melee, offline (docs/xeleenet-modes-plan.md §2.3). Melee-drawn:
+# VS Mode's row, the Xelee Melee menu and its tab, the rules page's tab, its
 # hints, and the CSS's rules banner. The rules page's rows are RmlUi-drawn.
 modes:
-  label: Game Modes
+  label: Xelee Melee
   desc: Matches with their own rules, like Capture the Flag.
-  tab: Game Modes
+  tab: Xelee Melee
   ctf:
     label: Capture the Flag
     desc: Two teams. Steal the other team's flag and bring it home.

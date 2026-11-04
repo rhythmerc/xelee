@@ -130,10 +130,10 @@ typedef enum MenuKind {
     MENU_KIND_SLIPPI_PAGE = 37,
     /* PC: VS Mode > Online > XeleeNet (Host Lobby, Join with Code, Name). */
     MENU_KIND_ONLINE_XN = 38,
-    /* PC: VS Mode > Game Modes (Capture the Flag; docs/xeleenet-modes-plan.md
+    /* PC: VS Mode > Xelee Melee (Capture the Flag; docs/xeleenet-modes-plan.md
      * §2.3). */
-    MENU_KIND_GAME_MODES = 39,
-    /* PC: a game mode's rules page (mnpage.c), opened from Game Modes: one
+    MENU_KIND_XELEE_MELEE = 39,
+    /* PC: a game mode's rules page (mnpage.c), opened from Xelee Melee: one
      * kind for every mode's page, as MENU_KIND_SETTINGS_PAGE is Options'. */
     MENU_KIND_MODE_PAGE = 40,
 #endif
@@ -189,19 +189,26 @@ typedef enum VsMenuSelection {
     SEL_VS_MELEE = 0,
     SEL_VS_TOURNAMENT = 1,
     SEL_VS_SPECIAL = 2,
+#ifdef TARGET_PC
+    /* The rows are the selections in order, so Xelee Melee, under Special
+     * Melee, moves the stock rows below it down one (as SEL_MAIN_ONLINE
+     * does on the main menu); mnmain.c's mn_PcSelectionFrames keeps their
+     * label textures. */
+    SEL_VS_XELEE_MELEE = 3, ///< PC only: Xelee Melee (offline game modes)
+    SEL_VS_RULES = 4,
+    SEL_VS_NAME = 5,
+#else
     SEL_VS_RULES = 3,
     SEL_VS_NAME = 4,
-#ifdef TARGET_PC
-    SEL_VS_GAME_MODES = 5, ///< PC only: Game Modes, after Name Entry
 #endif
 } VsMenuSelection;
 
 #ifdef TARGET_PC
-/* VS Mode > Game Modes: one row per mode, each opening its rules page. */
-typedef enum GameModesMenuSelection {
-    SEL_GAME_MODES_CTF = 0,
-    SEL_GAME_MODES_COUNT,
-} GameModesMenuSelection;
+/* VS Mode > Xelee Melee: one row per mode, each opening its rules page. */
+typedef enum XeleeMeleeMenuSelection {
+    SEL_XELEE_MELEE_CTF = 0,
+    SEL_XELEE_MELEE_COUNT,
+} XeleeMeleeMenuSelection;
 #endif
 
 #ifdef TARGET_PC

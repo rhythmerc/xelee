@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* Capture the Flag's rules page (VS Mode > Game Modes > Capture the Flag,
+/* Capture the Flag's rules page (VS Mode > Xelee Melee > Capture the Flag,
  * docs/xeleenet-modes-plan.md §2.3 and §3.6), pc_ctf_rules_screen
  * (menu_screen.h). It stands in for Melee's Rules page before the CSS: the
  * mode's own rows, kept for next time (settings.h's PcCtfSettings, saved

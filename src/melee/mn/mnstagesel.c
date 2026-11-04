@@ -217,7 +217,7 @@ static bool net_slippi_fixed; /* the ticket chose the stage; skip the pick excha
 /* A stage off the list is dimmed and can't be picked. XeleeNet: the
  * lobby's list (the host's stage_mask, in force on every player as RULES;
  * gm_80164330 reads it, as Random does), which already holds a mode's stages
- * alone. Offline, a game mode in force (VS Mode > Game Modes): the mode's
+ * alone. Offline, a game mode in force (VS Mode > Xelee Melee): the mode's
  * stages (Capture the Flag's maps, the stages with a CTF layout), whatever
  * Melee's own Random Stage Switch says. */
 static bool sss_off_list(int cell)

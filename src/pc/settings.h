@@ -71,7 +71,7 @@ void pc_settings_gameplay(PcGameplaySettings* out);
 void pc_settings_set_gameplay(const PcGameplaySettings* s);
 void pc_settings_gameplay_defaults(PcGameplaySettings* out);
 
-/* VS Mode > Game Modes > Capture the Flag's rules (ctf_rules_menu.cpp), read
+/* VS Mode > Xelee Melee > Capture the Flag's rules (ctf_rules_menu.cpp), read
  * as each match starts (gmctfmode.c). */
 typedef struct PcCtfSettings {
     int captures; /* to win, 1-9 */

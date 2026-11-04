@@ -772,7 +772,7 @@ void mnName_MainInput(HSD_GObj* arg0)
         }
         mn_804A04F0.entering_menu = 0;
         HSD_SisLib_803A5D30();
-        mn_80229894(2, 4U, 3);
+        mn_80229894(MENU_KIND_VS, SEL_VS_NAME, 3);
         return;
     }
     if (buttons & 0x10) {

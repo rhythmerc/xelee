@@ -107,7 +107,7 @@ void mnOnline_SlippiBuilt(void)
 const char* mnOnline_Label(MenuKind kind, int selection)
 {
     if (mnModes_Label(kind, selection) != NULL) {
-        return mnModes_Label(kind, selection); /* VS Mode > Game Modes (mnmodes.c) */
+        return mnModes_Label(kind, selection); /* VS Mode > Xelee Melee (mnmodes.c) */
     }
     if (kind == MENU_KIND_MAIN && selection == SEL_MAIN_ONLINE) {
         return pc_tr("online.label");

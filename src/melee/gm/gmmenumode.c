@@ -207,7 +207,7 @@ void onEnter(GameModeState* scene)
         /* Back from its CSS on its rules page, the screen before it, as VS
          * Mode's Melee goes back to VS Mode (mnmain.c opens the page). */
         data->menu_kind = MENU_KIND_MODE_PAGE;
-        data->hovered_selection = SEL_GAME_MODES_CTF;
+        data->hovered_selection = SEL_XELEE_MELEE_CTF;
         return;
     case GM_ONLINE:
         /* Back out of a lobby into the menu it was entered from. */

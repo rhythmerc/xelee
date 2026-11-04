@@ -8,7 +8,7 @@
 #include <stddef.h>
 
 /* PC only: GM_CTF, offline Capture the Flag (docs/xeleenet-modes-plan.md
- * §2.3). VS Mode > Game Modes > Capture the Flag's rules page (mnmodes.c,
+ * §2.3). VS Mode > Xelee Melee > Capture the Flag's rules page (mnmodes.c,
  * ctf_rules_menu.cpp) starts it: the CSS with teams forced on, red and blue
  * only, then the stage select with only the CTF maps lit, then the match
  * with its CTF rules (gmctf.c), results, and back to the CSS, as VS Mode's
