@@ -177,6 +177,7 @@ xeleenet:
       ctf_home: Flag must be home
       ctf_return: Auto-return
       ctf_slow: Carrying slows you
+      cpus: CPUs
     values:
       "on": "On"
       "off": "Off"
@@ -191,6 +192,8 @@ xeleenet:
       format: Endless
       seconds: "{n} s"
       locked: MODE                   # a row the mode decides
+      cpus_host: Host                # CPUs: only the host's controllers add them
+      cpus_anyone: Anyone
     items:
       "off": "Off"
       very_low: Very low
@@ -242,6 +245,7 @@ xeleenet:
       format: First to N wins, or endless.
       ask: Each join waits for your OK in the CSS.
       hide_code: The CSS banner masks the code, for streaming.
+      cpus: Who can add CPUs to open seats. Players who join take a CPU's seat.
       open: Open the lobby. You go to the CSS; friends join with its code.
 
   # Host > More rules.
@@ -564,6 +568,7 @@ xeleenet:
       listing: Only the lobby list changes. Nobody's Ready is cleared.
       off_list: "{name}'s {fighter} is off the new list: {name} picks again"
       teams: "Teams on: teams are dealt again"
+      cpus_removed: "Removes the CPUs: {names}"   # the CPUs Off (or fewer seats) takes out, "P3 Fox, P4 Marth"
       next_game: Applies to the next game. Everyone's Ready is cleared.
     held_off: "{fighter} is off · {name} (P{p}) holds it and would pick again"
     hints:

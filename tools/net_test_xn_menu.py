@@ -993,7 +993,7 @@ def leave_match(insts, shots, drive, scenario):
 # not on LAN.
 def settings_rows(teams, lan):
     rows = ["mode", "teams", "stocks", "time", "items"] + (["ff"] if teams else []) + ["more", "flist", "slist", "frozen",
-                                                                             "seats"]
+                                                                             "seats", "cpus"]
     return rows + ([] if lan else ["vis", "hide"]) + ["apply", "cancel"]
 
 

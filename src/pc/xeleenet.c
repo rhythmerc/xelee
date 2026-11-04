@@ -293,6 +293,8 @@ static void parse_settings(const PcSlippiJson* st, PcXnListing* x) {
     str_of(st, "game_mode", v, sizeof v);
     x->ctf = strcmp(v, "ctf") == 0; /* missing: VS, an older game's */
     x->ctf_caps = pc_slippi_json_int(pc_slippi_json_get(st, "ctf_caps"), 5);
+    str_of(st, "cpus", v, sizeof v); /* missing: Off, an older game's */
+    x->cpus = strcmp(v, "host") == 0 ? 1 : strcmp(v, "anyone") == 0 ? 2 : 0;
     /* The host's own defaults: 8:00 for VS, 10:00 for Capture the Flag. */
     x->time_min = pc_slippi_json_int(pc_slippi_json_get(st, "time_min"), x->ctf ? 10 : 8);
     str_of(st, "items", x->items, sizeof x->items);

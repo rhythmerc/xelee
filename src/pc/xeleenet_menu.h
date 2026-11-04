@@ -74,7 +74,29 @@ typedef struct PcXnRules {
     bool ctf_home;      /* CTF: your flag must be home to score */
     int ctf_return;     /* CTF: a free flag's return, seconds; 0 never */
     bool ctf_slow;      /* CTF: carriers slowed */
+    int cpus;           /* who may add CPUs: PC_NET_CPUS_* (0 Off, 1 Host, 2 Anyone) */
 } PcXnRules;
+
+/* The CPUs (port bits) a lobby keeps into a CSS of `humans` with `seats`
+ * seats and the CPUs setting `setting` (docs/xeleenet-cpus-plan.md): none
+ * when Off; never on a seat a person holds; and while the fighters are more
+ * than the seats, or a CPU stands past them, the highest-port CPU leaves.
+ * The CSS (gmonlinemode.c) and Lobby Settings' CHANGES both ask it. */
+static inline unsigned pc_xn_cpus_kept(unsigned cpus, unsigned humans, int seats, int setting) {
+    int q, n;
+    cpus &= 15u & ~humans;
+    if (setting == 0) {
+        return 0;
+    }
+    n = __builtin_popcount(humans & 15u) + __builtin_popcount(cpus);
+    for (q = 3; q >= 0; q--) {
+        if ((cpus & (1u << q)) && (q >= seats || n > seats)) {
+            cpus &= ~(1u << q);
+            n--;
+        }
+    }
+    return cpus;
+}
 void pc_xn_menu_rules(PcXnRules* out);
 
 /* The tab's sub-title and the hint box's text. */
@@ -118,6 +140,10 @@ typedef struct PcXnCssState {
      * the banner (it glows: A there opens Lobby Settings). */
     uint8_t ckind[4];
     bool hot;
+    /* The CPU doors (port bits; docs/xeleenet-cpus-plan.md), each one's
+     * level, 1-9; their fighters are in ckind. */
+    uint8_t cpus;
+    uint8_t cpu_level[4];
 } PcXnCssState;
 void pc_xn_css_frame(const PcXnCssState* state);
 /* For the CSS's doors (mncharsel.c): the lobby's seats (2-4, 4 when not

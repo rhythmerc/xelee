@@ -59,6 +59,7 @@ typedef struct PcXnListing {
     char fighter_list[8]; /* all, high, low or custom (docs/xeleenet-fighter-list-plan.md) */
     bool ctf;             /* game_mode "ctf": Capture the Flag (docs/xeleenet-modes-plan.md) */
     int ctf_caps;         /* its captures to win */
+    int cpus;             /* who may add CPUs: 0 Off, 1 Host, 2 Anyone (docs/xeleenet-cpus-plan.md) */
     bool first_to; /* else endless */
     int first_to_n;
     bool playing, xr;

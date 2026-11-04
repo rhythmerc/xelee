@@ -324,6 +324,12 @@ static void host_announce(void) {
      * sent as keys of their own. */
     char* masks = strstr(settings, ",\"fighter_mask\":");
     unsigned f = 0, st = 0;
+    /* So do the CPUs, after them: "c" is 0 Off, 1 Host, 2 Anyone. */
+    const char* cp = strstr(settings, ",\"cpus\":\"");
+    char cpus[2] = "0";
+    if (cp != NULL) {
+        cpus[0] = strncmp(cp + 9, "host", 4) == 0 ? '1' : strncmp(cp + 9, "anyone", 6) == 0 ? '2' : '0';
+    }
     if (masks != NULL && sscanf(masks, ",\"fighter_mask\":%u,\"stage_mask\":%u", &f, &st) == 2) {
         snprintf(fm, sizeof fm, "%x", f);
         snprintf(sm, sizeof sm, "%x", st);
@@ -334,9 +340,9 @@ static void host_announce(void) {
     snprintf(port, sizeof port, "%u", s_lobby_port);
     snprintf(instance, sizeof instance, "xn-%.16s", s_lobby_hex);
     const char* keys[] = {"v", "rev", "disc", "id", "name", "host", "tag", "seats", "taken", "port", "s", "fm", "sm",
-                          "g", "p"};
+                          "g", "p", "c"};
     const char* values[] = {proto, pc_app_rev(), pc_net_disc_id(), s_lobby_hex, name, s_args.name, s_args.tag,
-                            seats, taken, port, settings, fm, sm, pc_xn_playing() ? "1" : "0", seat_list};
+                            seats, taken, port, settings, fm, sm, pc_xn_playing() ? "1" : "0", seat_list, cpus};
     static bool logged;
     if (!logged) {
         logged = true;
@@ -793,6 +799,7 @@ static void browse_tick(void) {
         if ((s = pc_mdns_txt(&r[i], "sm")) != NULL && strtoul(s, NULL, 16) != 0)
             x->stage_mask = (uint32_t)strtoul(s, NULL, 16);
         x->playing = (s = pc_mdns_txt(&r[i], "g")) != NULL && s[0] == '1';
+        x->cpus = (s = pc_mdns_txt(&r[i], "c")) != NULL && s[0] >= '0' && s[0] <= '2' ? s[0] - '0' : 0;
         parse_seats(pc_mdns_txt(&r[i], "p"), x);
         if (r[i].port == LOBBY_PORT)
             snprintf(x->address, sizeof x->address, "%s", r[i].ip);

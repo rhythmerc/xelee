@@ -6287,9 +6287,16 @@ static bool cssXnReadyFrame(void)
             st.seats = css_xn_seats;
             {
                 int k;
+                st.cpus = 0;
                 for (k = 0; k < 4; k++) {
                     const int ck = mnCharSel_804D6CB0->vs.start.players[k].ckind;
-                    st.ckind[k] = (picked & (1 << k)) && ck >= 0 && ck < ChKind_Max ? (u8) ck : 0xFF;
+                    const bool cpu = k < (s32) mnCharSel_804D6CF5 && k < css_xn_seats &&
+                                     mnCharSel_803F0DFC.doors[k].p_kind == Gm_PKind_Cpu;
+                    st.ckind[k] = ((picked & (1 << k)) || cpu) && ck >= 0 && ck < ChKind_Max ? (u8) ck : 0xFF;
+                    st.cpu_level[k] = mnCharSel_804D6CB0->vs.start.players[k].cpu_level;
+                    if (cpu) {
+                        st.cpus |= (u8) (1 << k);
+                    }
                 }
                 st.hot = me >= 0 && me < 4 && (humans & (1 << me)) && !(css_xn_ready & (1 << me)) &&
                          cssXnOverBanner(me);

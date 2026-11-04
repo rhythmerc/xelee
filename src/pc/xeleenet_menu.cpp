@@ -238,6 +238,9 @@ struct HostSettings {
     bool ctf_home = true;
     int ctf_return = 0; // seconds, 0 never
     bool ctf_slow = true;
+    // Who may add CPUs to open seats (docs/xeleenet-cpus-plan.md): 0 Off, 1
+    // the host's machine, 2 anyone.
+    int cpus = 1;
 };
 HostSettings s_host;
 
@@ -261,10 +264,10 @@ void host_save() {
     std::fprintf(f,
                  "preset=%d\nname=%s\nopen=%d\nseats=%d\nteams=%d\nstock=%d\nstocks=%d\nminutes=%d\nitems=%d\n"
                  "ff=%d\nhandicap=%d\ndamage=%d\npause=%d\nstages=%u\nfighters=%u\nfrozen=%d\nhide=%d\n"
-                 "mode=%d\nctf_caps=%d\nctf_home=%d\nctf_return=%d\nctf_slow=%d\nctf_minutes=%d\n",
+                 "mode=%d\nctf_caps=%d\nctf_home=%d\nctf_return=%d\nctf_slow=%d\nctf_minutes=%d\ncpus=%d\n",
                  h.preset, h.name.c_str(), h.open, h.seats, h.teams, h.stock, h.stocks, h.minutes, h.items,
                  h.friendly_fire, h.handicap, h.damage, h.pause, h.stages, h.fighters, h.frozen, h.hide_code,
-                 h.mode, h.ctf_caps, h.ctf_home, h.ctf_return, h.ctf_slow, h.ctf_minutes);
+                 h.mode, h.ctf_caps, h.ctf_home, h.ctf_return, h.ctf_slow, h.ctf_minutes, h.cpus);
     std::fclose(f);
 }
 
@@ -328,6 +331,8 @@ bool host_read(const char* path, HostSettings& h) {
             h.ctf_slow = n != 0;
         else if (k == "ctf_minutes")
             h.ctf_minutes = std::clamp(n, 0, 99);
+        else if (k == "cpus")
+            h.cpus = std::clamp(n, 0, 2);
     }
     std::fclose(f);
     if (h.stages == 0)
@@ -381,6 +386,13 @@ template <size_t N> int step(const int (&values)[N], int v, int dir) {
 
 std::string on_off(bool on) { return tr(on ? "xeleenet.host.values.on" : "xeleenet.host.values.off"); }
 
+// The CPUs row's value: Off, Host or Anyone.
+std::string cpus_label(int cpus) {
+    static const char* const kCpus[3] = {"xeleenet.host.values.off", "xeleenet.host.values.cpus_host",
+                                         "xeleenet.host.values.cpus_anyone"};
+    return tr(kCpus[std::clamp(cpus, 0, 2)]);
+}
+
 std::string ctf_return_label(int s) {
     return s == 0 ? tr("xeleenet.host.values.off") : tr("xeleenet.host.values.seconds", {{"n", s}});
 }
@@ -413,8 +425,9 @@ std::string rules_line(bool teams, int seats, bool stock, int stocks, int minute
     return r;
 }
 
-// The masks go last: LAN's announcement cuts them off its `s` and sends them
-// as keys of their own (xeleenet_lan.c host_announce).
+// The masks and the CPUs go last: LAN's announcement cuts them off its `s` (a
+// TXT value is 255 bytes at most) and sends them as keys of their own
+// (xeleenet_lan.c host_announce).
 std::string settings_json() {
     const HostSettings& h = s_host;
     char b[512];
@@ -422,12 +435,12 @@ std::string settings_json() {
                   "{\"preset\":\"%s\",\"seats\":%d,\"mode\":\"%s\",\"win\":\"%s\",\"stocks\":%d,\"time_min\":%d,"
                   "\"items\":\"%s\",\"stage_list\":\"%s\",\"fighter_list\":\"%s\",\"pick\":\"everyone\","
                   "\"format\":\"endless\",\"first_to\":2,\"place_secs\":15,\"game_mode\":\"%s\",\"ctf_caps\":%d,"
-                  "\"fighter_mask\":%u,\"stage_mask\":%u}",
+                  "\"fighter_mask\":%u,\"stage_mask\":%u,\"cpus\":\"%s\"}",
                   kPresetIds[h.preset], h.seats, h.teams || h.mode ? "teams" : "ffa", h.stock && !h.mode ? "stock" : "time",
                   h.stocks, match_minutes(h), kItemIds[h.items + 1],
                   h.mode ? "custom" : h.stages == kCompetitive ? "competitive" : h.stages == kAllStages ? "all" : "custom",
                   fighter_list_id(h.fighters), h.mode ? "ctf" : "vs", h.ctf_caps, h.fighters,
-                  h.mode ? kCtfStages : h.stages);
+                  h.mode ? kCtfStages : h.stages, h.cpus == 0 ? "off" : h.cpus == 2 ? "anyone" : "host");
     return b;
 }
 
@@ -440,7 +453,7 @@ bool plays_same(const HostSettings& a, const HostSettings& b) {
            match_minutes(a) == match_minutes(b) && a.items == b.items &&
            (a.teams && a.friendly_fire) == (b.teams && b.friendly_fire) &&
            a.handicap == b.handicap && a.damage == b.damage && a.pause == b.pause && a.stages == b.stages &&
-           a.fighters == b.fighters && a.frozen == b.frozen && a.mode == b.mode &&
+           a.fighters == b.fighters && a.frozen == b.frozen && a.mode == b.mode && a.cpus == b.cpus &&
            (a.mode == 0 || (a.ctf_caps == b.ctf_caps && a.ctf_home == b.ctf_home && a.ctf_return == b.ctf_return &&
                             a.ctf_slow == b.ctf_slow));
 }
@@ -873,6 +886,14 @@ struct Screen : Rml::EventListener {
                "xeleenet.host.hints.seats");
     }
 
+    // Who may add CPUs to open seats (docs/xeleenet-cpus-plan.md): Off, Host
+    // or Anyone. Lobby Settings shows the setting in force as its "was".
+    void cpus_row(std::string& r, const HostSettings& h, int col, int row, const HostSettings* in_force = nullptr) {
+        choice(r, "cpus", col, row, "xeleenet.host.rows.cpus", cpus_label(h.cpus),
+               [](int d) { s_edit->cpus = (s_edit->cpus + d + 3) % 3; }, "xeleenet.host.hints.cpus", true, nullptr,
+               in_force != nullptr && in_force->cpus != h.cpus ? cpus_label(in_force->cpus) : std::string());
+    }
+
     void open_button(std::string& r, int row) {
         r += "<button id=\"open\" class=\"gold\">" + enc(tr("xeleenet.host.open")) + "</button></div>";
         Item it{"open", 1, row, true};
@@ -918,10 +939,11 @@ struct Screen : Rml::EventListener {
         choice(r, "format", 1, o + 4, "xeleenet.host.rows.format", tr("xeleenet.host.values.format"), [](int) {},
                "xeleenet.host.hints.format", false, "xeleenet.host.soon");
         group(r, "xeleenet.host.groups.joining");
-        choice(r, "ask", 1, o + 5, "xeleenet.host.rows.ask", on_off(false), [](int) {}, "xeleenet.host.hints.ask", false,
+        cpus_row(r, h, 1, o + 5);
+        choice(r, "ask", 1, o + 6, "xeleenet.host.rows.ask", on_off(false), [](int) {}, "xeleenet.host.hints.ask", false,
                "xeleenet.host.soon");
         if (!lan()) // no codes on LAN
-            choice(r, "hide", 1, o + 6, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
+            choice(r, "hide", 1, o + 7, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
                    [](int) { s_edit->hide_code = !s_edit->hide_code; }, "xeleenet.host.hints.hide_code");
         open_button(r, o + 9);
     }
@@ -993,12 +1015,13 @@ struct Screen : Rml::EventListener {
         choice(r, "format", 1, o + 5, "xeleenet.host.rows.format", tr("xeleenet.host.values.format"), [](int) {},
                "xeleenet.host.hints.format", false, "xeleenet.host.soon");
         group(r, "xeleenet.host.groups.joining");
-        choice(r, "ask", 1, o + 6, "xeleenet.host.rows.ask", on_off(false), [](int) {}, "xeleenet.host.hints.ask", false,
+        cpus_row(r, h, 1, o + 6);
+        choice(r, "ask", 1, o + 7, "xeleenet.host.rows.ask", on_off(false), [](int) {}, "xeleenet.host.hints.ask", false,
                "xeleenet.host.soon");
         if (!lan()) // no codes on LAN
-            choice(r, "hide", 1, o + 7, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
+            choice(r, "hide", 1, o + 8, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
                    [](int) { s_edit->hide_code = !s_edit->hide_code; }, "xeleenet.host.hints.hide_code");
-        open_button(r, o + 8);
+        open_button(r, o + 9);
         set_board(r);
     }
 
@@ -2552,6 +2575,7 @@ HostSettings from_rules(const PcXnRules& r) {
     h.pause = r.pause, h.stages = r.stage_mask, h.fighters = r.fighter_mask, h.frozen = r.frozen_stadium;
     h.mode = r.game_mode, h.ctf_caps = r.ctf_caps, h.ctf_home = r.ctf_home, h.ctf_return = r.ctf_return;
     h.ctf_slow = r.ctf_slow;
+    h.cpus = r.cpus;
     return h;
 }
 
@@ -2592,6 +2616,7 @@ std::vector<std::string> rule_changes(const HostSettings& a, const HostSettings&
     add("xeleenet.host.rows.stage_list", stage_list_label(a.stages), stage_list_label(b.stages));
     add("xeleenet.host.rows.frozen", on_off(a.frozen), on_off(b.frozen));
     add("xeleenet.host.rows.seats", std::to_string(a.seats), std::to_string(b.seats));
+    add("xeleenet.host.rows.cpus", cpus_label(a.cpus), cpus_label(b.cpus));
     if (listing && !lan()) {
         add("xeleenet.host.rows.visibility", tr(a.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private"),
             tr(b.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private"));
@@ -3268,6 +3293,17 @@ std::string changes_box(const HostSettings& was, const HostSettings& now) {
     }
     if ((now.teams || now.mode == 1) && !(was.teams || was.mode == 1)) // Capture the Flag plays teams
         r += "<div class=\"ce\">" + enc(tr("xeleenet.settings.effects.teams")) + "</div>";
+    // The CPUs the new settings take out (Off, or fewer seats), by name.
+    const unsigned cpus = s_css.cpus & 15u;
+    const unsigned gone = cpus & ~pc_xn_cpus_kept(cpus, s_css.humans, now.seats, now.cpus);
+    if (gone != 0) {
+        std::string names;
+        for (int q = 0; q < 4; q++)
+            if (gone & (1u << q))
+                names += (names.empty() ? "P" : ", P") + std::to_string(q + 1) +
+                         (s_css.ckind[q] < 0x1A ? " " + fighter_name_of(s_css.ckind[q]) : std::string());
+        r += "<div class=\"ce red\">" + enc(tr("xeleenet.settings.effects.cpus_removed", {{"names", names}})) + "</div>";
+    }
     return r + "<div class=\"ce\">" + enc(tr("xeleenet.settings.effects.next_game")) + "</div>";
 }
 
@@ -3367,23 +3403,24 @@ void Screen::build_overlay_host() {
            [least](int d) { s_edit->seats = std::clamp(s_edit->seats + d, least, 4); },
            h.seats <= least && host ? "xeleenet.settings.hints.seats_limit" : "xeleenet.host.hints.seats", true, nullptr,
            was(std::to_string(h.seats), std::to_string(o.seats)), host && h.seats <= least);
+    cpus_row(r, h, 1, 6, host ? &o : nullptr);
     if (!lan() && host) { // the listing's own: a guest has no say, and LAN lists every lobby
-        choice(r, "vis", 1, 6, "xeleenet.host.rows.visibility",
+        choice(r, "vis", 1, 7, "xeleenet.host.rows.visibility",
                tr(h.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private"),
                [](int) { s_edit->open = !s_edit->open; }, "xeleenet.host.hints.visibility", true, nullptr,
                h.open != o.open ? tr(o.open ? "xeleenet.host.values.public" : "xeleenet.host.values.private") : "");
-        choice(r, "hide", 1, 7, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
+        choice(r, "hide", 1, 8, "xeleenet.host.rows.hide_code", on_off(h.hide_code),
                [](int) { s_edit->hide_code = !s_edit->hide_code; }, "xeleenet.host.hints.hide_code", true, nullptr,
                was(on_off(h.hide_code), on_off(o.hide_code)));
     }
     if (host) {
         r += "<div class=\"obtns\"><button id=\"apply\" class=\"gold\">" + enc(tr("xeleenet.settings.apply")) +
              "</button><button id=\"cancel\" class=\"plain\">" + enc(tr("xeleenet.settings.cancel")) + "</button></div>";
-        Item ap{"apply", 1, 8, true};
+        Item ap{"apply", 1, 9, true};
         ap.act = [] { settings_done(true); };
         ap.hint = tr("xeleenet.settings.hints.apply");
         items.push_back(std::move(ap));
-        Item ca{"cancel", 1, 9, true};
+        Item ca{"cancel", 1, 10, true};
         ca.act = [] { settings_done(false); };
         ca.hint = tr("xeleenet.settings.hints.cancel");
         items.push_back(std::move(ca));
@@ -4016,6 +4053,7 @@ extern "C" void pc_xn_menu_rules(PcXnRules* out) {
     out->stage_mask = h.stages;
     out->fighter_mask = h.fighters;
     out->frozen_stadium = h.frozen;
+    out->cpus = h.cpus;
     if (h.mode == 1) { // Capture the Flag decides these
         out->teams = true;
         out->stock = false;

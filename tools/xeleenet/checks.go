@@ -239,6 +239,9 @@ type Settings struct {
 	// before it.
 	GameMode string `json:"game_mode"`
 	CtfCaps  int    `json:"ctf_caps,omitempty"`
+	// Who may add CPUs to open seats (docs/xeleenet-cpus-plan.md): off, host
+	// or anyone. Missing reads as off, from games before it.
+	Cpus string `json:"cpus"`
 	// The lists themselves, for a lobby's Details page
 	// (docs/xeleenet-lobby-details-plan.md): a bit per CharacterKind, and a
 	// bit per Random Stage Switch id. Missing reads as the named list's.
@@ -353,6 +356,11 @@ func settings(v any) Settings {
 			fail(400, "bad_settings", "Capture the Flag plays teams, on time, on its maps")
 		}
 	}
+	cpus := m["cpus"]
+	if cpus == nil {
+		cpus = "off"
+	}
+	out.Cpus = pick(cpus, []string{"off", "host", "anyone"}, "CPUs setting")
 	// Loser picks needs a loser: one side in a 1v1, or a team.
 	if out.Pick == "loser" && out.Mode == "ffa" && out.Seats > 2 {
 		fail(400, "bad_settings", "Loser picks needs two players or Teams")

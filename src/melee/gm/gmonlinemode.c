@@ -1751,6 +1751,7 @@ static void xnApplyRules(bool now)
         m.slow = r.ctf_slow;
         pc_net_set_mode(&m);
     }
+    pc_net_set_cpus(r.cpus);
     if (now) {
         pc_net_rules_take_wanted();
     }
@@ -1792,6 +1793,7 @@ static void xnRulesInForce(PcXnRules* r)
         r->ctf_return = m.return_s;
         r->ctf_slow = m.slow != 0;
     }
+    r->cpus = pc_net_rules_cpus();
 }
 
 /* The handshake of the session now running, once per session (each roster

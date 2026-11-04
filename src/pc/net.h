@@ -51,7 +51,10 @@ extern "C" {
 /* Version 15 marks a scene exit ask in the input stream (WIRE_SCENE_ASK,
  * net.c scene hand-off) instead of sending REL_SCENE: a peer on 14 would
  * play the mark as a button and wait for a REL_SCENE that never comes. */
-#define PC_NET_PROTO_VERSION 15 /* 15: scene asks ride the input stream */
+/* Version 16: Rules carries who may add CPUs (docs/xeleenet-cpus-plan.md); it
+ * also marks the CTF zone fix and the CTF AI's checksum, which a 15 peer
+ * would desync on. */
+#define PC_NET_PROTO_VERSION 16 /* 16: CPUs in XeleeNet lobbies */
 void pc_net_init(void);
 void pc_net_set_input_delay(int frames);
 bool pc_net_active(void);
@@ -253,6 +256,14 @@ typedef struct PcNetMode {
  * before a session). */
 void pc_net_set_mode(const PcNetMode* mode);
 void pc_net_rules_mode(PcNetMode* out);
+/* Who may add CPUs to a lobby's open seats (protocol 16): what the host's
+ * RULES will carry, and the setting in force (the wanted one before a
+ * session). */
+#define PC_NET_CPUS_OFF 0
+#define PC_NET_CPUS_HOST 1
+#define PC_NET_CPUS_ANYONE 2
+void pc_net_set_cpus(int cpus);
+int pc_net_rules_cpus(void);
 
 struct GameRules;
 void pc_net_set_rules_staging(bool on);
