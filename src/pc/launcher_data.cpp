@@ -430,6 +430,18 @@ Preferences load_preferences(const std::filesystem::path& path) {
             float value;
             if (row >> value && std::isfinite(value) && value >= 0.0f && value <= 1.0f)
                 (key == "music_volume" ? prefs.music_volume : prefs.sfx_volume) = value;
+        } else if (key == "ctf_caps" || key == "ctf_minutes" || key == "ctf_return") {
+            int value;
+            if (key == "ctf_caps" && row >> value && value >= 1 && value <= 9)
+                prefs.ctf_caps = value;
+            else if (key == "ctf_minutes" && row >> value && value >= 0 && value <= 99)
+                prefs.ctf_minutes = value;
+            else if (key == "ctf_return" && row >> value && value >= 0 && value <= 60)
+                prefs.ctf_return = value;
+        } else if (key == "ctf_home" || key == "ctf_slow" || key == "ctf_items") {
+            int value;
+            if (row >> value && (value == 0 || value == 1))
+                (key == "ctf_home" ? prefs.ctf_home : key == "ctf_slow" ? prefs.ctf_slow : prefs.ctf_items) = value;
         } else if (key == "install_id") {
             row >> std::hex >> prefs.install_id;
         }
@@ -469,6 +481,9 @@ bool save_preferences(
          << "\nxr_shadow " << prefs.xr_shadow
          << "\nxr_place_hold " << prefs.xr_place_hold << "\nxr_lighting " << prefs.xr_lighting << '\n';
     text << "xn_notice_seen " << prefs.xn_notice_seen << '\n';
+    text << "ctf_caps " << prefs.ctf_caps << "\nctf_minutes " << prefs.ctf_minutes << "\nctf_return "
+         << prefs.ctf_return << "\nctf_home " << prefs.ctf_home << "\nctf_slow " << prefs.ctf_slow
+         << "\nctf_items " << prefs.ctf_items << '\n';
     auto data = text.str();
     size_t done = 0;
     bool ok = true;

@@ -1,4 +1,5 @@
 #include "gmvsmelee.h"
+#include <melee/gm/gmctf.h>
 
 #include <Runtime/platform.h>
 
@@ -174,6 +175,9 @@ void gmVsMelee_EnterVs(GameModeState* state, VsModeData* vs,
 {
     StartMeleeData* start = gm_GetGameModeStateEnterData(state);
 
+#ifdef TARGET_PC
+    gmCtf_SetRules(NULL); /* a mode that wants Capture the Flag sets it in start_cb */
+#endif
     gm_80167BC8(vs);
     start->rules = vs->start.rules;
 

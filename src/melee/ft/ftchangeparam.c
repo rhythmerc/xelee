@@ -5,6 +5,8 @@
 
 #include "fighter.h"
 #include "inlines.h"
+#include <melee/it/kinds/itctfflag.h>
+#include <melee/gm/gmctf.h>
 #include <sysdolphin/baselib/debug.h>
 
 float ftCo_CalcYScaledKnockback(float arg0, float scale, float arg2)
@@ -218,6 +220,15 @@ void ftCo_800D105C(Fighter_GObj* fgp)
         fp->co_attrs.wall_jump_horizontal_velocity *= Fighter_804D6520->x34;
         fp->co_attrs.wall_jump_vertical_velocity *= Fighter_804D6520->x38;
     }
+#ifdef TARGET_PC
+    /* A CTF flag carrier walks and runs slower (gmctf.c re-runs this on
+     * pickup and release). */
+    if (itCtfFlag_Is(fp->item_gobj) && gmCtf_CarrySlow()) {
+        fp->co_attrs.walk_max_vel *= CTF_FLAG_CARRY_SPEED;
+        fp->co_attrs.dash_initial_velocity *= CTF_FLAG_CARRY_SPEED;
+        fp->co_attrs.dash_max_velocity *= CTF_FLAG_CARRY_SPEED;
+    }
+#endif
     if (fp->is_metal) {
         fp->co_attrs.jump_v_initial_velocity *= Fighter_804D651C->x4;
         fp->co_attrs.hop_v_initial_velocity *= Fighter_804D651C->x8;

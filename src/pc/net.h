@@ -47,7 +47,14 @@ extern "C" {
  * gains an xports byte, and the pads of those ports follow the primary
  * port's (docs/lan-multipad-plan.md). A peer on 12 reads every packet as
  * malformed. */
-#define PC_NET_PROTO_VERSION 13
+/* Version 14: Rules carries the game mode. */
+/* Version 15 marks a scene exit ask in the input stream (WIRE_SCENE_ASK,
+ * net.c scene hand-off) instead of sending REL_SCENE: a peer on 14 would
+ * play the mark as a button and wait for a REL_SCENE that never comes. */
+/* Version 16: Rules carries who may add CPUs (docs/xeleenet-cpus-plan.md); it
+ * also marks the CTF zone fix and the CTF AI's checksum, which a 15 peer
+ * would desync on. */
+#define PC_NET_PROTO_VERSION 16 /* 16: CPUs in XeleeNet lobbies */
 void pc_net_init(void);
 void pc_net_set_input_delay(int frames);
 bool pc_net_active(void);
@@ -234,6 +241,30 @@ uint32_t pc_net_fighters(void);
  *   - pc_net_rules_take_wanted: those in force at once, the host alone;
  *   - pc_net_rules_seats: the seats in force (the wanted ones before a
  *     session), 0 when never set. */
+/* A lobby's game mode and its own rules, carried in RULES (protocol 14):
+ * every player sets the match up from the copy in force. */
+typedef struct PcNetMode {
+    uint8_t mode;     /* 0 VS, 1 Capture the Flag */
+    uint8_t caps;     /* CTF: captures to win, 1-9 */
+    uint8_t home;     /* CTF: your own flag must be home to score */
+    uint8_t return_s; /* CTF: a free flag's return, seconds; 0 never */
+    uint8_t slow;     /* CTF: carriers slowed */
+} __attribute__((packed)) PcNetMode;
+#define PC_NET_MODE_VS 0
+#define PC_NET_MODE_CTF 1
+/* What the host's RULES will carry, and the mode in force (the wanted one
+ * before a session). */
+void pc_net_set_mode(const PcNetMode* mode);
+void pc_net_rules_mode(PcNetMode* out);
+/* Who may add CPUs to a lobby's open seats (protocol 16): what the host's
+ * RULES will carry, and the setting in force (the wanted one before a
+ * session). */
+#define PC_NET_CPUS_OFF 0
+#define PC_NET_CPUS_HOST 1
+#define PC_NET_CPUS_ANYONE 2
+void pc_net_set_cpus(int cpus);
+int pc_net_rules_cpus(void);
+
 struct GameRules;
 void pc_net_set_rules_staging(bool on);
 bool pc_net_rules_commit(void);

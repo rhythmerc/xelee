@@ -4,6 +4,7 @@
 #include <pc/gekko_fp.h>
 
 #include <math.h>
+#include <melee/it/kinds/itctfflag.h>
 #include <placeholder.h>
 
 #include "ft_07C1.h"
@@ -2737,6 +2738,11 @@ void Fighter_8006CDA4(Fighter* fp, s32 arg1)
     if (fp->item_gobj && !itIsHeavy(fp->item_gobj)) {
         hold_item_bool = true;
     }
+#ifdef TARGET_PC
+    if (itCtfFlag_Is(fp->item_gobj)) {
+        arg1 *= CTF_FLAG_DROP_BIAS; /* a flag shakes loose more easily */
+    }
+#endif
 
     temp_bool = !(fp->x2220_b3 || fp->x2220_b4 || ftCo_8008E984(fp));
     vec = vec3_803B7494;

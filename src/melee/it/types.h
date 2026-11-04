@@ -612,6 +612,14 @@ struct Item {
         itMatadogas_ItemVars matadogas;
         itMato_ItemVars mato;
         itMBall_ItemVars mball;
+#ifdef TARGET_PC
+        /* Capture the Flag's flag (itctfflag.c, gmctf.c). */
+        struct {
+            u8 team;          /* 0 red, 1 blue: its colour and whose it is */
+            u16 return_left;  /* auto-return frames left while free; 0 = not counting */
+            u8 thrown;        /* the last let-go was a throw, not a drop (gmctf.c's events) */
+        } ctfflag;
+#endif
         itMDisable_ItemVars mdisable;
         itMewtwoShadowball_ItemVars mewtwoshadowball;
         itMsBomb_ItemVars msbomb;

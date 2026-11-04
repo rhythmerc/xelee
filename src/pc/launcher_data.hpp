@@ -60,6 +60,15 @@ struct Preferences {
     bool xr_shadow = true;
     bool xr_place_hold = true; // XR: the stage is placed before each fight (off: fights start right away)
     bool xn_notice_seen = false; // the one-time "XeleeNet unlocked" special message has shown (ifprize.c)
+    // VS Mode > Xelee Melee > Capture the Flag's rules (src/pc/ctf_rules_menu.cpp),
+    // kept for next time as Melee keeps its own: the lobby's defaults
+    // (docs/xeleenet-modes-plan.md §6h).
+    int ctf_caps = 5;        // 1-9
+    int ctf_minutes = 10;    // 0 no limit
+    int ctf_return = 0;      // seconds; 0 never
+    bool ctf_home = true;    // your own flag must be home to score
+    bool ctf_slow = true;    // carriers walk and dash slower
+    bool ctf_items = false;  // Melee's own item settings, or none
     uint64_t install_id = 0;  // random once per install (LAN host election); 0 = not yet
 };
 DiscInfo inspect_disc(const std::string& path);

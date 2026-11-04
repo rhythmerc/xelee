@@ -618,6 +618,15 @@ built 2026-10-28, see the commits on `feat/xelee-net`):
    4. From the frame after the last, that port reads as a released pad.
       Anyone who predicted past it rolls back.
    5. The match ends as a no contest on the void frame (60 frames on).
+   6. In a lobby there are no results: everyone goes from the match to the
+      CSS on the same frame, with the leaver's door shut and a "NAME left
+      the lobby" note, and the lobby lets the leaver go as for a B hold
+      (`xnLeftMidMatch`, `gmonlinemode.c`). The host's next session leaves
+      them out, and the CSS reloads with it. Until 2026-11-03 the match went
+      to the results, which wait on every player's START, the leaver's too:
+      everyone was stuck there (the 2026-11-02 playtest).
+      `net_test_xn_menu.py --scenario leave-match` (a goodbye) and
+      `leave-match-kill` (silence) cover it.
    - The void tick runs lockstep, with the frame before it lockstep too,
      because ending the match isn't pure under a re-run.
    - The host leaving still ends the session.

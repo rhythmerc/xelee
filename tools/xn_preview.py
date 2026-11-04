@@ -4,10 +4,10 @@ look (src/pc/xeleenet_menu.cpp, resources/xeleenet*.rcss).
 
     tools/xn_preview.py [PAGE ...] [--share] [--out build/xn-preview]
 
-PAGE is host, more, stages, fighters, lobbies, details, code, joining, progress, failed,
+PAGE is host, host-ctf (the Host page in Capture the Flag), more, stages, fighters, lobbies, details, code, joining, progress, failed,
 banner, css-ready, css-countdown, css-waiting, css-leaving, css-left, css-N (a full
 lobby of N seats, for the doors and the names in them), Lobby Settings'
-css-settings, css-settings-fighters, css-settings-guest and css-settings-seats,
+css-settings, css-settings-fighters, css-settings-guest, css-settings-seats and css-settings-ctf (a VS lobby's draft in Capture the Flag),
 what follows an Apply's css-changed and css-offlist, a guest's css-editing, the stage
 select's sss-N, sss-draw-N or sss-landed-N for N players, or LAN's lan-host,
 lan-lobbies, lan-details, lan-empty, lan-blocked, lan-address and lan-banner (all of them
@@ -29,9 +29,10 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-PAGES = ["host", "more", "stages", "fighters", "lobbies", "details", "code", "joining", "progress", "failed",
+PAGES = ["host", "host-ctf", "more", "stages", "fighters", "lobbies", "details", "code", "joining", "progress", "failed",
          "banner", "css-ready", "css-countdown", "css-waiting", "css-leaving", "css-left", "css-2", "css-3", "css-4",
-         "css-settings", "css-settings-fighters", "css-settings-guest", "css-settings-seats", "css-changed",
+         "css-settings", "css-settings-fighters", "css-settings-guest", "css-settings-seats", "css-settings-ctf",
+         "css-changed",
          "css-offlist", "css-editing",
          "sss-2", "sss-3", "sss-4", "sss-draw-2", "sss-draw-4", "sss-landed-2", "sss-landed-4",
          "lan-host", "lan-lobbies", "lan-details", "lan-empty", "lan-blocked", "lan-address", "lan-banner"]

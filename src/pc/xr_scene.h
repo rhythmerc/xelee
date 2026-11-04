@@ -115,6 +115,14 @@ void pc_xr_fighter_light_end(void);
  * to the flat frame, off the XR HUD; then call pc_xr_magnify_end. */
 bool pc_xr_magnify_begin(void);
 void pc_xr_magnify_end(void);
+/* Around a draw of the HUD's top row (if/ifall.c, ifAll_TopBegin): on the
+ * HUD plane it is drawn `dy` HUD units lower, so it sits just above the
+ * damage row. True when it moved; hand that to pc_xr_hud_top_end. Only
+ * under the HUD camera while XR shows the fight in 3D: the game's state
+ * stays as it is, and so does the HUD everywhere else (a flat game, the
+ * virtual screen). */
+bool pc_xr_hud_top_begin(float dy);
+void pc_xr_hud_top_end(bool began);
 #else
 static inline bool pc_xr_presenting(void) { return false; }
 static inline bool pc_xr_world_3d(void) { return false; }
@@ -177,6 +185,11 @@ static inline void pc_xr_fighter_light_begin(struct HSD_GObj* gobj) { (void)gobj
 static inline void pc_xr_fighter_light_end(void) {}
 static inline bool pc_xr_magnify_begin(void) { return false; }
 static inline void pc_xr_magnify_end(void) {}
+static inline bool pc_xr_hud_top_begin(float dy) {
+    (void)dy;
+    return false;
+}
+static inline void pc_xr_hud_top_end(bool began) { (void)began; }
 #endif
 
 #ifdef __cplusplus

@@ -167,6 +167,13 @@ static inline void sock_startup(void) {}
  * the length of each message type is one number rather than two. */
 #define NET_MAC_LEN 8
 
+/* A button bit no GameCube pad has, which the wire keeps for the netcode:
+ * set on one frame of a player's primary-port input, it is that player's
+ * scene exit ask (net.c, scene hand-off). to_wire clears it from a real
+ * pad (Aurora's MISC1 shares the bit) and from_wire before the sim sees
+ * it, so no game code ever reads it. */
+#define WIRE_SCENE_ASK 0x8000
+
 /* 8-byte pad, same fields Slippi puts on the wire. */
 typedef struct WirePad {
     uint16_t button;
@@ -229,6 +236,29 @@ typedef struct FwdAck {
     int32_t frame;  /* newest contiguous frame of it the sender now holds */
 } __attribute__((packed)) FwdAck;
 
+/* 'L' (proto 15): one peer's figures for each of its links (net.c, link
+ * figures), twice a second, guests to the host and the host to every guest.
+ * Unreliable on purpose: the next one supersedes a lost one, and on the
+ * reliable lane it would queue the scene hand-off behind a statistic. All
+ * fields network order, times in microseconds. */
+#define LINK_RELAYED 0x01 /* what it sends here comes through the host as well */
+#define LINK_DEAD 0x02    /* given up: only the host's path is left */
+#define LINK_GONE 0x04    /* its player left */
+#define LINK_FASTER 0x08  /* relayed for speed, not because the link is silent */
+typedef struct LinkFig {
+    uint8_t port;  /* the other end's primary port; 0xff: unused slot */
+    uint8_t flags; /* LINK_* */
+    uint32_t ping; /* the direct link's smoothed round trip */
+    uint32_t jit;  /* the direct link's mean |dRTT| */
+    uint32_t trip; /* what that player's input takes to get here, by whichever path is faster */
+    uint32_t jeff; /* the jitter of that path */
+} __attribute__((packed)) LinkFig;
+typedef struct LinkReport {
+    Hdr h;        /* 'L' */
+    uint32_t fwd; /* the host's measured hold before it passes input on; 0 from a guest */
+    LinkFig fig[MAX_PEERS];
+} __attribute__((packed)) LinkReport;
+
 /* Reliable lobby message (stop-and-wait, net_reliable.c). */
 #define REL_MAX 256
 #define REL_RULES 0x01  /* host -> guest {seed, start_frame, nonce} (net_handshake.c) */
@@ -276,6 +306,8 @@ typedef struct Rules {
     uint8_t teams;        /* XeleeNet: the CSS opens with Teams on (pc_net_set_teams) */
     uint32_t fighter_mask; /* XeleeNet's fighter list: bit = CharacterKind (xeleenet_fighters.h) */
     uint8_t seats;        /* XeleeNet: the lobby's seats, 2-4, which lay the CSS's doors out */
+    PcNetMode mode;       /* XeleeNet: the game mode and its rules (Capture the Flag) */
+    uint8_t cpus;         /* XeleeNet: who may add CPUs, PC_NET_CPUS_* (protocol 16) */
     uint32_t unlock_hash; /* unlock_hash_now() after the sender forced its masks */
     uint32_t hash;        /* rules_hash() of the wire image above; the guest recomputes it */
 } __attribute__((packed)) Rules;
@@ -324,7 +356,8 @@ typedef struct DelayMsg {
 /* Payload of REL_SCENE (net.c): the frame the sender's scene asked to end
  * on. Both peers leave on max(theirs, ours) + SCENE_HANDOFF, so a load that
  * costs one peer more ticks than the other cannot put the next scene on
- * different frames (docs/netcode-plan.md section 5.2). */
+ * different frames (docs/netcode-plan.md section 5.2). The Slippi transport
+ * only: the custom one carries the ask as an input mark (WIRE_SCENE_ASK). */
 typedef struct SceneMsg {
     uint32_t seq;   /* exits the sender has completed: pairs the two halves */
     uint32_t frame; /* the frame its scene asked to end on */
@@ -337,7 +370,7 @@ _Static_assert(sizeof(Ack) == 13, "wire layout");
 _Static_assert(sizeof(FwdHdr) == 8 && sizeof(FwdAck) == 12, "wire layout");
 _Static_assert(sizeof(Rel) == 11 + REL_MAX, "wire layout");
 _Static_assert(sizeof(RelAck) == 8 && sizeof(Bye) == 8, "wire layout");
-_Static_assert(sizeof(Rules) == 16 + sizeof(GameRules) + 28, "wire layout");
+_Static_assert(sizeof(Rules) == 16 + sizeof(GameRules) + 34, "wire layout"); /* 34: +1, the CPUs (protocol 16) */
 _Static_assert(sizeof(Ready) == 28, "wire layout");
 _Static_assert(sizeof(Nonces) == 36, "wire layout");
 _Static_assert(sizeof(Resume) == 20 && sizeof(Resume) % 4 == 0, "wire layout");
@@ -494,6 +527,28 @@ void net_link_rel(int peer, uint8_t type, const void* payload, int len);
 /* The host passes a reliable message from `peer` on to the guests that cannot
  * hear it (REL_RELAY); a no-op anywhere else. */
 void net_relay_out(int peer, uint8_t type, const void* payload, int len);
+/* A guest asked for a player's relay while the direct link still works, so
+ * that player's messages may land twice: true when this one's copy by the
+ * other path already landed (drop it); net_relay_landed after delivering. */
+bool net_relay_twin(int peer, uint8_t type, const void* payload, int len);
+void net_relay_landed(int peer, uint8_t type, const void* payload, int len);
+/* The link to peer i still carries something worth measuring: its player
+ * has not left and this side has not given the link up (game thread). */
+bool net_link_counts(int peer);
+/* The mesh's worst path for auto delay (net.c, link figures): over every
+ * ordered pair this side knows -- its own links, and on the host every
+ * guest's inbound links as reported -- the one whose trip plus jitter is
+ * longest. A pair that goes through the host counts as the relayed path. */
+typedef struct LinkWorst {
+    uint32_t need_us;    /* that pair's trip + jitter */
+    uint32_t trip_us;    /* its one-way trip */
+    uint32_t jit_us;     /* the jitter that path carries */
+    uint32_t rtt_max_us; /* the slowest pair's round trip, for the LAN test */
+    uint32_t jit_max_us; /* the worst jitter of any pair */
+    int from, to;        /* ports: the sending end and the receiving end */
+    bool relayed;        /* the pair goes through the host */
+} LinkWorst;
+void net_links_worst(LinkWorst* w);
 
 /* One sendto with errno/WSA translation and the sock_err counter; used by
  * the senders here and the link simulator's flush (net_sim.c). Caller holds
@@ -607,8 +662,9 @@ void handshake_direct(void);
 
 /* One phase sample: the peer's frame advantage and ours (net.c on_inputs). */
 void adv_note(int peer, int remote_adv, int local_adv);
-void jitter_note(uint32_t rtt); /* one RTT sample, for the |dRTT| mean */
-uint32_t jitter_us(void);
+void jitter_note(int peer, uint32_t rtt); /* one RTT sample of that link, for its |dRTT| mean */
+uint32_t jitter_peer_us(int peer);        /* that link's mean |dRTT| */
+uint32_t jitter_us(void);                 /* the worst of this side's live links' */
 void time_sync(void);
 /* The host's REL_DELAY announcement (on_rel dispatches it here, like
  * REL_RESUME); game thread. */

@@ -25,10 +25,13 @@ float melee_powf(float x, float y);
 #define powf melee_powf
 #endif
 
-/* The game's sqrtf is MSL's, not libm's (pc/gekko_fp.h). */
+/* The game's sqrtf is MSL's, not libm's (pc/gekko_fp.h), and so is its
+ * logf (pc/libm/pc_msl_logf.c): every libm's bits differ there. */
 #if defined(MELEE_GAME_TU) && !defined(__cplusplus)
 #include "pc/gekko_fp.h"
 #define sqrtf gk_sqrtf
+float pc_logf(float x);
+#define logf pc_logf
 #endif
 
 #endif

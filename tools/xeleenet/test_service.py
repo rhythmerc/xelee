@@ -237,6 +237,27 @@ def run(url):
         refused(lambda: a.settings(lobby, "Friday netplay", dict(four, **bad)), "bad_settings", what)
     a.settings(lobby, "Friday netplay", four)
 
+    print("-- the game mode")
+    row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
+    check(row and row[0]["settings"].get("game_mode") == "vs", "a game that sends no mode lists VS")
+    temple = 1 << 14
+    ctf = dict(four, game_mode="ctf", ctf_caps=3, mode="teams", win="time", stage_list="custom", stage_mask=temple)
+    a.settings(lobby, "CTF night", ctf)
+    row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
+    check(row and row[0]["settings"].get("game_mode") == "ctf" and row[0]["settings"].get("ctf_caps") == 3,
+          "the listing carries Capture the Flag and its captures to win")
+    for bad, what in ((dict(ctf, game_mode="koth"), "a game mode that doesn't exist"),
+                      (dict(ctf, ctf_caps=10), "ten captures to win"),
+                      (dict(ctf, mode="ffa"), "Capture the Flag without teams"),
+                      (dict(ctf, win="stock"), "Capture the Flag on stocks"),
+                      (dict(ctf, stage_mask=temple | 1 << 25), "Capture the Flag off its maps")):
+        refused(lambda: a.settings(lobby, "CTF night", bad), "bad_settings", what)
+    # Lobby Settings switches a running lobby's mode back (the playtest's 7.4).
+    a.settings(lobby, "Friday netplay", four)
+    row = [x for x in e.list(full=True)["lobbies"] if x["code"] == code]
+    check(row and row[0]["settings"].get("game_mode") == "vs" and "ctf_caps" not in row[0]["settings"],
+          "Lobby Settings takes a lobby from Capture the Flag back to VS")
+
     print("-- leaving, removing")
     b.leave(lobby)
     check(e.join(code, ["203.0.113.5:41000"])["port"] == 1, "a leaver's seat (P2) goes to the next joiner")
@@ -276,6 +297,50 @@ def run(url):
     refused(lambda: j.join(code, ["203.0.113.9:41000"]), "full", "a joiner when other pads fill the last seat")
     a.heartbeat(lobby, roster=[c.pubkey, i.pubkey], extra=[])
     check(j.join(code, ["203.0.113.9:41000"])["port"] == 1, "a seat another pad gave up goes to the next joiner")
+
+    print("-- CPUs keep seats warm (docs/xeleenet-cpus-plan.md)")
+    k = player("CPUHOST")
+    four_cpus = dict(DEFAULT_SETTINGS, preset="ffa", seats=4, pick="everyone", cpus="host")
+    r = k.host("Bots welcome", ["198.51.100.9:41000"], settings=four_cpus)
+    cpu_lobby, cpu_code = r["id"], r["code"]
+    k.heartbeat(cpu_lobby, cpus=[{"port": 2, "level": 9, "ckind": 2}, {"port": 3, "level": 5}])
+    row = [x for x in d.list(full=True)["lobbies"] if x["code"] == cpu_code]
+    players = row[0]["players"] if row else []
+    check(row and row[0]["taken"] == 1, "CPUs aren't taken: one player in a lobby with two CPUs")
+    check(row and row[0]["settings"].get("cpus") == "host", "the listing carries the CPUs setting")
+    check([(p["port"], p.get("cpu", False), p.get("level"), p.get("ckind")) for p in players] ==
+          [(0, False, None, None), (2, True, 9, 2), (3, True, 5, None)],
+          "the row lists each CPU with its level and fighter")
+    m1 = player("JOIN1")
+    check(m1.join(cpu_code, ["203.0.113.21:41000"])["port"] == 1, "a joiner takes the empty seat (P2) first")
+    k.heartbeat(cpu_lobby, roster=[m1.pubkey], cpus=[{"port": 2, "level": 9, "ckind": 2}, {"port": 3, "level": 5}])
+    m2 = player("JOIN2")
+    check(m2.join(cpu_code, ["203.0.113.22:41000"])["port"] == 3, "then the highest-port CPU's seat (P4)")
+    row = [x for x in d.list(full=True)["lobbies"] if x["code"] == cpu_code]
+    check(row and [p["port"] for p in row[0]["players"] if p.get("cpu")] == [2],
+          "the CPU whose seat a joiner took leaves the list at once")
+    # The host's game still names the old CPU (its CSS hasn't reloaded): a
+    # person's seat wins.
+    k.heartbeat(cpu_lobby, roster=[m1.pubkey, m2.pubkey],
+                cpus=[{"port": 2, "level": 9, "ckind": 2}, {"port": 3, "level": 5}])
+    row = [x for x in d.list(full=True)["lobbies"] if x["code"] == cpu_code]
+    check(row and row[0]["taken"] == 3 and [p["port"] for p in row[0]["players"] if p.get("cpu")] == [2],
+          "a CPU on a seat a person holds isn't listed")
+    m3 = player("JOIN3")
+    check(m3.join(cpu_code, ["203.0.113.23:41000"])["port"] == 2, "the last CPU's seat (P3) goes to the next joiner")
+    m4 = player("JOIN4")
+    refused(lambda: m4.join(cpu_code, ["203.0.113.24:41000"]), "full", "four people fill a four-seat lobby")
+    refused(lambda: k.settings(cpu_lobby, "Bots welcome", dict(four_cpus, cpus="always")), "bad_settings",
+            "an unknown CPUs setting")
+    k.settings(cpu_lobby, "Bots welcome", dict(four_cpus, cpus="anyone"))
+    row = [x for x in d.list(full=True)["lobbies"] if x["code"] == cpu_code]
+    check(row and row[0]["settings"].get("cpus") == "anyone", "Lobby Settings changes the CPUs setting")
+    k.close(cpu_lobby)
+    r = k.host("No CPUs field", ["198.51.100.9:41000"], settings=dict(DEFAULT_SETTINGS, preset="ffa", seats=4,
+                                                                         pick="everyone"))
+    row = [x for x in d.list(full=True)["lobbies"] if x["code"] == r["code"]]
+    check(row and row[0]["settings"].get("cpus") == "off", "an older game's lobby reads as CPUs off")
+    k.close(r["id"])
 
     print("-- ask before joining")
     f = player("HOST2")

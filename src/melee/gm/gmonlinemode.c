@@ -26,6 +26,7 @@
 #include <melee/mn/mnnamenew.h>
 #include <melee/mn/mnslippi.h>
 #include <melee/mn/mnxeleenet.h>
+#include <melee/gm/gmctf.h>
 #include <melee/lb/lbdvd.h>
 #include <melee/lb/types.h>
 #include <melee/mn/inlines.h>
@@ -48,6 +49,7 @@
 extern bool pc_net_slippi_active(void);
 extern const char* pc_get_net_target(void);
 extern int gm_vs_slippi_quitter;
+extern int gm_vs_net_leaver;
 #include <melee/mn/mnstagesel.h>
 extern void pc_set_net_target(const char* code);
 #include "pc/pc.h"
@@ -84,11 +86,20 @@ static bool xn_reload;
 static bool xn_join_css;
 /* The reloaded CSS's first frame re-seeds (gmOnline_XnCssFrame). */
 static bool xn_reseed;
+/* Ports of players who left mid-match (xnLeftMidMatch): their doors are
+ * shut until the next session, which the host starts without them. */
+static int xn_left_ports;
+static int xn_seq; /* the session the handshake is for (xnAgreeFrame, below) */
 /* The picks a roster reload keeps (gmOnline_XnKeepPicks): the host's, which
  * it sends to everyone, with each door's team. */
 #define NET_MSG_XN_PICKS 0x21
-#define XN_PICKS_LEN 13 /* the mask, then a character and costume a port, then a team a port */
+/* The mask, then a character and costume a port, then a team a port; then
+ * the CPU doors (bits) and a CPU level a port (docs/xeleenet-cpus-plan.md). */
+#define XN_PICKS_LEN 18
 static u8 xn_pick_ckind[4], xn_pick_color[4], xn_pick_team[4], xn_pick_mask;
+static u8 xn_pick_cpus, xn_pick_level[4];
+/* The CPU doors the picks brought into a reloaded CSS (xnPicksTake). */
+static u8 xn_cpus_taken;
 static bool xn_pick_teams; /* xn_pick_team holds the doors' teams */
 /* The Lobby Settings' Apply with the host alone: its CSS reloads on its next
  * frame (gmOnline_XnCssFrame). */
@@ -366,6 +377,40 @@ static void rankedRules(StartMeleeData* start, UNUSED StartMeleeData* previous)
     start->rules.stkind = pc_rank_session_stage();
 }
 
+/* XeleeNet's game mode (docs/xeleenet-modes-plan.md): Capture the Flag
+ * from the RULES in force, the same on every peer. Teams and time come from
+ * the rules already; the sides swap every game of a session (each player
+ * set's session counts its own games, from the seed every peer shares). */
+static u32 xn_mode_seed;
+static int xn_mode_games;
+
+static void xnModeRules(StartMeleeData* start)
+{
+    PcNetMode m;
+    GmCtfRules ctf;
+    if (!gmOnline_XnFlow() || !pc_net_active()) {
+        return;
+    }
+    pc_net_rules_mode(&m);
+    if (m.mode != PC_NET_MODE_CTF) {
+        return;
+    }
+    if (xn_mode_seed != pc_net_seed()) {
+        xn_mode_seed = pc_net_seed();
+        xn_mode_games = 0;
+    }
+    ctf.captures_to_win = m.caps;
+    ctf.home_required = m.home;
+    ctf.carry_slow = m.slow;
+    ctf.swap_sides = (u8) (xn_mode_games & 1);
+    ctf.return_frames = (u16) (m.return_s * 60);
+    xn_mode_games++;
+    start->rules.is_teams = true;
+    gmCtf_SetRules(&ctf);
+    pc_log_line("online: Capture the Flag, game %d of the session (sides %s)", xn_mode_games,
+                ctf.swap_sides ? "swapped" : "as set");
+}
+
 /* Pausing is local to a peer and the other never sees it, so it is off in
  * every Slippi match (Slippi itself allows it in Direct only: that needs the
  * pause synced, which is not built). */
@@ -380,6 +425,7 @@ static void slippiOrRankedRules(StartMeleeData* start, StartMeleeData* previous)
         start->rules.disable_pausing = true;
     }
     rankedRules(start, previous);
+    xnModeRules(start);
 }
 
 static void rankedPlayer(PlayerInitData* start, PlayerInitData* previous)
@@ -469,9 +515,21 @@ void onEnterCss(GameModeState* state)
          * hold, a failure); a session's end alone keeps it. */
         pc_net_unlock_pin();
         /* A door for every player in the session, by controller port. */
-        int ports = pc_net_port_mask();
+        if (xn_reload || xn_join_css) {
+            xn_left_ports = 0; /* a new session: its port mask is who plays */
+        }
+        int ports = pc_net_port_mask() & ~xn_left_ports;
         if (ports == 0) {
             ports = 1; /* the host, alone until someone joins */
+        }
+        /* The CPU doors (docs/xeleenet-cpus-plan.md): those of the last CSS
+         * (a match and back keeps them in online_vs), or the host's picks
+         * through a reload (xnPicksTake). */
+        unsigned cpus = 0;
+        for (int i = 0; i < 4; i++) {
+            if (online_vs.start.players[i].slot_type == Gm_PKind_Cpu) {
+                cpus |= 1u << i;
+            }
         }
         if (xn_reload || xn_join_css) {
             /* A roster reload: everyone starts from the same CSS, the newcomer
@@ -479,6 +537,7 @@ void onEnterCss(GameModeState* state)
              * picks that stood kept. */
             gm_InitVsMode(&online_vs);
             xnPicksTake();
+            cpus = xn_cpus_taken;
             xn_reload = xn_join_css = false;
             /* Every CSS starts from the session's seed on its first frame
              * (gmOnline_XnCssFrame): a draw here, between ticks, the engine
@@ -493,15 +552,35 @@ void onEnterCss(GameModeState* state)
          * included; teams set in the CSS last until then, through a reload
          * the picks' message carries them through (xnPicksTake). */
         const bool deal = ports != xn_team_ports || (teams && !xn_team_on);
+        /* A person takes a CPU's seat; Off, or seats fewer than the fighters,
+         * take CPUs out from the highest port down. From the rules in force,
+         * the seats and the doors, so every player keeps the same. */
+        {
+            const unsigned kept = pc_xn_cpus_kept(cpus, (unsigned) ports, pc_xn_css_seats(), pc_net_rules_cpus());
+            if (kept != cpus) {
+                pc_log_line("online: XeleeNet CPUs %02x leave (kept %02x, players %02x, %d seats, CPUs %d)",
+                            cpus & ~kept, kept, ports, pc_xn_css_seats(), pc_net_rules_cpus());
+            }
+            cpus = kept;
+        }
         for (int i = 0; i < GM_MAX_PLAYERS; ++i) {
             PlayerInitData* p = &online_vs.start.players[i];
             bool in = i < 4 && (ports & (1 << i));
+            bool cpu = i < 4 && (cpus & (1u << i));
             if (deal) {
                 p->team = i % 2;
             } else if (i < 4 && xn_pick_teams) {
                 p->team = xn_pick_team[i];
             }
-            p->slot_type = in ? Gm_PKind_Human : Gm_PKind_NA;
+            p->slot_type = in ? Gm_PKind_Human : cpu ? Gm_PKind_Cpu : Gm_PKind_NA;
+            if (cpu) {
+                p->nametag = 0x78; /* as Melee's toggle does: no name tag */
+            }
+        }
+        if (cpus != 0) {
+            pc_log_line("online: XeleeNet CPUs %02x (levels %d%d%d%d)", cpus, online_vs.start.players[0].cpu_level,
+                        online_vs.start.players[1].cpu_level, online_vs.start.players[2].cpu_level,
+                        online_vs.start.players[3].cpu_level);
         }
         if (deal && xn_team_ports != 0) {
             pc_log_line("online: XeleeNet teams dealt for %02x%s", ports, teams ? " (Teams on)" : "");
@@ -1103,6 +1182,21 @@ void onEnterVs(GameModeState* state)
 #ifdef TARGET_PC
     pc_log_line("online: enter VS at frame %d", pc_net_frame());
     pc_xn_set_playing(true);
+    if (online_kind == ONLINE_KIND_XN) {
+        /* Who plays: a person or a CPU (its level), the fighter and the team
+         * (tools/net_test_xn_menu.py --scenario cpus). */
+        char line[128];
+        int o = 0;
+        for (int i = 0; i < 4; i++) {
+            const PlayerInitData* p = &online_vs.start.players[i];
+            if (p->slot_type == Gm_PKind_Human || p->slot_type == Gm_PKind_Cpu) {
+                o += snprintf(line + o, sizeof line - o, " P%d:%s%d/%d/t%d", i + 1,
+                              p->slot_type == Gm_PKind_Cpu ? "cpu" : "hmn",
+                              p->slot_type == Gm_PKind_Cpu ? p->cpu_level : 0, p->ckind, p->team);
+            }
+        }
+        pc_log_line("online: XeleeNet match%s", line);
+    }
 #endif
 #ifdef TARGET_PC
     PcNetSlippiMatch sm;
@@ -1119,6 +1213,33 @@ void onEnterVs(GameModeState* state)
     gmVsMelee_EnterVs(state, &online_vs, NULL, NULL);
 #endif
 }
+
+#ifdef TARGET_PC
+/* A player's leaving voided the match (net.c's drops; gm_vs_net_leaver): no
+ * results, whose exit waits on every player's START, theirs too, so it never
+ * came (the 2026-11-02 playtest). Everyone goes back to the CSS from the
+ * same frame, and the lobby lets the player go as for a B hold on the CSS
+ * (gmOnline_XnLeave): the host's next session leaves them out. */
+static void xnLeftMidMatch(int port)
+{
+    PcXnPunchView v;
+    int k;
+    pc_xn_punch_view(&v);
+    for (k = 0; k < v.nplayers; k++) {
+        if (v.players[k].port == port) {
+            pc_xn_css_left(v.players[k].name);
+        }
+    }
+    pc_log_line("online: XeleeNet P%d left mid-match; back to the CSS at frame %d", port + 1,
+                pc_net_frame());
+    xn_left_ports |= 1 << port;
+    if (pc_xn_punch_left(port)) {
+        xn_reload = true; /* the host alone again: no session left */
+        xn_seq = pc_xn_punch_session_seq();
+    }
+    gm_SetNextGameModeStateId(state_css);
+}
+#endif
 
 void onExitVs(GameModeState* state)
 {
@@ -1137,6 +1258,9 @@ void onExitVs(GameModeState* state)
     gmVsMelee_ExitVs(state, state_results, state_sudden_death);
     mei = gm_GetGameModeStateExitData(state);
 #ifdef TARGET_PC
+    if (online_kind == ONLINE_KIND_XN && gm_vs_net_leaver >= 0) {
+        xnLeftMidMatch(gm_vs_net_leaver);
+    }
     if (rankedMode()) {
         MatchEnd* end = &mei->match_end;
         if (gm_WasMatchCanceled(end->outcome) || end->is_teams ||
@@ -1211,6 +1335,11 @@ void onExitSuddenDeath(GameModeState* state)
     }
 #endif
     gmVsMelee_ExitSuddenDeath(state);
+#ifdef TARGET_PC
+    if (online_kind == ONLINE_KIND_XN && gm_vs_net_leaver >= 0) {
+        xnLeftMidMatch(gm_vs_net_leaver);
+    }
+#endif
 }
 
 void onEnterResults(GameModeState* state)
@@ -1662,6 +1791,17 @@ static void xnApplyRules(bool now)
     pc_net_set_fighters(r.fighter_mask);
     pc_net_set_teams(r.teams);
     pc_net_set_frozen_stadium(r.frozen_stadium ? 1 : 0);
+    {
+        PcNetMode m;
+        memset(&m, 0, sizeof m);
+        m.mode = (u8) (r.game_mode == 1 ? PC_NET_MODE_CTF : PC_NET_MODE_VS);
+        m.caps = (u8) r.ctf_caps;
+        m.home = r.ctf_home;
+        m.return_s = (u8) r.ctf_return;
+        m.slow = r.ctf_slow;
+        pc_net_set_mode(&m);
+    }
+    pc_net_set_cpus(r.cpus);
     if (now) {
         pc_net_rules_take_wanted();
     }
@@ -1694,6 +1834,16 @@ static void xnRulesInForce(PcXnRules* r)
     r->fighter_mask = pc_net_fighters();
     pc_net_rules(&unlock, &frozen);
     r->frozen_stadium = frozen;
+    {
+        PcNetMode m;
+        pc_net_rules_mode(&m);
+        r->game_mode = m.mode == PC_NET_MODE_CTF ? 1 : 0;
+        r->ctf_caps = m.caps;
+        r->ctf_home = m.home != 0;
+        r->ctf_return = m.return_s;
+        r->ctf_slow = m.slow != 0;
+    }
+    r->cpus = pc_net_rules_cpus();
 }
 
 /* The handshake of the session now running, once per session (each roster
@@ -1784,7 +1934,8 @@ bool gmOnline_XnFlow(void)
            (gm_GetCurrentGameMode() == GM_ONLINE && online_kind == ONLINE_KIND_XN);
 }
 
-void gmOnline_XnKeepPicks(const u8 ckind[4], const u8 color[4], const u8 team[4], u8 mask)
+void gmOnline_XnKeepPicks(const u8 ckind[4], const u8 color[4], const u8 team[4], u8 mask, u8 cpus,
+                          const u8 level[4])
 {
     u8 b[XN_PICKS_LEN];
     int i;
@@ -1794,7 +1945,9 @@ void gmOnline_XnKeepPicks(const u8 ckind[4], const u8 color[4], const u8 team[4]
     memcpy(xn_pick_ckind, ckind, 4);
     memcpy(xn_pick_color, color, 4);
     memcpy(xn_pick_team, team, 4);
+    memcpy(xn_pick_level, level, 4);
     xn_pick_mask = mask;
+    xn_pick_cpus = cpus & 15;
     xn_pick_teams = true;
     if (!pc_net_active()) {
         return; /* the host alone again: its own pick stays */
@@ -1804,7 +1957,9 @@ void gmOnline_XnKeepPicks(const u8 ckind[4], const u8 color[4], const u8 team[4]
         b[1 + 2 * i] = ckind[i];
         b[2 + 2 * i] = color[i];
         b[9 + i] = team[i];
+        b[14 + i] = level[i];
     }
+    b[13] = xn_pick_cpus;
     pc_net_send_reliable(NET_MSG_XN_PICKS, b, sizeof b);
 }
 
@@ -1837,6 +1992,7 @@ static void xnPicksTake(void)
         const u64 t0 = SDL_GetTicks();
         bool got = false;
         xn_pick_mask = 0;
+        xn_pick_cpus = 0;
         while (!got && SDL_GetTicks() - t0 < 5000 && pc_net_active()) {
             u8 type, b[XN_PICKS_LEN];
             int n;
@@ -1844,10 +2000,12 @@ static void xnPicksTake(void)
             while ((n = pc_net_recv_reliable(&type, b, sizeof b)) >= 0) {
                 if (type == NET_MSG_XN_PICKS && n == (int) sizeof b) {
                     xn_pick_mask = b[0];
+                    xn_pick_cpus = b[13] & 15;
                     for (i = 0; i < 4; i++) {
                         xn_pick_ckind[i] = b[1 + 2 * i];
                         xn_pick_color[i] = b[2 + 2 * i];
                         xn_pick_team[i] = b[9 + i];
+                        xn_pick_level[i] = b[14 + i];
                     }
                     xn_pick_teams = true;
                     got = true;
@@ -1879,8 +2037,27 @@ static void xnPicksTake(void)
             online_vs.start.players[i].color = xn_pick_color[i];
         }
     }
-    pc_log_line("online: XeleeNet picks kept %02x (of %02x)", xn_pick_mask & ports, ports);
+    /* The CPU doors (docs/xeleenet-cpus-plan.md), on seats no player took:
+     * their fighter (none when it's off the list: the CSS draws one from
+     * it), costume and level. onEnterCss decides which stay. */
+    xn_cpus_taken = xn_pick_cpus & ~ports & 15;
+    for (i = 0; i < 4; i++) {
+        PlayerInitData* p = &online_vs.start.players[i];
+        if (!(xn_cpus_taken & (1 << i))) {
+            continue;
+        }
+        if (xn_pick_ckind[i] < ChKind_Max && ((pc_net_fighters() >> xn_pick_ckind[i]) & 1)) {
+            p->ckind = xn_pick_ckind[i];
+            p->color = xn_pick_color[i];
+        } else if (xn_pick_ckind[i] < ChKind_Max) {
+            pc_log_line("online: XeleeNet CPU P%d's pick %d is off the list", i + 1, xn_pick_ckind[i]);
+        }
+        p->cpu_level = (u8) (xn_pick_level[i] >= 1 && xn_pick_level[i] <= 9 ? xn_pick_level[i] : 1);
+    }
+    pc_log_line("online: XeleeNet picks kept %02x (of %02x), CPUs %02x", xn_pick_mask & ports, ports,
+                xn_cpus_taken);
     xn_pick_mask = 0;
+    xn_pick_cpus = 0;
 }
 
 int gmOnline_XnLeave(int port)

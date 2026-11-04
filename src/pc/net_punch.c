@@ -23,7 +23,8 @@ extern const char* pc_get_net_name(void);
 #define START_MS 200       /* the host's start, until every guest answers */
 #define PAIR_WAIT_MS 8000  /* two guests not through by then go via the host */
 #define HOST_WAIT_MS 20000 /* a guest that cannot reach the host cannot play */
-#define SWITCH_LEAD 90     /* frames between naming the switch and making it */
+#define SWITCH_LEAD 90     /* frames between naming the switch and making it, at most */
+#define SWITCH_LEAD_MIN 30 /* and at least (switch_lead) */
 
 /* The first two that resolve are asked (two, to see whether the NAT maps
  * each destination to its own port). Ours first (tools/xeleenet -stun);
@@ -128,6 +129,7 @@ static PcNetIdentity s_id;
 static char s_url[256], s_name[16], s_code[64]; /* a LAN join's may be "@address:port" */
 static int s_seats;
 static uint64_t s_t0, s_stun_next, s_tell_next, s_start_next, s_in_ms;
+static uint64_t s_start_sent; /* host: when the start first went out (switch_lead) */
 static struct {
     struct sockaddr_in to;
     uint8_t txid[12];
@@ -155,6 +157,7 @@ static int s_want_x;
 static uint8_t s_want_seq;
 static uint8_t s_dropped;   /* host: extra seats given up, not to be kept */
 static int s_seats_live;    /* host: the lobby's seats now (its settings may change) */
+static uint8_t s_cpus;      /* the CSS's CPU doors (pc_xn_punch_set_cpus) */
 /* Our pads: the ones that asked for a seat and have none yet (oldest first),
  * and which pad plays each of our other seats once given. */
 static int s_claim[2], s_nclaim;
@@ -550,8 +553,10 @@ static void on_start(const XnStart* m) {
         const uint32_t at = get32b(m->at);
         if (at != 0xFFFFFFFFu) {
             s_switch_at = (int32_t)at;
-            pc_log_line("xeleenet: the next session (players %02x, owners %02x) starts at frame %d%s",
-                m->ports, m->owners, s_switch_at, m->reason == PC_XN_SWITCH_SETTINGS ? " (new settings)" : "");
+            pc_log_line("xeleenet: the next session (players %02x, owners %02x) starts at frame %d%s (we are "
+                        "at %d)",
+                m->ports, m->owners, s_switch_at, m->reason == PC_XN_SWITCH_SETTINGS ? " (new settings)" : "",
+                (int)pc_net_frame());
         }
         return;
     }
@@ -919,14 +924,17 @@ static void roster_build(uint8_t* ports_out, uint8_t* owners_out, const XnStart*
         have[o]++;
         used++;
     }
+    /* An empty seat first, else the highest-port CPU's (docs/xeleenet-cpus-plan.md). */
     for (int o = 0; o < 4; o++) {
-        for (int q = 0; q < 4 && own[o] == o && have[o] < want[o] && used < seats; q++) {
-            if (!(ports & (1u << q))) {
-                ports |= (uint8_t)(1u << q);
-                own[q] = o;
-                have[o]++;
-                used++;
+        while (own[o] == o && have[o] < want[o] && used < seats) {
+            const int q = pc_xn_seat_port(ports, s_cpus, seats);
+            if (q < 0) {
+                break;
             }
+            ports |= (uint8_t)(1u << q);
+            own[q] = o;
+            have[o]++;
+            used++;
         }
     }
     uint8_t owners = 0;
@@ -949,6 +957,10 @@ static void start_build(void) {
     s_start.seed[3] = (uint8_t)seed;
     roster_build(&s_start.ports, &s_start.owners, &prev);
     s_dropped = 0;
+    if (s_start.ports & s_cpus & ~prev.ports) {
+        pc_log_line("xeleenet: new seats %02x take CPUs' seats (CPU doors %02x)", s_start.ports & s_cpus & ~prev.ports,
+            s_cpus);
+    }
     s_start.reason = s_restart_req ? s_restart_reason : PC_XN_SWITCH_ROSTER;
     s_restart_req = false;
     put64(s_start.nonces[0], s_nonce);
@@ -981,9 +993,30 @@ static void start_build(void) {
         s_who[g].acked = false;
     }
     s_start_next = 0;
+    s_start_sent = 0;
     s_phase = PH_STARTING;
     pc_log_line("xeleenet: starting, players %02x, owners %02x, seed %u%s", s_start.ports,
         s_start.owners, seed, s_start.reason == PC_XN_SWITCH_SETTINGS ? " (new settings)" : "");
+}
+
+/* The frames between naming the switch and making it: every guest must have
+ * the named frame before it gets there. The start's own round trip (its
+ * first send to the last answer) bounds the trip back out; twice that, the
+ * input delay (a guest runs up to that many frames ahead of us) and 24
+ * frames (two lost sends at START_MS) more, within SWITCH_LEAD_MIN and
+ * SWITCH_LEAD. A guest that still hears it late only switches late: it waits
+ * out its settle (begin_session), and the reloaded CSS is the same for all.
+ * A fixed 90 was 1.5 s of every Lobby Settings Apply (the 2026-11-02
+ * playtest, 7.3). */
+static int32_t switch_lead(uint64_t answered_ms) {
+    int ping = 0, delay = 0;
+    unsigned rb;
+    if (!pc_net_stats(&ping, &delay, &rb)) {
+        delay = 0;
+    }
+    const int32_t trip = (int32_t)((answered_ms * 60 + 999) / 1000);
+    const int32_t lead = 2 * trip + delay + 24;
+    return lead < SWITCH_LEAD_MIN ? SWITCH_LEAD_MIN : lead > SWITCH_LEAD ? SWITCH_LEAD : lead;
 }
 
 /* The host's start, until everyone has answered. Then, with nobody in a
@@ -1009,30 +1042,41 @@ static void start_tick(void) {
         }
         return;
     }
-    if (t < s_start_next) {
-        return; /* its own clock: punch_tick's runs alongside while a session does */
+    /* Answers are looked for every tick, sends go on their own clock
+     * (punch_tick's runs alongside while a session does): looking only when
+     * resending added up to START_MS to every start. */
+    const bool send = t >= s_start_next;
+    if (send) {
+        s_start_next = t + START_MS;
+        if (s_start_sent == 0) {
+            s_start_sent = t;
+        }
     }
-    s_start_next = t + START_MS;
     bool all = true;
     for (int g = 1; g < 4; g++) {
         if (start_primary(&s_start, g) && !s_who[g].acked) {
             all = false;
-            head(&s_start.h, T_START, g);
-            send_signed(&s_start, sizeof s_start, g);
+            if (send) {
+                head(&s_start.h, T_START, g);
+                send_signed(&s_start, sizeof s_start, g);
+            }
         }
     }
-    if (!all) {
+    if (!all || s_start_sent == 0) {
         return;
     }
+    const uint64_t answered = t - s_start_sent;
+    s_start_sent = 0;
     if (!riding) {
         begin_session(seed);
         return;
     }
-    put32b(s_start.at, (uint32_t)(pc_net_frame() + SWITCH_LEAD));
+    const int32_t lead = switch_lead(answered);
+    put32b(s_start.at, (uint32_t)(pc_net_frame() + lead));
     s_start_next = 0; /* the named frame goes out on the next tick */
-    pc_log_line("xeleenet: everyone answered; the next session (players %02x, owners %02x) starts "
-                "at frame %d",
-        s_start.ports, s_start.owners, (int)get32b(s_start.at));
+    pc_log_line("xeleenet: everyone answered in %d ms; the next session (players %02x, owners %02x) "
+                "starts at frame %d (%d on)",
+        (int)answered, s_start.ports, s_start.owners, (int)get32b(s_start.at), (int)lead);
 }
 
 /* Host, with a session running: a guest the session doesn't have yet, linked
@@ -1166,6 +1210,7 @@ bool pc_xn_punch_start(const char* url, const char* name, const char* code, int 
     s_lobby_code[0] = '\0';
     s_start_req = false;
     s_restart_req = false;
+    s_cpus = 0;
     s_want_x = 0;
     s_want_seq = 0;
     s_dropped = 0;
@@ -1337,6 +1382,33 @@ bool pc_xn_punch_claim_refused(void) {
 
 void pc_xn_punch_set_seats(int seats) {
     s_seats_live = seats;
+}
+
+void pc_xn_punch_set_cpus(unsigned cpus) {
+    if ((cpus & 15u) != s_cpus) {
+        pc_log_line("xeleenet: CPU doors %02x", cpus & 15u);
+    }
+    s_cpus = (uint8_t)(cpus & 15u);
+}
+
+int pc_xn_seat_port(unsigned taken, unsigned cpus, int seats) {
+    cpus &= ~taken & 15u;
+    for (int q = 0; q < 4 && q < seats; q++) {
+        if (!((taken | cpus) & (1u << q))) {
+            return q;
+        }
+    }
+    for (int q = 3; q >= 0; q--) {
+        if (cpus & (1u << q)) {
+            return q;
+        }
+    }
+    for (int q = 0; q < 4; q++) {
+        if (!(taken & (1u << q))) {
+            return q;
+        }
+    }
+    return -1;
 }
 
 void pc_xn_punch_restart(int reason) {

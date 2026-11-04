@@ -22,6 +22,7 @@
 #include <melee/ft/ftlib.h>
 #include <melee/pl/player.h>
 #include <melee/cm/camera.h>
+#include <sysdolphin/baselib/cobj.h>
 #include <sysdolphin/baselib/dobj.h>
 #include <sysdolphin/baselib/generator.h>
 #include <sysdolphin/baselib/jobj.h>
@@ -1247,6 +1248,37 @@ void pc_xr_magnify_end(void) {
         pc_xr_hud_camera();
     }
     s_magnify_saved = -1;
+}
+
+/* The HUD's top row (the timer, CTF's score) on the HUD plane: the plane
+ * floats over the arena, its damage row at the bottom, and the top row at
+ * the flat screen's top edge was far above it, out of the eyes' way. Its
+ * draws go down by `dy` (HUD units) instead: the HUD camera's view moves
+ * for them and is put back after. A HUD draw also lands in the flat frame,
+ * which the headset doesn't show while the fight is in 3D. */
+static float s_hud_top_saved;
+
+bool pc_xr_hud_top_begin(float dy) {
+    if (!aurora_xr_active() || s_category != AURORA_XR_HUD) {
+        return false;
+    }
+    HSD_CObj* cobj = HSD_CObjGetCurrent();
+    if (cobj == NULL) {
+        return false;
+    }
+    s_hud_top_saved = cobj->view_mtx[1][3];
+    cobj->view_mtx[1][3] += dy;
+    HSD_CObjSetFlags(cobj, 1u << 31); /* its inverse, if asked for, from the moved view */
+    return true;
+}
+
+void pc_xr_hud_top_end(bool began) {
+    if (!began) {
+        return;
+    }
+    HSD_CObj* cobj = HSD_CObjGetCurrent();
+    cobj->view_mtx[1][3] = s_hud_top_saved;
+    HSD_CObjSetFlags(cobj, 1u << 31);
 }
 
 static bool has_joint_rules(int grkind, int map_id) {

@@ -6,6 +6,7 @@
 #include "gmmain_lib.h"
 #include "gmregclear.h"
 #include <melee/gr/ground.h>
+#include <melee/if/ifall.h>
 #include <melee/if/iftime.h>
 #include <melee/lb/lbarchive.h>
 #include <melee/lb/lbaudio_ax.h>
@@ -322,7 +323,13 @@ void fn_80181708(void)
     gobj = (new_var = GObj_Create(0xEU, 0xFU, 0U));
     jobj = HSD_JObjLoadJoint(DP(HSD_Joint, GM_DISC_ARR(DynamicModelDesc, lbl_804D65D0, 0)->joint));
     HSD_GObjObject_80390A70(new_var, HSD_GObj_JObjKind, jobj);
+    #ifdef TARGET_PC
+    /* XR: the record is the HUD's top row, drawn above the damage row there
+     * (ifAll_TopBegin). */
+    GObj_SetupGXLink(new_var, ifAll_TopJObjCallback, 0xBU, 0U);
+#else
     GObj_SetupGXLink(new_var, HSD_GObj_JObjCallback, 0xBU, 0U);
+#endif
     HSD_GObj_SetupProc(new_var, fn_80180C60, 0x15U);
     gm_8016895C(jobj, GM_DISC_ARR(DynamicModelDesc, lbl_804D65D0, 0), 0);
     HSD_JObjReqAnimAll(jobj, 10.0f);

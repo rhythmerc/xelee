@@ -130,6 +130,8 @@ struct StageSelUserData {
 #include "pc/pc.h"
 #include "mnstagesel_slippi.h"
 #include <melee/gm/gmonlinemode.h>
+#include <melee/gm/gmctf.h>
+#include <melee/gm/gmctfmode.h>
 #include "pc/xeleenet_menu.h"
 #include <sysdolphin/baselib/dobj.h>
 #include <sysdolphin/baselib/mobj.h>
@@ -212,15 +214,40 @@ static void rankStageFrame(void)
 static int net_picks[4] = { -1, -1, -1, -1 };
 static bool net_slippi_fixed; /* the ticket chose the stage; skip the pick exchange */
 
-/* XeleeNet: a stage off the lobby's list (the host's stage_mask, in force on
- * every player as RULES; gm_80164330 reads it, as Random does) is dimmed and
- * can't be picked. */
+/* A stage off the list is dimmed and can't be picked. XeleeNet: the
+ * lobby's list (the host's stage_mask, in force on every player as RULES;
+ * gm_80164330 reads it, as Random does), which already holds a mode's stages
+ * alone. Offline, a game mode in force (VS Mode > Xelee Melee): the mode's
+ * stages (Capture the Flag's maps, the stages with a CTF layout), whatever
+ * Melee's own Random Stage Switch says. */
 static bool sss_off_list(int cell)
 {
-    return gmOnline_XnFlow() && cell >= 0 && cell < NUM_STAGES &&
-           mnStageSel_803F06D0[cell].stkind != 0 &&
-           !(u8) gm_80164330(mnStageSel_803F06D0[cell].xA);
+    if (cell < 0 || cell >= NUM_STAGES || mnStageSel_803F06D0[cell].stkind == 0) {
+        return false;
+    }
+    if (gmOnline_XnFlow()) {
+        return !(u8) gm_80164330(mnStageSel_803F06D0[cell].xA);
+    }
+    if (gmCtfMode_InForce()) {
+        return !gmCtf_StageLegal(mnStageSel_803F06D0[cell].stkind);
+    }
+    return false;
 }
+
+/* Random's draw: the stages Melee's Random Stage Switch allows, or offline
+ * in a game mode the mode's (its list is the only one in force). In a lobby
+ * the two are the same list. */
+static bool sss_random_ok(int cell)
+{
+    if (!gmOnline_XnFlow() && gmCtfMode_InForce()) {
+        return !sss_off_list(cell);
+    }
+    return (u8) gm_80164330(mnStageSel_803F06D0[cell].xA);
+}
+
+/* The off-list cell under the cursor (it reads as empty space), or -1: an A
+ * on it is refused with the error sound offline. */
+static int sss_struck = -1;
 
 /* An off-list icon drawn dim: its materials, over its joint and everything
  * under it (not its siblings: the next icon), get a last TEV stage scaling
@@ -244,7 +271,7 @@ static void sss_dim_icon(HSD_JObj* j, bool siblings)
 static void sss_mark_off_list(void)
 {
     int i;
-    if (!gmOnline_XnFlow()) {
+    if (!gmOnline_XnFlow() && !gmCtfMode_InForce()) {
         return;
     }
     for (i = 0; i < NUM_STAGES; i++) {
@@ -252,7 +279,9 @@ static void sss_mark_off_list(void)
             sss_dim_icon(mnStageSel_803F06D0[i].x0, false);
         }
     }
-    pc_xn_sss_frame(gmMainLib_GetGamePrefs()->stage_mask);
+    if (gmOnline_XnFlow()) {
+        pc_xn_sss_frame(gmMainLib_GetGamePrefs()->stage_mask);
+    }
 }
 
 static bool netStageSel_Active(void)
@@ -1148,7 +1177,12 @@ int mnStageSel_802599EC(void)
 
     for (i = 0; i < NUM_STAGES; i++) {
         if (mnStageSel_803F06D0[i].x4 >= 0 &&
-            (u8) gm_80164330(mnStageSel_803F06D0[i].xA))
+#ifdef TARGET_PC
+            sss_random_ok(i)
+#else
+            (u8) gm_80164330(mnStageSel_803F06D0[i].xA)
+#endif
+        )
         {
             break;
         }
@@ -1166,7 +1200,12 @@ int mnStageSel_802599EC(void)
         }
         for (i = 0; i < NUM_STAGES; i++) {
             if (mnStageSel_803F06D0[i].x4 == 0 &&
-                (u8) gm_80164330(mnStageSel_803F06D0[i].xA))
+#ifdef TARGET_PC
+                sss_random_ok(i)
+#else
+                (u8) gm_80164330(mnStageSel_803F06D0[i].xA)
+#endif
+            )
             {
                 var_r29 = false;
             }
@@ -1176,7 +1215,11 @@ int mnStageSel_802599EC(void)
         int tmp = HSD_Randi(NUM_STAGES);
         i = tmp;
         if (mnStageSel_803F06D0[i].x4 == 0) {
+#ifdef TARGET_PC
+            if (sss_random_ok(i)) {
+#else
             if ((u8) gm_80164330(mnStageSel_803F06D0[i].xA)) {
+#endif
                 break;
             }
         }
@@ -1213,6 +1256,16 @@ void mnStageSel_80259C28(void)
     switch (mnStageSel_804D6CAE) {
     case 30:
         if (!(mnStageSel_804D6CA0 & 0x1000)) {
+#ifdef TARGET_PC
+            /* Offline in a game mode, A on a struck stage is refused aloud
+             * (a lobby's stays quiet, as it always has). */
+            if ((mnStageSel_804D6CA0 & 0x100) && sss_struck >= 0 && !gmOnline_XnFlow() &&
+                gmCtfMode_InForce())
+            {
+                pc_log_line("sss: cell %d is not a Capture the Flag map", sss_struck);
+                lbAudioAx_80024030(3);
+            }
+#endif
             return;
         }
         break;
@@ -1486,6 +1539,9 @@ void fn_8025A310(HSD_GObj* gobj)
 
     HSD_JObjSetTranslate(jobj, &sp1C);
     lb_8000B1CC(jobj, NULL, &sp1C);
+#ifdef TARGET_PC
+    sss_struck = -1;
+#endif
     for (i = 0; i < 0x1E; i++) {
         if (mnStageSel_803F06D0[i].x8 != 0) {
             lb_8000B1CC(mnStageSel_803F06D0[i].x0, NULL, &sp10);
@@ -1506,6 +1562,7 @@ void fn_8025A310(HSD_GObj* gobj)
                             pc_log_line("sss: cell %d is off the lobby's list", i);
                         }
                         mnStageSel_804D6CAE = 0x1E;
+                        sss_struck = i;
                         return;
                     }
 #endif

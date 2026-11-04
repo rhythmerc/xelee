@@ -29,6 +29,11 @@
 #include <melee/ft/kinds/ftPopo/ftpopospeciallw.h>
 #include <melee/ft/types.h>
 #include <melee/gm/gm_unsplit.h>
+#ifdef TARGET_PC
+#include <melee/gm/gmctf.h>
+#include <melee/gm/gmctfai.h>
+#include <melee/gm/gmctfnav.h>
+#endif
 #include <melee/gr/grbigblue.h>
 #include <melee/gr/grcastle.h>
 #include <melee/gr/grcorneria.h>
@@ -976,6 +981,15 @@ static void ftCo_800A1CC4(Fighter* fp, ftCo_803C6594_t* var_r29)
 
     PAD_STACK(0x10);
 
+#ifdef TARGET_PC
+    /* A CTF match on a map with a nav graph (gm/gmctfnav.c): the CTF layer
+     * routes the CPU, and these stage hints (Temple's lead out of the cave)
+     * would pull it off the path and hold it there for 300 frames. Outside
+     * CTF the graph is never active. */
+    if (gmCtfNav_Active()) {
+        return;
+    }
+#endif
     data = &fp->cpu;
     if (var_r29 != NULL && data->x60 == 0 && data->kind != 0 &&
         fp->ground_or_air != GA_Air && !ftCo_800A21FC(fp))
@@ -7913,6 +7927,117 @@ void ftCo_800B21C8(Fighter* fp)
     ftCo_800ADE48(fp);
 }
 
+#ifdef TARGET_PC
+/* Capture the Flag's CPU players (gm/gmctfai.c, docs/ctf-ai-plan.md): the
+ * stock VS think below with its targets replaced by the CTF layer's order:
+ * whom to fight (x44), the item to fetch (x4C), the destination (x54) and
+ * the behaviour masks. Stage hazards, Starman/Hammer threats, the behaviour
+ * selector (ftCo_800ADE48) and everything it runs (attacks, shield, DI,
+ * ledges, recovery) stay Melee's. Only called in a CTF match, so every other
+ * match runs the decomp's path unchanged. */
+static void ftCo_CtfThink(Fighter* fp)
+{
+    struct CpuFighter* data = &fp->cpu;
+    GmCtfAiOrder o;
+    Vec3 sp28;
+    s32 cmd;
+    Fighter* target;
+
+    cmd = ftCo_800A229C(fp, &sp28);
+    if (cmd != 0) {
+        ftCo_800AE7AC(fp, &sp28, cmd);
+        return;
+    }
+    target = ftCo_800A5CE0(fp);
+    data->x44 = target;
+    if (target != NULL) {
+        ftCo_CpuSetTargetFlags(data);
+        ftCo_CpuTargetAct(fp);
+        ftCo_800ADE48(fp);
+        return;
+    }
+    ftCo_CpuInitNoTarget(fp, true);
+    if (!gmCtfAi_Think(fp, &o) || o.go == CTFAI_GO_STOCK) {
+        ftCo_CpuUpdateCommonItemTarget(fp);
+        ftCo_CpuUpdateSpecialItemTarget(fp);
+        ftCo_CpuActOnNoTarget(fp, data);
+        return;
+    }
+    if (o.throw_now && fp->item_gobj != NULL && data->x18 != 4 && fp->ground_or_air == GA_Ground &&
+        data->csP == NULL && data->command_duration == 0)
+    {
+        /* A throw of the CTF layer's choosing (a flag parked in the zone, a
+         * throw home): its own short script, which the act step leaves alone
+         * while it runs (ftCo_800B2790). */
+        ftCo_800B4A78(fp);
+        ftCo_800B46B8(fp, CpuCmd_SetLstickX, (u8) o.throw_x);
+        ftCo_800B46B8(fp, CpuCmd_SetLstickY, (u8) o.throw_y);
+        ftCo_800B463C(fp, CpuCmd_PressA);
+        ftCo_800B46B8(fp, CpuCmd_WaitFor, 2);
+        ftCo_800B463C(fp, CpuCmd_ReleaseA);
+        ftCo_800B46B8(fp, CpuCmd_SetLstickX, 0);
+        ftCo_800B46B8(fp, CpuCmd_SetLstickY, 0);
+        ftCo_800B46B8(fp, CpuCmd_WaitFor, 8);
+        ftCo_800B49F4(fp);
+        return;
+    }
+    /* Moving (1) or idle at an earlier way point (0xA): not mid-attack,
+     * shield or recovery. */
+    if (o.hop != 0 && (data->x18 == 1 || data->x18 == 0xA) && fp->ground_or_air == GA_Ground && data->csP == NULL &&
+        data->command_duration == 0)
+    {
+        /* Off a solid ledge toward the next way point: Melee's mover teeters
+         * at a ledge and turns away (ftCo_800AACD0). A jump with the stick
+         * that way; in the air the mover drifts on to x54 (ftCo_800A9CB4). */
+        ftCo_800B4A78(fp);
+        data->x54 = o.point;
+        data->x38 = o.tol;
+        data->x60 = 0;
+        ftCo_800B46B8(fp, CpuCmd_SetLstickX, (u8) (o.hop > 0 ? 0x7F : -0x7F));
+        ftCo_800B463C(fp, CpuCmd_PressX);
+        ftCo_800B46B8(fp, CpuCmd_WaitFor, 4);
+        ftCo_800B463C(fp, CpuCmd_ReleaseX);
+        ftCo_800B46B8(fp, CpuCmd_WaitFor, 4);
+        ftCo_800B49F4(fp);
+        return;
+    }
+    data->xF9_b2 = data->xF9_b3 = data->xF9_b5 = o.fight;
+    data->xF8_b0 = o.run;
+    data->xF9_b6 = o.defend;
+    data->xF9_b7 = o.pickup;
+    data->x44 = o.target;
+    data->x4C = o.item; /* fresh every tick, as stock think sets it */
+    data->x50 = NULL;
+    if (data->x18 != data->x20 && data->x18 != data->x1C) {
+        data->x60 = 0;
+    }
+    /* Recovering (state 4) keeps its own destination, as in stock think. */
+    if (data->x18 != 4) {
+        data->xFA_b2 = false;
+        switch (o.go) {
+        case CTFAI_GO_ITEM:
+            ftCo_800A866C(fp);
+            break;
+        case CTFAI_GO_FIGHTER:
+            ftCo_800A75DC(fp, o.follow);
+            break;
+        case CTFAI_GO_POINT:
+            if (o.nav) {
+                /* The nav layer's waypoint: no hold timer, no stage hint
+                 * redirect (ftCo_800A1CC4), which would fight the path. */
+                data->x60 = 0;
+                data->x54 = o.point;
+                data->x38 = o.tol;
+            } else {
+                ftCo_800A1F3C(fp, o.point.x, o.point.y, o.tol);
+            }
+            break;
+        }
+    }
+    ftCo_800ADE48(fp);
+}
+#endif
+
 void ftCo_800B24B8(Fighter* fp)
 {
     struct CpuFighter* data = &fp->cpu;
@@ -7921,6 +8046,12 @@ void ftCo_800B24B8(Fighter* fp)
     Fighter* target;
     PAD_STACK(0x14);
 
+#ifdef TARGET_PC
+    if (gmCtf_Active()) {
+        ftCo_CtfThink(fp);
+        return;
+    }
+#endif
     cmd = ftCo_800A229C(fp, &sp28);
     if (cmd != 0) {
         ftCo_800AE7AC(fp, &sp28, cmd);
@@ -8625,12 +8756,18 @@ void ftCo_800B3900(Fighter_GObj* gobj)
     Fighter* fp = GET_FIGHTER(gobj);
     PAD_STACK(8);
 
+#ifdef TARGET_PC
+    gmCtfAi_CostAiBegin(); /* MELEE_DEBUG_CTF_AI_COST: a host clock, for a log */
+#endif
     ftCo_800B33B0(fp);
     ftCo_800B2AFC(fp);
     ftCo_800B2790(fp);
     ftCo_800B3E04(fp);
     ftCo_800B0AF4(fp);
     fp->cpu.x7C += 1;
+#ifdef TARGET_PC
+    gmCtfAi_CostAiEnd();
+#endif
 }
 
 bool ftCo_800B395C(Fighter_GObj* gobj, int arg1)

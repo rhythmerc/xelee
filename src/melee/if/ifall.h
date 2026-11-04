@@ -20,4 +20,14 @@
 /* 2F390C */ void ifAll_802F390C(void);
 /* 2F3A64 */ void ifAll_802F3A64(void);
 
+#ifdef TARGET_PC
+/* The HUD's top row (the timer, CTF's score, Home-Run's record): in XR's 3D
+ * view it is drawn just above the damage row instead of at the screen's top
+ * edge. Its draws go between ifAll_TopBegin and ifAll_TopEnd, or through
+ * ifAll_TopJObjCallback for a joint tree's GObj. Nothing changes elsewhere. */
+bool ifAll_TopBegin(void);
+void ifAll_TopEnd(bool began);
+void ifAll_TopJObjCallback(HSD_GObj* gobj, intptr_t pass);
+#endif
+
 #endif

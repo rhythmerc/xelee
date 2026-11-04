@@ -290,7 +290,13 @@ static void parse_settings(const PcSlippiJson* st, PcXnListing* x) {
     str_of(st, "win", v, sizeof v);
     x->stock = strcmp(v, "time") != 0;
     x->stocks = pc_slippi_json_int(pc_slippi_json_get(st, "stocks"), 4);
-    x->time_min = pc_slippi_json_int(pc_slippi_json_get(st, "time_min"), 8);
+    str_of(st, "game_mode", v, sizeof v);
+    x->ctf = strcmp(v, "ctf") == 0; /* missing: VS, an older game's */
+    x->ctf_caps = pc_slippi_json_int(pc_slippi_json_get(st, "ctf_caps"), 5);
+    str_of(st, "cpus", v, sizeof v); /* missing: Off, an older game's */
+    x->cpus = strcmp(v, "host") == 0 ? 1 : strcmp(v, "anyone") == 0 ? 2 : 0;
+    /* The host's own defaults: 8:00 for VS, 10:00 for Capture the Flag. */
+    x->time_min = pc_slippi_json_int(pc_slippi_json_get(st, "time_min"), x->ctf ? 10 : 8);
     str_of(st, "items", x->items, sizeof x->items);
     str_of(st, "stage_list", x->stage_list, sizeof x->stage_list);
     str_of(st, "fighter_list", x->fighter_list, sizeof x->fighter_list);
@@ -330,6 +336,12 @@ static void parse_players(const PcSlippiJson* list, PcXnListing* x) {
         }
         s->port = (uint8_t)port;
         s->extra = pc_slippi_json_bool(pc_slippi_json_get(p, "extra"), false);
+        s->cpu = pc_slippi_json_bool(pc_slippi_json_get(p, "cpu"), false);
+        if (s->cpu) {
+            const int ck = pc_slippi_json_int(pc_slippi_json_get(p, "ckind"), -1);
+            s->level = (uint8_t)pc_slippi_json_int(pc_slippi_json_get(p, "level"), 1);
+            s->ckind = ck >= 0 && ck < 26 ? (uint8_t)ck : 0xFF;
+        }
         s->owner = (uint8_t)(pc_slippi_json_int(pc_slippi_json_get(p, "owner"), 0) & 3);
         s->xr = pc_slippi_json_bool(pc_slippi_json_get(p, "xr"), false);
         str_of(p, "name", s->name, sizeof s->name);
@@ -460,7 +472,7 @@ static bool host(void) {
 }
 
 static bool heartbeat(void) {
-    char body[384], path[96];
+    char body[640], path[96];
     int status = 0;
     PcSlippiJson* r;
     size_t o = (size_t)snprintf(body, sizeof body, "{\"state\":\"%s\",\"xr\":%s,\"roster\":[",
@@ -486,6 +498,18 @@ static bool heartbeat(void) {
         }
     }
     SDL_UnlockMutex(s_lock);
+    /* The CPU doors (docs/xeleenet-cpus-plan.md): open seats the list shows. */
+    o += (size_t)snprintf(body + o, sizeof body - o, "],\"cpus\":[");
+    {
+        uint8_t level[4], ckind[4];
+        const unsigned cpus = pc_xn_cpus(level, ckind);
+        for (int q = 1, k = 0; q < 4; q++) {
+            if (cpus & (1u << q)) {
+                o += (size_t)snprintf(body + o, sizeof body - o, "%s{\"port\":%d,\"level\":%d,\"ckind\":%d}",
+                                      k++ ? "," : "", q, level[q], ckind[q] < 26 ? ckind[q] : -1);
+            }
+        }
+    }
     snprintf(body + o, sizeof body - o, "]}");
     snprintf(path, sizeof path, "/v1/lobbies/%s/heartbeat", s_lobby);
     if (!call_auth(path, body, &status, &r)) {
@@ -947,6 +971,36 @@ void pc_xn_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra, uint8_t o
 
 void pc_xn_stop(void) {
     backend()->stop();
+    pc_xn_set_cpus(0, NULL, NULL);
+}
+
+/* The CPU doors, a port each (any thread reads them): 0 none, else bit 16,
+ * the level in bits 8-11 and the fighter in bits 0-7. */
+static SDL_AtomicInt s_cpu_seat[4];
+
+void pc_xn_set_cpus(unsigned mask, const uint8_t level[4], const uint8_t ckind[4]) {
+    for (int q = 0; q < 4; q++) {
+        const bool on = (mask & (1u << q)) && level != NULL && ckind != NULL;
+        const int lv = on ? (level[q] >= 1 && level[q] <= 9 ? level[q] : 1) : 0;
+        SDL_SetAtomicInt(&s_cpu_seat[q], on ? 0x10000 | lv << 8 | ckind[q] : 0);
+    }
+}
+
+unsigned pc_xn_cpus(uint8_t level[4], uint8_t ckind[4]) {
+    unsigned mask = 0;
+    for (int q = 0; q < 4; q++) {
+        const int v = SDL_GetAtomicInt(&s_cpu_seat[q]);
+        if (v != 0) {
+            mask |= 1u << q;
+        }
+        if (level != NULL) {
+            level[q] = (uint8_t)((v >> 8) & 15);
+        }
+        if (ckind != NULL) {
+            ckind[q] = v != 0 ? (uint8_t)(v & 0xFF) : 0xFF;
+        }
+    }
+    return mask;
 }
 
 void pc_xn_set_playing(bool playing) {

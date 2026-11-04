@@ -203,6 +203,12 @@ void onEnter(GameModeState* scene)
         data->hovered_selection = SEL_VS_TOURNAMENT;
         return;
 #ifdef TARGET_PC
+    case GM_CTF:
+        /* Back from its CSS on its rules page, the screen before it, as VS
+         * Mode's Melee goes back to VS Mode (mnmain.c opens the page). */
+        data->menu_kind = MENU_KIND_MODE_PAGE;
+        data->hovered_selection = SEL_XELEE_MELEE_CTF;
+        return;
     case GM_ONLINE:
         /* Back out of a lobby into the menu it was entered from. */
         switch (gmOnline_GetKind()) {
@@ -338,6 +344,7 @@ static bool isFightMode(int mode)
     case GM_CAMERA_VS:
     case GM_EVENT:
     case GM_SINGLE_BUTTON_VS:
+    case GM_CTF:
         return true;
     default:
         return false;
@@ -376,6 +383,8 @@ static const char* fightModeName(int mode)
         return "MULTI-MAN MELEE";
     case GM_CAMERA_MODE:
         return "CAMERA MODE";
+    case GM_CTF:
+        return "CAPTURE THE FLAG";
     default:
         return "SPECIAL MELEE";
     }

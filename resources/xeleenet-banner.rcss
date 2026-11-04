@@ -52,6 +52,8 @@ div, span { display: block; }
        border: 1px #aeaba399; border-radius: 11px; background-color: #0b0b10d8; }
 .tag.info { color: #e9e3cf; border-color: #aeaba3; background-color: #0b0b10e6; }
 .tag.warn { color: #ffe066; border-color: #f0c226; background-color: #2a1f08; }
+/* A CPU's door: a joiner, or a spare controller's START, takes the seat. */
+.tag.open { left: 30%; right: 30%; letter-spacing: 2px; color: #062210; border-color: #3ddc84; background-color: #3ddc84; }
 .ctag { position: absolute; padding: 0 7px; font-weight: 800; color: #f0e4b8; border: 1px #f0c226b0;
         border-radius: 9px; background-color: #0b0b10e6; }
 .owner { position: absolute; left: 0; right: 0; text-align: center; font-weight: 700; color: #f0e4b8; }

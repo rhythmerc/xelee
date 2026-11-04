@@ -39,6 +39,10 @@ typedef struct PcXnSeat {
     bool xr;
     bool extra;    /* a machine's other pad: no name of its own */
     uint8_t owner; /* an extra seat's machine, by its port */
+    /* A CPU keeping the seat warm (docs/xeleenet-cpus-plan.md): open to a
+     * joiner. Its level (1-9) and fighter (a CharacterKind, 0xFF none). */
+    bool cpu;
+    uint8_t level, ckind;
 } PcXnSeat;
 
 /* A lobby as the browser lists it (and as joining learns it): the
@@ -57,6 +61,9 @@ typedef struct PcXnListing {
     char items[12];
     char stage_list[12];
     char fighter_list[8]; /* all, high, low or custom (docs/xeleenet-fighter-list-plan.md) */
+    bool ctf;             /* game_mode "ctf": Capture the Flag (docs/xeleenet-modes-plan.md) */
+    int ctf_caps;         /* its captures to win */
+    int cpus;             /* who may add CPUs: 0 Off, 1 Host, 2 Anyone (docs/xeleenet-cpus-plan.md) */
     bool first_to; /* else endless */
     int first_to_n;
     bool playing, xr;
@@ -114,6 +121,13 @@ int pc_xn_members(PcXnMember* out, int max);
  * bits a port (net_punch.c's XnStart.owners), so the list names an extra seat
  * after the player whose pad it is. */
 void pc_xn_set_roster(const uint8_t (*keys)[32], int n, uint8_t extra, uint8_t owners);
+/* Host: the CSS's CPU doors (port bits; docs/xeleenet-cpus-plan.md), each
+ * with its level (1-9) and fighter (a CharacterKind, 0xFF none). The
+ * heartbeat, or LAN's announcement, lists them as open seats; the service and
+ * LAN give a joiner an empty seat first, else the highest-port CPU's.
+ * pc_xn_cpus reads them back (the mask; level and ckind filled). */
+void pc_xn_set_cpus(unsigned mask, const uint8_t level[4], const uint8_t ckind[4]);
+unsigned pc_xn_cpus(uint8_t level[4], uint8_t ckind[4]);
 /* Leave the lobby (a host closes it) and stop the thread. */
 void pc_xn_stop(void);
 /* A game is running (VS to the results) or not: the host's heartbeat says so

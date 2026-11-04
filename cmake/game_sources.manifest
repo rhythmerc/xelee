@@ -494,6 +494,10 @@ src/melee/gm/gmboot.c
 src/melee/gm/gmcamera.c
 src/melee/gm/gmcameramode.c
 src/melee/gm/gmclassic.c
+src/melee/gm/gmctf.c
+src/melee/gm/gmctfai.c
+src/melee/gm/gmctfmode.c
+src/melee/gm/gmctfnav.c
 src/melee/gm/gmdebugmode.c
 src/melee/gm/gmevent.c
 src/melee/gm/gmfixedcamera.c
@@ -632,6 +636,7 @@ src/melee/if/if_2FFC.c
 src/melee/if/if_3004.c
 src/melee/if/ifall.c
 src/melee/if/ifcoget.c
+src/melee/if/ifctf.c
 src/melee/if/ifhazard.c
 src/melee/if/ifmagnify.c
 src/melee/if/ifnametag.c
@@ -678,6 +683,7 @@ src/melee/it/kinds/itclimbersstring.c
 src/melee/it/kinds/itclinkmilk.c
 src/melee/it/kinds/itcoin.c
 src/melee/it/kinds/itcrazyhandbomb.c
+src/melee/it/kinds/itctfflag.c
 src/melee/it/kinds/itdkinoko.c
 src/melee/it/kinds/itdosei.c
 src/melee/it/kinds/itdrmariopill.c
@@ -878,6 +884,7 @@ src/melee/mn/mnitemsw.c
 src/melee/mn/mnlanguage.c
 src/melee/mn/mnmain.c
 src/melee/mn/mnmainrule.c
+src/melee/mn/mnmodes.c
 src/melee/mn/mnname.c
 src/melee/mn/mnnamenew.c
 src/melee/mn/mnonline.c

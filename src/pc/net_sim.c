@@ -20,6 +20,21 @@ static Held s_held[HELD_MAX];   /* outgoing, under tx_lock */
  * drops what it would send across a listed pair, so set the same value on
  * all of them. Bit (a * 4 + b) and (b * 4 + a) per pair. */
 static uint16_t s_sim_block;
+/* MELEE_NET_SIM_CUT="1:2@600-780": one such pair, only from frame 600 to 780
+ * of the session: a working link that goes dead for a while and comes back
+ * (the playtest's 3 s outage between two guests). Set it on every instance. */
+static uint16_t s_sim_cut;
+static int32_t s_sim_cut_from, s_sim_cut_to;
+/* MELEE_NET_SIM_LINK="1:2=80,0:1=10~3": one pair's own one-way delay in ms,
+ * and optionally its own uniform +-jitter, on top of the session-wide
+ * knobs. A mesh whose links differ -- a guest pair across an ocean while
+ * both sit next to the host -- is the case the per-link delay and relay
+ * choices exist for, and one delay for every link cannot make it. An
+ * "@from-to" suffix (session frames, like MELEE_NET_SIM_CUT) applies it only
+ * then, so a link can turn bad and recover mid-match. Set the same value on
+ * every instance: each holds what it sends across the pair. */
+static uint16_t s_sim_link_ms[16], s_sim_link_jit[16];
+static int32_t s_sim_link_from[16], s_sim_link_to[16];
 
 static unsigned sim_rand(unsigned n) {
     s_sim_rng ^= s_sim_rng << 13;
@@ -66,11 +81,20 @@ void tx(int peer, const void* body, size_t body_len) {
     if (s_sim_block & (1u << (net.local * 4 + net.peer_port[peer]))) {
         return;
     }
+    if ((s_sim_cut & (1u << (net.local * 4 + net.peer_port[peer]))) &&
+        net.frame >= s_sim_cut_from && net.frame < s_sim_cut_to)
+    {
+        return;
+    }
     memcpy(stamped, body, body_len);
     net_mac_stamp(peer, stamped, body_len);
     const void* buf = stamped;
     size_t len = body_len + NET_MAC_LEN;
     uint64_t now = SDL_GetTicksNS();
+    int pair = net.local * 4 + net.peer_port[peer];
+    if (net.frame < s_sim_link_from[pair] || net.frame >= s_sim_link_to[pair]) {
+        pair = 0; /* outside its window: never set (a port does not link to itself) */
+    }
     net.tx_pkts++;
     if (*(const uint8_t*)buf == 'M') {
         net.tx_inputs++;
@@ -93,9 +117,13 @@ void tx(int peer, const void* body, size_t body_len) {
     }
     int copies = net.sim_dup > 0 && (int)sim_rand(100) < net.sim_dup ? 2 : 1;
     for (; copies > 0; copies--) {
-        int64_t release = (int64_t)(now + net.sim_delay_ns);
+        int64_t release = (int64_t)(now + net.sim_delay_ns) + s_sim_link_ms[pair] * 1000000ll;
         if (net.sim_jitter_ms > 0) {
             release += ((int64_t)sim_rand(2 * net.sim_jitter_ms + 1) - net.sim_jitter_ms) * 1000000;
+        }
+        if (s_sim_link_jit[pair] > 0) {
+            const int j = s_sim_link_jit[pair];
+            release += ((int64_t)sim_rand(2u * (unsigned)j + 1) - j) * 1000000;
         }
         if (release < (int64_t)now) {
             release = (int64_t)now;
@@ -154,9 +182,61 @@ void sim_env(uint16_t bind_port) {
     net.sim_delay_ns = v ? (uint64_t)atoi(v) * 1000000ull : 0;
     v = getenv("MELEE_NET_SIM_DELAY_RX_MS");
     net.sim_rx_delay_ns = v ? (uint64_t)atoi(v) * 1000000ull : 0;
-    net.sim_hold = net.sim_delay_ns || net.sim_jitter_ms || net.sim_reorder || net.sim_dup;
+    memset(s_sim_link_ms, 0, sizeof s_sim_link_ms);
+    memset(s_sim_link_jit, 0, sizeof s_sim_link_jit);
+    memset(s_sim_link_from, 0, sizeof s_sim_link_from);
+    memset(s_sim_link_to, 0, sizeof s_sim_link_to);
+    bool links = false;
+    v = getenv("MELEE_NET_SIM_LINK");
+    for (const char* q = v; q != NULL && *q != '\0';) {
+        char* end;
+        int a = q[0] - '0', b = q[1] == ':' ? q[2] - '0' : -1;
+        if (a < 0 || a > 3 || b < 0 || b > 3 || a == b || q[3] != '=') {
+            pc_log_line("net: MELEE_NET_SIM_LINK wants a:b=ms[~jitter],... with ports 0-3, not %s",
+                v);
+            break;
+        }
+        long ms = strtol(q + 4, &end, 10), jit = 0, from = 0, to = INT32_MAX;
+        if (*end == '~') {
+            jit = strtol(end + 1, &end, 10);
+        }
+        if (*end == '@') {
+            from = strtol(end + 1, &end, 10);
+            to = *end == '-' ? strtol(end + 1, &end, 10) : INT32_MAX;
+        }
+        ms = ms < 0 ? 0 : ms > 2000 ? 2000 : ms;
+        jit = jit < 0 ? 0 : jit > 1000 ? 1000 : jit;
+        s_sim_link_ms[a * 4 + b] = s_sim_link_ms[b * 4 + a] = (uint16_t)ms;
+        s_sim_link_jit[a * 4 + b] = s_sim_link_jit[b * 4 + a] = (uint16_t)jit;
+        s_sim_link_from[a * 4 + b] = s_sim_link_from[b * 4 + a] = (int32_t)from;
+        s_sim_link_to[a * 4 + b] = s_sim_link_to[b * 4 + a] = (int32_t)to;
+        links = links || ms > 0 || jit > 0;
+        pc_log_line("net: sim link P%d-P%d %ld ms one-way, jitter +-%ld ms, frames %ld-%ld", a + 1,
+            b + 1, ms, jit, from, to);
+        if (*end != ',' && *end != '\0') {
+            pc_log_line("net: MELEE_NET_SIM_LINK: trailing %s ignored", end);
+            break;
+        }
+        q = *end == ',' ? end + 1 : end;
+    }
+    net.sim_hold =
+        net.sim_delay_ns || net.sim_jitter_ms || net.sim_reorder || net.sim_dup || links;
     s_sim_rng = (uint32_t)bind_port * 2654435761u | 1u;
     s_sim_block = net_sim_block_mask();
+    s_sim_cut = 0;
+    v = getenv("MELEE_NET_SIM_CUT");
+    const char* at = v != NULL ? strchr(v, '@') : NULL;
+    if (at != NULL && v[0] >= '0' && v[0] <= '3' && v[1] == ':' && v[2] >= '0' && v[2] <= '3') {
+        int a = v[0] - '0', b = v[2] - '0';
+        const char* dash = strchr(at, '-');
+        s_sim_cut = (uint16_t)(1u << (a * 4 + b) | 1u << (b * 4 + a));
+        s_sim_cut_from = (int32_t)strtol(at + 1, NULL, 10);
+        s_sim_cut_to = dash != NULL ? (int32_t)strtol(dash + 1, NULL, 10) : INT32_MAX;
+        pc_log_line("net: sim cut between P%d and P%d from frame %d to %d", a + 1, b + 1,
+            s_sim_cut_from, s_sim_cut_to);
+    } else if (v != NULL) {
+        pc_log_line("net: MELEE_NET_SIM_CUT wants a:b@from-to with ports 0-3, not %s", v);
+    }
     for (int a = 0; a < 4; a++) {
         for (int b = a + 1; b < 4; b++) {
             if (s_sim_block & (1u << (a * 4 + b))) {

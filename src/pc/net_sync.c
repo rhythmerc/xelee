@@ -66,10 +66,11 @@ static bool s_skip_wait;               /* prefer an idle frame to take it on */
 static int s_drop_left;                /* SYNC_LEGACY only: samples to discard */
 static int s_sync_over;                /* +1/-1 when the last window crossed FAST_GAP */
 static uint64_t s_catch_up_ns;         /* frame debt the last boundary kept */
-static uint32_t s_rtt_prev;            /* last RTT sample, for the jitter ring */
-static uint32_t s_jit[JITTER_SAMPLES]; /* |dRTT| ring; its mean scales the thresholds */
-static int s_jit_n, s_jit_i;
-static uint64_t s_jit_sum;
+/* One |dRTT| ring per link (jitter_note). */
+static uint32_t s_rtt_prev[MAX_PEERS];
+static uint32_t s_jit[MAX_PEERS][JITTER_SAMPLES];
+static int s_jit_n[MAX_PEERS], s_jit_i[MAX_PEERS];
+static uint64_t s_jit_sum[MAX_PEERS];
 static int64_t s_nudge_ns;    /* slow-down carried by every frame's pacing wait */
 static int s_delay_base;      /* frames of delay the link needs while lockstep */
 static int s_delay_seen;      /* last window's measurement, for confirm-twice */
@@ -140,24 +141,54 @@ static int32_t offset_us(void) {
     return best;
 }
 
-/* 30-sample mean of |dRTT|: what the delay has to cover on top of the trip. */
-void jitter_note(uint32_t rtt) {
-    if (s_rtt_prev != 0) {
-        uint32_t d = rtt > s_rtt_prev ? rtt - s_rtt_prev : s_rtt_prev - rtt;
-        if (s_jit_n == JITTER_SAMPLES) {
-            s_jit_sum -= s_jit[s_jit_i];
-        } else {
-            s_jit_n++;
-        }
-        s_jit[s_jit_i] = d;
-        s_jit_sum += d;
-        s_jit_i = (s_jit_i + 1) % JITTER_SAMPLES;
+/* 30-sample mean of |dRTT|, one per link: what the delay has to cover on
+ * top of that link's trip.
+ *
+ * It used to be one ring with one previous sample for every link, which is
+ * right for a 1v1 and wrong for anything more: the acks of a 20 ms link and
+ * a 90 ms link land interleaved, so each |dRTT| was mostly the difference
+ * between the two links. A paced 3-player run with links of 20, 20 and 90 ms
+ * round trip and no jitter at all (tools/net_test_n.py --link
+ * 0:1=10,0:2=45,1:2=10) read 41-62 ms of "jitter" on the host while each
+ * link's own was 1.3-2.3 ms, and auto delay took the menus to 7-8 frames for
+ * a 48 ms trip (and fights to the cap of 4). */
+void jitter_note(int peer, uint32_t rtt) {
+    if (peer < 0 || peer >= MAX_PEERS) {
+        return;
     }
-    s_rtt_prev = rtt;
+    if (s_rtt_prev[peer] != 0) {
+        uint32_t prev = s_rtt_prev[peer];
+        uint32_t d = rtt > prev ? rtt - prev : prev - rtt;
+        int i = s_jit_i[peer];
+        if (s_jit_n[peer] == JITTER_SAMPLES) {
+            s_jit_sum[peer] -= s_jit[peer][i];
+        } else {
+            s_jit_n[peer]++;
+        }
+        s_jit[peer][i] = d;
+        s_jit_sum[peer] += d;
+        s_jit_i[peer] = (i + 1) % JITTER_SAMPLES;
+    }
+    s_rtt_prev[peer] = rtt;
 }
 
+uint32_t jitter_peer_us(int peer) {
+    if (peer < 0 || peer >= MAX_PEERS || s_jit_n[peer] == 0) {
+        return 0;
+    }
+    return (uint32_t)(s_jit_sum[peer] / s_jit_n[peer]);
+}
+
+/* This side's worst link: what its own sending (the resend timer, the
+ * quality figure) has to ride out. Links given up on or whose player left
+ * no longer count (net_link_counts). */
 uint32_t jitter_us(void) {
-    return s_jit_n ? (uint32_t)(s_jit_sum / s_jit_n) : 0;
+    uint32_t worst = 0;
+    for (int i = 0; i < net.npeers && i < MAX_PEERS; i++) {
+        uint32_t j = net_link_counts(i) ? jitter_peer_us(i) : 0;
+        worst = j > worst ? j : worst;
+    }
+    return worst;
 }
 
 /* The delay is shared state: the frame a local sample is written for is
@@ -212,7 +243,20 @@ static void delay_auto(void) {
     if ((net.frame % DELAY_EVERY) != 0 || net.ping_us == 0) {
         return;
     }
-    uint32_t trip = net.ping_us / 2 + jitter_us();
+    /* The worst path's own trip plus its own jitter, over every ordered pair
+     * of the mesh (net.c, link figures): the host's links as it measures
+     * them, each guest's inbound links as that guest reports them, and a
+     * pair that goes through the host as the relayed path. This used to be
+     * the host's slowest ping plus a jitter mixed from all its links, which
+     * both inflated the delay (see jitter_note) and never saw a slow link
+     * between two guests at all: with 10 ms to the host each and 80 ms
+     * between them (tools/net_test_n.py --paced --link
+     * 0:1=10,0:2=10,1:2=80) the host never moved off menu delay 2, the
+     * guests stalled 1,230 times in 1,146 frames of menus, and the match
+     * rolled back ~1,100 times on each guest. */
+    LinkWorst w;
+    net_links_worst(&w);
+    uint32_t trip = w.need_us;
     int need = (int)((trip + FRAME_US - 1) / FRAME_US);
     /* Hysteresis: a trip sitting on a frame boundary would otherwise flip
      * between two delays for the rest of the match, one announcement per
@@ -231,13 +275,22 @@ static void delay_auto(void) {
     }
     bool fight = in_fight();
     int d = fight ? s_delay_base - ROLLBACK_COVER : s_delay_base + LOCKSTEP_PROCESSING;
-    bool lan = net.ping_us < LAN_PING_US && jitter_us() < LAN_JITTER_US;
+    bool lan = w.rtt_max_us < LAN_PING_US && w.jit_max_us < LAN_JITTER_US;
     int lo = !fight ? 1 : lan ? FIGHT_DELAY_LAN : FIGHT_DELAY_MIN;
     /* Lockstep must cover the trip; a 200 ms link needs about seven frames.
      * Fights still cap delay at four and use rollback for the rest. */
     int hi = fight ? 4 : 8;
     d = d < lo ? lo : d > hi ? hi : d;
     if (d == net.delay) {
+        /* The pick for this side of the menu/fight line is the delay already
+         * running: it is made all the same. Returning without noting it left
+         * s_delay_fight at the menus' false through a whole fight entered at
+         * the delay it wanted, so the first link change mid-match passed the
+         * crossing test below and moved the delay mid-fight (a guest pair
+         * whose link turned bad at frame 4000: "auto delay 2 -> 3 at frame
+         * 4200 (fight, ...)", net_test_n --paced --link
+         * 0:1=10,0:2=10,1:2=80@4000-8000). */
+        s_delay_fight = fight;
         return;
     }
     /* The delay moves on entering or leaving a fight and nowhere else. A
@@ -257,8 +310,10 @@ static void delay_auto(void) {
     net.delay_at = net.frame + DELAY_LEAD;
     s_delay_acted = net.frame;
     s_delay_fight = fight;
-    pc_log_line("net: auto delay %d -> %d at frame %d (%s, ping %u ms, jitter %u ms)", net.delay, d,
-        net.delay_at, fight ? "fight" : "lockstep", net.ping_us / 1000, jitter_us() / 1000);
+    pc_log_line("net: auto delay %d -> %d at frame %d (%s, worst P%d->P%d%s trip %.1f ms + jitter "
+                "%.1f ms; host ping %u ms)",
+        net.delay, d, net.delay_at, fight ? "fight" : "lockstep", w.from + 1, w.to + 1,
+        w.relayed ? " relayed" : "", w.trip_us / 1000.0, w.jit_us / 1000.0, net.ping_us / 1000);
 }
 
 /* The host's announcement (REL_DELAY, reliable lane 1). The guest never
@@ -522,9 +577,10 @@ void sync_reset(void) {
     s_delay_base = s_delay_seen = 0;
     s_delay_acted = -DELAY_HOLDOFF;
     s_delay_fight = false;
-    s_rtt_prev = 0;
-    s_jit_n = s_jit_i = 0;
-    s_jit_sum = 0;
+    memset(s_rtt_prev, 0, sizeof s_rtt_prev);
+    memset(s_jit_n, 0, sizeof s_jit_n);
+    memset(s_jit_i, 0, sizeof s_jit_i);
+    memset(s_jit_sum, 0, sizeof s_jit_sum);
     net.delay_at = 0;
     net.pad_reused = false;
     net.pad_reuse = net.pad_empty = 0;

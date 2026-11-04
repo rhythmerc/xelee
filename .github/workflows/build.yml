@@ -17,6 +17,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      xeleenet_url:
+        description: "XeleeNet service these builds talk to (empty: the XELEENET_URL variable), e.g. a playtest service behind Tailscale Funnel"
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -96,7 +101,7 @@ jobs:
           # Where Send logs uploads (CMakeLists.txt, tools/xeleenet/logs.go).
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
           # The XeleeNet lobby service (CMakeLists.txt, tools/xeleenet).
-          XELEENET_URL: ${{ vars.XELEENET_URL }}
+          XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
         run: |
           # A release without them would say "Online login is not configured".
           if [[ "${GITHUB_REF_TYPE}" == tag && ( -z "${MELEE_SLIPPI_FIREBASE_KEY}" || -z "${MELEE_SLIPPI_GRAPHQL_ENDPOINT}" ) ]]; then
@@ -167,7 +172,7 @@ jobs:
           MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
           MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
-          XELEENET_URL: ${{ vars.XELEENET_URL }}
+          XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
         run: |
           # The quest job checks the secrets a release needs.
           ccache --zero-stats
@@ -233,7 +238,7 @@ jobs:
           MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
           MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
-          XELEENET_URL: ${{ vars.XELEENET_URL }}
+          XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
         run: |
           # The quest job checks the secrets a release needs.
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/26.3.11579264"
@@ -288,7 +293,7 @@ jobs:
           MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
           MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
           XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
-          XELEENET_URL: ${{ vars.XELEENET_URL }}
+          XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
         run: |
           ccache --zero-stats
           tools/package_windows.sh
@@ -298,6 +303,58 @@ jobs:
         with:
           name: xelee-windows
           path: dist/Xelee-Windows-x86_64.zip
+          if-no-files-found: error
+
+  macos:
+    # Run by hand only (playtest builds): not part of a push or a release yet.
+    if: github.event_name == 'workflow_dispatch'
+    name: macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-26
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    # macos-15-intel is on GitHub's deprecation path: Intel never fails the run.
+    continue-on-error: ${{ matrix.arch == 'x86_64' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          # The tags and the history: an untagged build's version is the newest
+          # tag and the commits since (cmake/AppVersion.cmake).
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          xcodebuild -version
+          # Apple clang builds the C++; the decomp's C needs GCC for
+          # scalar_storage_order, so tools/gcc_launcher.py routes melee_game
+          # through Homebrew's gcc. package_macos.sh bundles the dylibs.
+          brew install gcc cmake ninja zstd libpng freetype
+
+      - name: Build and package
+        env:
+          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
+          MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
+          XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
+          XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
+        # No version override: cmake/AppVersion.cmake names an untagged build
+        # (newest tag, commits, 9-digit hash) the same as on every other
+        # platform, and package_macos.sh puts that one in Info.plist. A
+        # git describe here gave a shorter hash, and XeleeNet kept the Mac
+        # out of the other builds' lobbies.
+        run: tools/package_macos.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xelee-macos-${{ matrix.arch }}
+          path: dist/Xelee-macOS-${{ matrix.arch }}.zip
           if-no-files-found: error
 
   release:

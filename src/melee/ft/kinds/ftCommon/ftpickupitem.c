@@ -30,6 +30,7 @@
 #include <melee/ft/types.h>
 #include <melee/it/it_26B1.h>
 #include <melee/it/item.h>
+#include <melee/gm/gmctf.h>
 #include <melee/pl/plbonuslib.h>
 #include <sysdolphin/baselib/debug.h>
 #include <sysdolphin/baselib/gobj.h>
@@ -45,6 +46,9 @@ bool ftpickupitem_80094150(Fighter_GObj* gobj, Item_GObj* item_gobj)
     PAD_STACK(8);
 
     if (Item_IsGrabbable(item_gobj) &&
+#ifdef TARGET_PC
+        !gmCtf_PickupBlocked(gobj, item_gobj) &&
+#endif
         (!fp->x2222_b4 || !it_8026B47C(item_gobj)) &&
         (fp->item_gobj == NULL || it_8026B4F0(item_gobj)))
     {
@@ -103,7 +107,11 @@ Item_GObj* ftpickupitem_800942A0(Fighter_GObj* gobj, u32 flags)
         Item_GObj* cur = HSD_GObjPLinkHead[HSD_GOBJ_PLINK_ITEM];
         Item_GObj* result = NULL;
         while (cur != NULL) {
-            if (Item_IsGrabbable(cur)) {
+            if (Item_IsGrabbable(cur)
+#ifdef TARGET_PC
+                && !gmCtf_PickupBlocked(gobj, cur) /* a team can't lift its flag from its stand */
+#endif
+            ) {
                 enum_t unk_enum = itIsHeavy(cur);
                 if ((!fp->x2222_b4 || !it_8026B47C(cur)) &&
                     (fp->item_gobj == NULL || it_8026B4F0(cur)))

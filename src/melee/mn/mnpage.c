@@ -6,6 +6,7 @@
 #include "types.h"
 #include "mndatadel.h"
 #include "mnonline.h"
+#include "mnmodes.h"
 #include "mnslippi.h"
 #include "mnxeleenet.h"
 #include "pc/lang.h"
@@ -34,13 +35,20 @@
 #define PANEL_TITLE_JOINT 85
 
 /* The Options pages, each in one of the Options rows (SettingsMenuSelection;
- * a row with no page is hidden). The list's order is the rows'. */
+ * a row with no page is hidden). The list's order is the rows'. A game
+ * mode's rules page is one too, in a row of VS Mode > Xelee Melee instead
+ * (mnmodes.c), with START on to its fight. */
 typedef struct PcOptionsPage {
     int row;              ///< the Options row it opens from and goes back to
     const char* name;     ///< the row's label and the page's tab title
     const char* about;    ///< the row's description and the page's first hint
     AnimLoopSettings preview; ///< the preview pane's frames while the row is lit
     const PcMenuScreen* screen;
+    /* A mode page's: the menu its row is in (MENU_KIND_XELEE_MELEE; 0 for
+     * Options), its name and about as lang keys, and what START (and the
+     * screen's PC_SCREEN_GO_START) does. */
+    MenuKind parent;
+    void (*start)(void);
 } PcOptionsPage;
 
 static const PcOptionsPage mnPage_pages[] = {
@@ -61,18 +69,52 @@ static const PcOptionsPage mnPage_pages[] = {
       &pc_controls_screen },
     /* Language's (unused otherwise). Last: the list's end. */
     { SEL_SETTINGS_CREDITS, "Credits", "Xelee credits.", { 1500, 1549, 1520 }, &pc_credits_screen },
+    /* VS Mode > Xelee Melee > Capture the Flag: Melee's Rules page's place
+     * before the CSS (docs/xeleenet-modes-plan.md §2.3). */
+    { SEL_XELEE_MELEE_CTF, "modes.ctf.tab", "modes.ctf.desc", { 700, 749, 720 }, &pc_ctf_rules_screen,
+      MENU_KIND_XELEE_MELEE, mnModes_StartCtf },
 };
 
-static const PcOptionsPage* mnPage_ForRow(int row)
+/* Options' pages are the ones without a parent menu of their own. */
+static bool mnPage_InOptions(const PcOptionsPage* page)
+{
+    return page->parent == 0;
+}
+
+/* The menu kind a page shows as: one for all of Options' (Erase Data's
+ * panel, Options' colours), one for the modes' (VS. Mode's red frame). */
+static MenuKind mnPage_Kind(const PcOptionsPage* page)
+{
+    return mnPage_InOptions(page) ? MENU_KIND_SETTINGS_PAGE : MENU_KIND_MODE_PAGE;
+}
+
+/* A page's tab title and first hint: literal for Options' pages, lang keys
+ * for a mode's. */
+static const char* mnPage_Name(const PcOptionsPage* page)
+{
+    return mnPage_InOptions(page) ? page->name : pc_tr(page->name);
+}
+
+static const char* mnPage_About(const PcOptionsPage* page)
+{
+    return mnPage_InOptions(page) ? page->about : pc_tr(page->about);
+}
+
+static const PcOptionsPage* mnPage_Find(MenuKind parent, int row)
 {
     size_t i;
 
     for (i = 0; i < ARRAY_SIZE(mnPage_pages); i++) {
-        if (mnPage_pages[i].row == row) {
+        if (mnPage_pages[i].parent == parent && mnPage_pages[i].row == row) {
             return &mnPage_pages[i];
         }
     }
     return NULL;
+}
+
+static const PcOptionsPage* mnPage_ForRow(int row)
+{
+    return mnPage_Find(0, row);
 }
 
 bool mnPage_HasRow(int row)
@@ -100,7 +142,7 @@ int mnPage_FirstRow(void)
     size_t i;
 
     for (i = 1; i < ARRAY_SIZE(mnPage_pages); i++) {
-        if (mnPage_pages[i].row < row) {
+        if (mnPage_InOptions(&mnPage_pages[i]) && mnPage_pages[i].row < row) {
             row = mnPage_pages[i].row;
         }
     }
@@ -113,7 +155,7 @@ int mnPage_RowCount(void)
     size_t i;
 
     for (i = 0; i < ARRAY_SIZE(mnPage_pages); i++) {
-        if (mnPage_pages[i].row + 1 > count) {
+        if (mnPage_InOptions(&mnPage_pages[i]) && mnPage_pages[i].row + 1 > count) {
             count = mnPage_pages[i].row + 1;
         }
     }
@@ -125,7 +167,7 @@ void mnPage_Previews(AnimLoopSettings* rows, int count)
     size_t i;
 
     for (i = 0; i < ARRAY_SIZE(mnPage_pages); i++) {
-        if (mnPage_pages[i].row < count) {
+        if (mnPage_InOptions(&mnPage_pages[i]) && mnPage_pages[i].row < count) {
             rows[mnPage_pages[i].row] = mnPage_pages[i].preview;
         }
     }
@@ -255,7 +297,7 @@ static void mnPage_Frame(HSD_GObj* gobj)
     const PcMenuScreen* screen = state->page->screen;
     const char* hint;
 
-    if (mn_804A04F0.cur_menu != MENU_KIND_SETTINGS_PAGE && state->phase != PAGE_OUT) {
+    if (mn_804A04F0.cur_menu != mnPage_Kind(state->page) && state->phase != PAGE_OUT) {
         /* Options writes its own hint as its rows come back. */
         mnPage_FreeHint(state);
         state->phase = PAGE_OUT;
@@ -307,6 +349,15 @@ static void mnPage_Think(HSD_GObj* gobj)
         return;
     }
     events = Menu_GetAllInputs();
+    /* A mode's page: START goes on to its fight from any row (its bottom
+     * button does too, below), where Options' pages take it as A. Like the
+     * rest of the input, only once the page is in. */
+    if (page->start != NULL && (events & MenuInput_StartButton) && mnPage_gobj != NULL &&
+        ((PageState*) HSD_GObjGetUserData(mnPage_gobj))->phase == PAGE_SHOWN)
+    {
+        where = PC_SCREEN_GO_START;
+        goto leave;
+    }
     /* The screen takes the menus' input; B with nothing to back out of
      * leaves the page, as does the screen's own asking (Graphics' restart
      * question's Later), which can also go on to a stock page or scene. */
@@ -322,7 +373,18 @@ static void mnPage_Think(HSD_GObj* gobj)
         screen->input(PC_SCREEN_CONFIRM);
     }
     where = screen->leaving != NULL ? screen->leaving() : PC_SCREEN_STAY;
+leave:
     switch (where) {
+    case PC_SCREEN_GO_START:
+        if (page->start == NULL) {
+            break;
+        }
+        /* The scene ends under the page, as for placing the stage; coming
+         * back (B in the CSS) opens it again (gmmenumode.c). */
+        screen->show(false);
+        page->start();
+        HSD_GObjFree(gobj);
+        return;
     case PC_SCREEN_GO_ERASE_DATA:
         mnPage_away = page;
         mn_804A04F0.entering_menu = 1;
@@ -345,14 +407,19 @@ static void mnPage_Think(HSD_GObj* gobj)
     if (where == PC_SCREEN_GO_BACK || ((events & MenuInput_Back) && !screen->input(PC_SCREEN_BACK))) {
         sfxBack();
         mn_804A04F0.entering_menu = 0;
-        mn_80229894(MENU_KIND_SETTINGS, page->row, 3);
+        mn_80229894(mnPage_InOptions(page) ? MENU_KIND_SETTINGS : page->parent, page->row, 3);
         return;
     }
 }
 
 bool mnPage_Open(int row)
 {
-    const PcOptionsPage* page = mnPage_ForRow(row);
+    return mnPage_OpenIn(0, row);
+}
+
+bool mnPage_OpenIn(MenuKind parent, int row)
+{
+    const PcOptionsPage* page = mnPage_Find(parent, row);
     HSD_GObj* gobj;
     HSD_GObjProc* proc;
     PageState* state;
@@ -370,7 +437,7 @@ bool mnPage_Open(int row)
     }
     mn_804D6BC8.cooldown = 5;
     mn_804A04F0.prev_menu = mn_804A04F0.cur_menu;
-    mn_804A04F0.cur_menu = MENU_KIND_SETTINGS_PAGE;
+    mn_804A04F0.cur_menu = mnPage_Kind(page);
     mn_804A04F0.hovered_selection = 0;
     mnPage_open = page;
 
@@ -385,7 +452,7 @@ bool mnPage_Open(int row)
     GObj_InitUserData(gobj, 0U, HSD_Free, state);
     proc = HSD_GObj_SetupProc(gobj, mnPage_Frame, 0U);
     proc->flags_3 = HSD_GObj_804D783C;
-    mnPage_SetHint(state, page->about);
+    mnPage_SetHint(state, mnPage_About(page));
 
     proc = HSD_GObj_SetupProc(GObj_Create(0, 1, 0x80), mnPage_Think, 0);
     proc->flags_3 = HSD_GObj_804D783C;
@@ -464,8 +531,12 @@ static void mnPage_TitleItalic(void* gobj_)
 /* The tab's sub-title of a PC page, or NULL for a stock kind. */
 static const char* mnPage_Title(MenuKind kind)
 {
-    if (kind == MENU_KIND_SETTINGS_PAGE) {
-        return mnPage_open != NULL ? mnPage_open->name : NULL;
+    if (kind == MENU_KIND_SETTINGS_PAGE || kind == MENU_KIND_MODE_PAGE) {
+        return mnPage_open != NULL ? mnPage_Name(mnPage_open) : NULL;
+    }
+    if (kind == MENU_KIND_XELEE_MELEE) {
+        /* Special Melee's panel: its sub-title reads Xelee Melee instead. */
+        return pc_tr("modes.tab");
     }
     if (kind == MENU_KIND_SLIPPI_PAGE) {
         return mnXeleeNet_Active() ? mnXeleeNet_Title() : mnSlippi_Title();

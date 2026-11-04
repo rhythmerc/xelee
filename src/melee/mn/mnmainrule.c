@@ -344,7 +344,7 @@ void fn_8022F538(HSD_GObj* arg0)
                 return;
             }
             if (gm_GetCurrentGameMode() == GM_MENU) {
-                mn_80229894(2, 3, 3);
+                mn_80229894(MENU_KIND_VS, SEL_VS_RULES, 3);
                 return;
             }
             HSD_SisLib_803A5E70();
@@ -371,7 +371,7 @@ void fn_8022F538(HSD_GObj* arg0)
             return;
         }
         if (gm_GetCurrentGameMode() == GM_MENU) {
-            mn_80229894(2, 3, 3);
+            mn_80229894(MENU_KIND_VS, SEL_VS_RULES, 3);
             return;
         }
         HSD_SisLib_803A5E70();

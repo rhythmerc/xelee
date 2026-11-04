@@ -3,6 +3,7 @@
 #include "forward.h"
 #include "inlines.h"
 #include "mnmain.h"
+#include "mnmodes.h"
 #include "mnpage.h"
 #include "types.h"
 #include <melee/gm/gmonlinemode.h>
@@ -105,6 +106,9 @@ void mnOnline_SlippiBuilt(void)
 
 const char* mnOnline_Label(MenuKind kind, int selection)
 {
+    if (mnModes_Label(kind, selection) != NULL) {
+        return mnModes_Label(kind, selection); /* VS Mode > Xelee Melee (mnmodes.c) */
+    }
     if (kind == MENU_KIND_MAIN && selection == SEL_MAIN_ONLINE) {
         return pc_tr("online.label");
     }
@@ -136,6 +140,9 @@ const char* mnOnline_Label(MenuKind kind, int selection)
 
 const char* mnOnline_Description(MenuKind kind, int selection)
 {
+    if (mnModes_Description(kind, selection) != NULL) {
+        return mnModes_Description(kind, selection);
+    }
     if (kind == MENU_KIND_MAIN && selection == SEL_MAIN_ONLINE) {
         return pc_tr("online.desc");
     }

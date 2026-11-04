@@ -1,5 +1,8 @@
 #include "gmvs.h"
 
+#include <melee/gm/gmctf.h>
+#include <dolphin/os.h>
+
 #include <Runtime/platform.h>
 
 #include <string.h>
@@ -886,6 +889,18 @@ MatchOutcome gm_GetTeamBattleOutcome(void)
     return OUTCOME_NONE;
 }
 
+/* Time ran out: Melee's TIME!, or a CTF tie's no contest. */
+static MatchOutcome gm_TimeoutOutcome(void)
+{
+#ifdef TARGET_PC
+    if (gmCtf_Tied()) {
+        OSReport("ctf: time up tied, no contest\n");
+        return OUTCOME_NO_CONTEST;
+    }
+#endif
+    return OUTCOME_TIMEOUT;
+}
+
 MatchOutcome gm_GetMatchOutcome(void)
 {
     MatchOutcome team_battle_outcome;
@@ -907,19 +922,25 @@ MatchOutcome gm_GetMatchOutcome(void)
     if (controller.start.x5_0) {
         return OUTCOME_NONE;
     }
+#ifdef TARGET_PC
+    /* CTF: a team reached its captures (GAME!); a tie at time is no contest. */
+    if (gmCtf_Winner() >= 0) {
+        return OUTCOME_TEAM_ELIMINATION;
+    }
+#endif
     if (tmp->start.timer_enabled) {
         if (tmp->start.timer_counts_up) {
             if (controller.state.timer_seconds ==
                     controller.start.time_limit &&
                 controller.state.unk_2C == 0)
             {
-                return OUTCOME_TIMEOUT;
+                return gm_TimeoutOutcome();
             }
         } else {
             if (controller.state.timer_seconds == 0 &&
                 controller.state.unk_2C == 0x3B)
             {
-                return OUTCOME_TIMEOUT;
+                return gm_TimeoutOutcome();
             }
         }
     }
@@ -1144,6 +1165,9 @@ static bool softPaused;
 /* The port whose L+R+A+Start ended the match, -1 when none did: Slippi's
  * Direct counts it as that player's loss (CheckIfWonLastGame). */
 int gm_vs_slippi_quitter = -1;
+/* The port whose leaving voided the match (src/pc/net.c, drops), -1 when
+ * none: XeleeNet takes the others back to the CSS without it. */
+int gm_vs_net_leaver = -1;
 
 bool gm_vs_soft_paused(void)
 {
@@ -1154,6 +1178,7 @@ static void softPauseReset(void)
 {
     softPaused = false;
     gm_vs_slippi_quitter = -1;
+    gm_vs_net_leaver = -1;
 }
 
 static void slippiSoftPause(VsSceneController* c)
@@ -1209,6 +1234,7 @@ void gm_DoPauseChecksAndRoutine(VsSceneController* arg0, int arg1)
         const int gone = pc_net_void_port_now();
         if (gone >= 0) {
             pc_log_line("online: match void at frame %d, P%d left", pc_net_frame(), gone + 1);
+            gm_vs_net_leaver = gone;
             fn_8016CF4C(gone, OUTCOME_NO_CONTEST);
             return;
         }
@@ -2073,6 +2099,9 @@ static inline void getSpawnPoint(int i, Vec3* v)
 {
     VsSceneController* tmp = &controller;
 #ifdef TARGET_PC
+    if (gmCtf_SpawnPoint(i, v)) { /* CTF: everyone starts at their base */
+        return;
+    }
     if (neutralSpawn(i, v)) {
         return;
     }
@@ -2371,6 +2400,7 @@ void fn_8016E730(StartMeleeData* arg0)
     Item_80266F70();
     Item_80266FCC();
     it_8026D018();
+    gmCtf_MatchInit();
     lbAudioAx_8002785C();
     Stage_8022524C();
     Camera_80030730(Ground_801C20D0());
@@ -2473,7 +2503,12 @@ void gm_Scene_Vs_OnExit(void* user_data)
     data->x8 = Ground_801C5ABC();
 
     if (gm_8016B3D8() || gm_8016E9C8_inline() ||
-        gm_GetCurrentGameMode() == GM_VS)
+        gm_GetCurrentGameMode() == GM_VS
+#ifdef TARGET_PC
+        /* Offline CTF's matches count as VS matches, as Special Melee's do. */
+        || gm_GetCurrentGameMode() == GM_CTF
+#endif
+    )
     {
         if (controller.state.match_result != OUTCOME_NO_CONTEST &&
             controller.state.match_result != OUTCOME_RETRY)

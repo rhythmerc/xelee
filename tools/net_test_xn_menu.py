@@ -784,11 +784,15 @@ FIGHTERS_HIGH = sum(1 << b for b in (0x02, 0x09, 0x0F, 0x14, 0x12, 0x13, 0x00, 0
 FIGHTERS_LOW = FIGHTERS_ALL & ~FIGHTERS_HIGH
 
 
-def set_rules(ident, seats, teams=False, fighters=FIGHTERS_ALL, stages=COMPETITIVE):
+def set_rules(ident, seats, teams=False, fighters=FIGHTERS_ALL, stages=COMPETITIVE, ctf=False):
     with open(os.path.join(ident, "xeleenet-lobby.txt"), "w") as f:
         f.write(f"preset=3\nname=Set test\nopen=1\nseats={seats}\nteams={int(teams)}\nstock=0\nstocks=4\n"
                 f"minutes=1\nitems=-1\nff=0\nhandicap=0\ndamage=10\npause=0\nstages={stages}\n"
                 f"fighters={fighters}\nfrozen=1\nhide=0\n")
+        if ctf:  # --scenario ctf: Capture the Flag (docs/xeleenet-modes-plan.md)
+            # Only the mode: its rules are the game's defaults (first to 5,
+            # flag home on, no auto-return, carrying slows, 10:00).
+            f.write("mode=1\n")
 
 
 # --scenario details: the host's lobby (2 seats, Low tiers, Final Dest. only).
@@ -921,13 +925,75 @@ def rematch(insts, shots, drive):
     return True
 
 
+def leave_match(insts, shots, drive, scenario):
+    """--scenario leave-match / leave-match-kill (the 2026-11-02 playtest,
+    section 7.2): the last guest leaves mid-match, with a goodbye (SIGTERM,
+    the game's own exit path) or none (SIGKILL: silence, a timeout). The
+    others void the match and must go back to the CSS together, with the
+    lobby one player smaller, and play on."""
+    import signal
+    nap(6)
+    gone, rest = insts[-1], insts[:-1]
+    kill = scenario.endswith("kill")
+    print(f"net_test_xn_menu: {gone.name} leaves mid-match ({'no goodbye' if kill else 'goodbye'})", flush=True)
+    want = f"(players {(1 << len(rest)) - 1:02x})"
+    sessions = [nt.count(i, nt.re.escape(want)) for i in rest]  # those while the others joined
+    t0 = time.time()
+    gone.proc.send_signal(signal.SIGKILL if kill else signal.SIGTERM)
+    if not all(i.wait_log(r"online: match void at frame", 90) for i in rest):
+        drive.done()
+        print("FAIL: the others never voided the match")
+        return False
+    print(f"net_test_xn_menu: void after {time.time() - t0:.1f} s", flush=True)
+    css = [nt.count(i, r"online: enter CSS") for i in rest]
+    deadline = time.time() + 40
+    while time.time() < deadline:
+        if wait_more(rest, r"online: enter CSS", css, 2):
+            break
+        if any(nt.re.search(r"online: enter RESULTS", i.text()) for i in rest):
+            nt.press(rest, "Return", 9, 0)  # START, as players would on the results
+    else:
+        drive.done()
+        shot(rest[0], shots, "13-stuck")
+        print("FAIL: the others never got back to the CSS after the leave")
+        for i in rest:
+            print(f"[{i.name}] " + "; ".join(nt.re.findall(r"online: (enter \w+) at frame", i.text())[-4:]))
+        return False
+    drive.done()
+    print(f"net_test_xn_menu: back at the CSS {time.time() - t0:.1f} s after the leave", flush=True)
+    if not wait_more(rest, nt.re.escape(want), sessions, 60):
+        print(f"FAIL: the others never formed a session without the leaver {want}")
+        return False
+    nap(3)
+    shot(rest[0], shots, "13-css-after-leave")
+    del insts[-1]  # it plays no more
+    if not drive_css(rest, want=2):
+        print("FAIL: no CSS pick after the leave reached the SSS")
+        return False
+    cells = [nt.count(i, r"sss: resolved cell") for i in rest]
+    vs = [nt.count(i, r"online: enter VS at frame") for i in rest]
+    if not nt.press_until(rest, "Return", 9, r"sss: resolved cell", want=min(cells) + 1, tries=8, each=6.0):
+        print("FAIL: the SSS after the leave never resolved a stage everywhere")
+        return False
+    again = __import__("net_test_n").Drive(rest)
+    ok = wait_more(rest, r"online: enter VS at frame", vs, 180)
+    if ok:
+        nap(8)
+        shot(rest[0], shots, "14-match-after-leave")
+    again.done()
+    if not ok:
+        print("FAIL: the match after the leave never loaded")
+    return ok
+
+
 # ---- Lobby Settings (docs/xeleenet-settings-overlay-plan.md) ------------------
 # The overlay's items, top to bottom, as Up and Down walk them on the host's
-# page (xeleenet_menu.cpp build_overlay_host): Friendly fire only with Teams
-# on; Visibility and Hide code not on LAN.
+# page (xeleenet_menu.cpp build_overlay_host): the Mode bar (where it opens),
+# then VS's rows; Friendly fire only with Teams on; Visibility and Hide code
+# not on LAN.
 def settings_rows(teams, lan):
-    rows = ["teams", "stocks", "time", "items"] + (["ff"] if teams else []) + ["more", "flist", "slist", "frozen",
-                                                                             "seats"]
+    rows = ["mode", "teams", "stocks", "time", "items"] + (["ff"] if teams else []) + ["more", "flist", "slist", "frozen",
+                                                                             "seats", "cpus"]
     return rows + ([] if lan else ["vis", "hide"]) + ["apply", "cancel"]
 
 
@@ -1268,6 +1334,39 @@ def settings_walk(insts, shots, args):
     return True
 
 
+def settings_mode(insts, shots, args):
+    """The 2026-11-02 playtest's 7.4: Lobby Settings changes the game mode.
+    The host's VS lobby: Z, Right on the Mode bar (where it opens), START.
+    Every player commits Capture the Flag's RULES (teams, time, Temple) on
+    the same frame; the match that follows is CTF on Temple (run()'s checks,
+    as --scenario ctf)."""
+    host = insts[0]
+    nt.settle(insts, nt.MENU_SETTLE)
+    if not open_settings(host):
+        return False
+    shot(host, shots, "s-mode-open")
+    tap(host, "Right")  # Mode: VS -> Capture the Flag
+    nap(0.5)
+    shot(host, shots, "s-mode-ctf")
+    loads, before = [css_loads(i) for i in insts], [len(commits(i)) for i in insts]
+    t0 = time.time()
+    tap(host, "Return")  # START: apply
+    if not host.wait_log(r"xeleenet: Lobby Settings applied: .*Capture the Flag", 5):
+        print("FAIL: START didn't apply a mode change")
+        return False
+    if not applied_everywhere(insts, loads, before, shots, "s-mode-after"):
+        return False
+    print(f"net_test_xn_menu: the mode change landed {time.time() - t0:.1f} s after START", flush=True)
+    ok = True
+    for i in insts:
+        last = (nt.re.findall(r"net: RULES (?:applied|in force) (mode=.*)", i.text()) or [""])[-1]
+        for want in (r"game_mode=1/", r"stages=0*4000 ", r"time=10 "):
+            if not nt.re.search(want, last):
+                print(f"[{i.name}] FAIL: no {want} in the RULES in force: {last[:200]}")
+                ok = False
+    return ok
+
+
 def settings_cancel(insts, shots, args):
     """B: the host changes Stocks and cancels; no restart, no reload, and
     P2's Ready stands."""
@@ -1282,7 +1381,7 @@ def settings_cancel(insts, shots, args):
     starts = nt.count(host, r"xeleenet: starting")
     if not open_settings(host):
         return False
-    tap(host, "Down")
+    to_row(host, settings_rows(teams=True, lan=args.net == "lan"), "stocks")
     tap(host, "Right")
     tap(host, "Z")  # B: cancel
     if not host.wait_log(r"xeleenet: Lobby Settings closed", 5):
@@ -1370,6 +1469,7 @@ def settings_teams(insts, shots, args):
     nt.settle(insts, nt.MENU_SETTLE)
     if not open_settings(host):
         return False
+    to_row(host, settings_rows(teams=False, lan=lan), "teams")
     tap(host, "Right")  # Teams: Off -> On
     loads, before = [css_loads(i) for i in insts], [len(commits(i)) for i in insts]
     tap(host, "Return")
@@ -1482,6 +1582,272 @@ def settings_race(insts, shots, args, to_menu, code):
     return True
 
 
+# ---- --scenario cpus / cpus-ctf: CPUs in a lobby (docs/xeleenet-cpus-plan.md) ----
+
+def cpus_rules(ident, ctf):
+    """The host's rules: 4 seats, 1-minute time matches (so a match ends by
+    itself), CPUs Host for VS and Anyone for Capture the Flag."""
+    with open(os.path.join(ident, "xeleenet-lobby.txt"), "w") as f:
+        f.write(f"preset=3\nname=CPU test\nopen=1\nseats=4\nteams=0\nstock=0\nstocks=4\nminutes=1\nitems=-1\n"
+                f"ff=0\nhandicap=0\ndamage=10\npause=0\nstages={COMPETITIVE}\nfighters={FIGHTERS_ALL}\nfrozen=1\n"
+                f"hide=0\ncpus={2 if ctf else 1}\n")
+        if ctf:
+            f.write("mode=1\nctf_minutes=1\n")
+
+
+def css_xy(inst, pattern):
+    """The last (x, y) a line of the game's gave, or None."""
+    m = nt.re.findall(pattern, inst.text())
+    return (float(m[-1][0]), float(m[-1][1])) if m else None
+
+
+def toggle_at(inst, door):
+    """Where door `door`'s type button is (MELEE_XN_TEST_HAND's "css: toggles")."""
+    m = nt.re.findall(r"css: toggles(.*)", inst.text())
+    for d, x, y in nt.re.findall(r" (\d):(-?[\d.]+),(-?[\d.]+)", m[-1] if m else ""):
+        if int(d) == door:
+            return float(x), float(y)
+    return None
+
+
+def cpu_line(inst, door):
+    """A CPU door's last state line: token x, y, held, slider x, y, level, fighter."""
+    m = nt.re.findall(rf"css: P{door} cpu token (-?[\d.]+) (-?[\d.]+) held (\d+) slider (-?[\d.]+) (-?[\d.]+) "
+                      rf"level (\d+) fighter (-?\d+)", inst.text())
+    return m[-1] if m else None
+
+
+def everyone_logs(insts, pattern, since, timeout=20):
+    """Every instance logs `pattern` once more than `since` (counts): an action
+    on the lockstep CSS, seen by every player."""
+    if wait_more(insts, pattern, since, timeout):
+        return True
+    for i, n in zip(insts, since):
+        if nt.count(i, pattern) <= n:
+            print(f"[{i.name}] FAIL: never logged {pattern!r}")
+    return False
+
+
+def press_toggle(insts, inst, port, door):
+    """Port's hand presses door's type button (steered by where it is)."""
+    target = toggle_at(inst, door)
+    if target is None:
+        print(f"[{inst.name}] FAIL: the game never logged the type buttons")
+        return False
+    if not steer_to(inst, port, target, where=hand_at):
+        print(f"[{inst.name}] FAIL: P{port}'s hand never reached P{door}'s type button {target}")
+        return False
+    nt.press((inst,), "X", 4, 0.6)
+    return True
+
+
+def cpu_setup(insts, inst, port, door, level_up=True, fighter=None):
+    """Port's hand adds a CPU on door `door`: its type button, the level slider
+    to 9, and (fighter) its coin onto that portrait. Every player sees each."""
+    before = [nt.count(i, rf"css: P{door}'s door CPU") for i in insts]
+    if not press_toggle(insts, inst, port, door) or not everyone_logs(insts, rf"css: P{door}'s door CPU", before):
+        return False
+    print(f"net_test_xn_menu: P{port}'s hand made P{door} a CPU", flush=True)
+    nap(1.0)
+    if level_up:
+        line = cpu_line(inst, door)
+        if line is None:
+            print(f"[{inst.name}] FAIL: no state line for P{door}'s CPU")
+            return False
+        before = [nt.count(i, rf"css: P{door}'s level 9") for i in insts]
+        if not steer_to(inst, port, (float(line[3]), float(line[4])), where=hand_at):
+            print(f"[{inst.name}] FAIL: P{port}'s hand never reached P{door}'s slider")
+            return False
+        nt.press((inst,), "X", 4, 0.3)   # grab the slider
+        nt.press((inst,), "Right", 30, 0.3)  # all the way: level 9
+        nt.press((inst,), "X", 4, 0.6)   # and let go
+        if not everyone_logs(insts, rf"css: P{door}'s level 9", before):
+            return False
+        print(f"net_test_xn_menu: P{door}'s CPU is level 9 everywhere", flush=True)
+        nt.press((inst,), "Up", 12, 0.3)  # off the door, back toward the grid
+    if fighter is not None:
+        nap(0.7)
+        line = cpu_line(inst, door)
+        before = [nt.count(i, rf"css: P{door} picked {fighter}\b") for i in insts]
+        took = [nt.count(i, rf"css: P{port}'s hand took P{door}'s coin") for i in insts]
+        # The hand picks a coin up from 3.8 left of it and 2.6 above (mncharsel.c).
+        if not steer_to(inst, port, (float(line[0]) - 3.8, float(line[1]) + 2.6), where=hand_at):
+            print(f"[{inst.name}] FAIL: P{port}'s hand never reached P{door}'s coin")
+            return False
+        nt.press((inst,), "X", 4, 0.6)
+        if not everyone_logs(insts, rf"css: P{port}'s hand took P{door}'s coin", took):
+            return False
+        target = portrait(inst, fighter)
+        coin = lambda i, p: (lambda l: (float(l[0]), float(l[1])) if l else None)(cpu_line(i, door))
+        if target is None or not steer_to(inst, port, target, where=coin):
+            print(f"[{inst.name}] FAIL: P{door}'s coin never reached portrait {fighter}")
+            return False
+        nt.press((inst,), "X", 4, 0.6)
+        if not everyone_logs(insts, rf"css: P{door} picked {fighter}\b", before):
+            return False
+        print(f"net_test_xn_menu: P{port}'s hand put P{door}'s coin on {fighter}, everywhere", flush=True)
+    return True
+
+
+def cpus_listed(host, url, want):
+    """The service's listing of the host's lobby (as the lobby browser gets
+    it) comes to list `want`: [(port, level, ckind or None)] CPU seats, with
+    only the people taken. A heartbeat is a few seconds apart."""
+    m = nt.re.search(r"xeleenet: hosting lobby \w+, code (\w+), \d seats \(build (\S+), disc (\S+)\)", host.text())
+    if m is None:
+        print("FAIL: no hosting line in the host's log")
+        return False
+    code, rev, disc = m.groups()
+    with open(os.path.join(HERE, "..", "src", "pc", "net.h")) as f:
+        proto = int(nt.re.search(r"define PC_NET_PROTO_VERSION\s+(\d+)", f.read()).group(1))
+    viewer = test_service.XnClient(url, name="VIEWER", compat={"proto": proto, "rev": rev, "disc": disc})
+    got = None
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        rows = [x for x in viewer.list(full=True)["lobbies"] if x["code"] == code]
+        if rows:
+            got = (rows[0]["taken"], [(p["port"], p.get("level"), p.get("ckind")) for p in rows[0]["players"]
+                                      if p.get("cpu")])
+            if got[1] == want:
+                print(f"net_test_xn_menu: the service lists {rows[0]['taken']} taken and the CPUs {got[1]}",
+                      flush=True)
+                return True
+        time.sleep(1)
+    print(f"FAIL: the service lists (taken, CPUs) {got}, not {want}")
+    return False
+
+
+def cpus_css(insts, shots, ctf, url=None):
+    """2 people add 2 level-9 CPUs on the lobby's CSS. VS (CPUs Host): the
+    guest's hand on P3's type button is refused everywhere; the host's hand
+    adds both CPUs, levels them to 9 and puts P3 on Fox. CTF (CPUs Anyone):
+    the host adds P3, the guest adds P4 and moves its coin (a hand of another
+    machine than the host's, on a CPU). Then both pick and ready."""
+    host, guest = insts[0], insts[1]
+    nt.settle(insts, nt.MENU_SETTLE)
+    nap(1.5)
+    # Everyone picks first: a hand holding its own token presses no buttons.
+    if pick_high(host, 1, 0x02) is None or pick_high(guest, 2, 0x14) is None:
+        return False
+    nt.press(insts, "Up", 10, 0.3)
+    if not ctf:
+        refused = [nt.count(i, r"css: P2's hand may not change P3's door \(CPUs 1\)") for i in insts]
+        if not press_toggle(insts, guest, 2, 3) or \
+                not everyone_logs(insts, r"css: P2's hand may not change P3's door \(CPUs 1\)", refused):
+            return False
+        nap(1.0)
+        if any(nt.count(i, r"css: P3's door CPU") for i in insts):
+            print("FAIL: the guest's press made a CPU in Host mode")
+            return False
+        print("net_test_xn_menu: Host mode refused the guest's type button, everywhere", flush=True)
+        nt.press((guest,), "Up", 10, 0.3)
+        if not cpu_setup(insts, host, 1, 3, fighter=0x02) or not cpu_setup(insts, host, 1, 4):
+            return False
+    else:
+        if not cpu_setup(insts, host, 1, 3) or not cpu_setup(insts, guest, 2, 4, fighter=0x09):
+            return False
+    nap(1.5)
+    shot(host, shots, "c1-css-cpus-host")
+    shot(guest, shots, "c1-css-cpus-guest")
+    # The same CPUs on every player's CSS: the doors' states, as each logs them.
+    states = [[cpu_line(i, d)[5:] if cpu_line(i, d) else None for d in (3, 4)] for i in insts]
+    print(f"net_test_xn_menu: CPU doors (level, fighter) {states}", flush=True)
+    if any(s != states[0] for s in states) or any(s is None or s[0] != "9" for s in states[0]):
+        print("FAIL: the players' CPU doors differ, or a CPU isn't level 9")
+        return False
+    if url and not cpus_listed(host, url, [(2, 9, int(states[0][0][1])), (3, 9, int(states[0][1][1]))]):
+        return False
+    before = [sss_loads(i) for i in insts]
+    nt.press(insts, "Return", 9, 1.0)
+    deadline = time.time() + 30
+    while time.time() < deadline and not all(sss_loads(i) > n for i, n in zip(insts, before)):
+        nap(0.5)
+    if not all(sss_loads(i) > n for i, n in zip(insts, before)):
+        print("FAIL: both ready with two CPUs, but no stage select")
+        return False
+    print("net_test_xn_menu: both ready; the stage select with two CPUs in", flush=True)
+    return True
+
+
+def cpus_after(insts, pad, shots, args, drive):
+    """The match runs out to the results and back to the CSS, the CPUs still
+    in (P3 and P4). VS then: the host's second pad's START takes the
+    highest-port CPU's seat (P4: no seat is empty), and the host applies CPUs
+    Off from Lobby Settings, which takes P3's CPU out on every player."""
+    host = insts[0]
+    if not all(i.wait_log(r"online: enter RESULTS", 240) for i in insts):
+        drive.done()
+        print("FAIL: the match with CPUs never reached the results")
+        return False
+    drive.done()
+    print("net_test_xn_menu: the match with CPUs played to the end", flush=True)
+    look(3)
+    shot(host, shots, "c2-results")
+    css = [nt.count(i, r"online: enter CSS") for i in insts]
+    for _ in range(12):
+        if wait_more(insts, r"online: enter CSS", css, 5):
+            break
+        nt.press(insts, "Return", 9, 0)
+    else:
+        print("FAIL: the results never went back to the CSS")
+        return False
+    if not all(i.wait_log(r"online: XeleeNet CPUs 0c \(levels \d\d99\)", 10) for i in insts):
+        print("FAIL: the CPUs didn't survive the trip back to the CSS")
+        return False
+    print("net_test_xn_menu: the CPUs came back to the CSS on every player", flush=True)
+    if args.scenario == "cpus-ctf":
+        return True
+    nap(3)
+    # A second controller: START on the host's spare pad. No seat is empty,
+    # so it takes P4's (the highest-port CPU), and P4's CPU leaves.
+    loads = [css_loads(i) for i in insts]
+    seated = "(players 0b"
+    before = [i.text().count(seated) for i in insts]
+    nt.hold(pad, "Return", 9)
+    for i, n in zip(insts, before):
+        deadline = time.time() + 40
+        while time.time() < deadline and i.text().count(seated) <= n:
+            nap(0.3)
+        if i.text().count(seated) <= n:
+            print(f"[{i.name}] FAIL: no session with the second pad on P4 {seated})")
+            return False
+    if not host.wait_log(r"xeleenet: new seats 08 take CPUs' seats", 5):
+        print("FAIL: the host never said the new seat took P4's CPU")
+        return False
+    if not reloaded(insts, loads):
+        return False
+    # The host's picks bring P3's CPU only: P4 is the pad's now.
+    if not all(i.wait_log(r"online: XeleeNet picks kept \w\w \(of 0b\), CPUs 04", 20) and
+               i.wait_log(r"online: XeleeNet CPUs 04 \(levels \d\d9\d\)", 5) for i in insts):
+        print("FAIL: P4's CPU didn't leave for the second pad on every player")
+        return False
+    nap(2)
+    shot(host, shots, "c3-css-pad-took-p4")
+    print("net_test_xn_menu: the second pad took P4's seat; P4's CPU left, P3's stayed, everywhere", flush=True)
+    # CPUs Off from Lobby Settings: the CHANGES box names P3's CPU, and Apply
+    # takes it out on every player at the commit.
+    if not open_settings(host):
+        return False
+    rows = settings_rows(teams=False, lan=args.net == "lan")
+    to_row(host, rows, "cpus")
+    tap(host, "Left")  # Host -> Off
+    nap(1.0)
+    shot(host, shots, "c4-settings-cpus-off")
+    loads, before = [css_loads(i) for i in insts], [len(commits(i)) for i in insts]
+    tap(host, "Return")
+    if not applied_everywhere(insts, loads, before, shots, "c5-cpus-off"):
+        return False
+    if not all(i.wait_log(r"online: XeleeNet CPUs 04 leave \(kept 00, players 0b, 4 seats, CPUs 0\)", 20)
+               for i in insts):
+        print("FAIL: CPUs Off didn't take P3's CPU out on every player")
+        return False
+    if not all(nt.re.search(r"net: RULES (?:applied|in force) .* cpus=0 ", i.text()) for i in insts):
+        print("FAIL: CPUs Off never came in force")
+        return False
+    print("net_test_xn_menu: CPUs Off took P3's CPU out on every player", flush=True)
+    return True
+
+
 def run(args):
     # settings-seats: a 4th player, kept out of the lobby until it has 4 seats.
     extra_seat = args.scenario == "settings-seats"
@@ -1504,6 +1870,10 @@ def run(args):
                       fighters=FIGHTERS_LOW if args.scenario == "fighters" else FIGHTERS_ALL)
         if args.scenario == "details" and k == 0:
             set_rules(ident, 2, fighters=FIGHTERS_LOW, stages=FINAL_DEST)
+        if args.scenario == "ctf" and k == 0:
+            set_rules(ident, args.players, ctf=True)
+        if args.scenario.startswith("cpus") and k == 0:
+            cpus_rules(ident, ctf=args.scenario == "cpus-ctf")
         if args.scenario == "settings-teams" and k == 0:
             # Teams off, 4 seats: the scenario turns Teams on from Lobby Settings.
             with open(os.path.join(ident, "xeleenet-lobby.txt"), "w") as f:
@@ -1527,7 +1897,7 @@ def run(args):
             env["MELEE_NET_SIM_DELAY_MS"] = "80"  # P2's last change races P3's pick
         if args.scenario in ("settings-engine", "settings-race") and k == 0:
             env["MELEE_XN_TEST_APPLY"] = f"30:{settings_file(args.work)}"
-        if args.scenario.startswith("multipad") and k == 0:
+        if (args.scenario.startswith("multipad") or args.scenario == "cpus") and k == 0:
             fifo = os.path.join(args.work, f"{name}.pad2.keys")
             os.mkfifo(fifo)
             env["MELEE_KEY_FIFO_P2"] = fifo  # the host's second pad
@@ -1551,8 +1921,10 @@ def run(args):
         walk(host, [("X", 7)])
         nap(1.5)
         if (args.players > 2 or args.scenario == "multipad") and \
-                args.scenario not in ("set", "teams", "fighters", "details", "settings-teams"):
+                args.scenario not in ("set", "teams", "fighters", "details", "settings-teams", "ctf", "cpus",
+                                      "cpus-ctf"):
             # (their rules file has the seats)
+            nt.press((host,), "Down", 7, 0.4)  # from the Mode bar to the Preset bar
             nt.press((host,), "Right", 7, 0.6)  # Preset: 1v1 (2 seats) -> Doubles (4)
         shot(host, shots, "3-host-page")
         nt.press((host,), "Return", 9, 1.0)  # START: open the lobby
@@ -1659,7 +2031,11 @@ def run(args):
             return ok
         if args.scenario == "css-b-hold" and not css_b_hold(insts, shots):
             return False
-        pad = PadHand(host, 2) if args.scenario.startswith("multipad") else None
+        pad = PadHand(host, 2) if args.scenario.startswith("multipad") or args.scenario == "cpus" else None
+        cpus = args.scenario.startswith("cpus")
+        if cpus and not cpus_css(insts, shots, ctf=args.scenario == "cpus-ctf",
+                                 url=args.url if args.net == "service" else None):
+            return False
         if args.scenario == "multipad-full":
             ok = multipad_full(insts, pad, shots)
             return ok
@@ -1671,7 +2047,7 @@ def run(args):
             return False
         scenes = {"settings-engine": settings_engine, "settings-hold": settings_hold, "settings-open": settings_open,
                   "settings": settings_walk, "settings-cancel": settings_cancel, "settings-teams": settings_teams,
-                  "settings-list": settings_list}
+                  "settings-list": settings_list, "settings-mode": settings_mode}
         if args.scenario in scenes and not scenes[args.scenario](insts, shots, args):
             return False
         if args.scenario == "settings-seats":
@@ -1679,7 +2055,7 @@ def run(args):
                 return False
             insts = insts + [extra]
             extra = None
-        if args.scenario != "ready" and not drive_css(insts):
+        if args.scenario != "ready" and not cpus and not drive_css(insts):
             print("FAIL: no CSS pick reached the SSS")
             return False
         if args.scenario == "fighters" and not fighters_check(insts, shots):
@@ -1713,6 +2089,35 @@ def run(args):
         if args.scenario == "set":
             if not rematch(insts, shots, drive):
                 return False
+        elif args.scenario.startswith("leave-match"):
+            if not leave_match(insts, shots, drive, args.scenario):
+                return False
+        elif cpus:
+            if not cpus_after(insts, pad, shots, args, drive):
+                return False
+            if args.scenario == "cpus":
+                # A match with the three people CPUs Off left: every player's
+                # CSS must have agreed, or this one desyncs.
+                insts = insts + [pad]
+                vs = [nt.count(i, r"online: enter VS at frame") for i in insts]
+                if not drive_css(insts, want=2):
+                    print("FAIL: no pick after CPUs Off reached the SSS")
+                    return False
+                if not nt.press_until(insts, "Return", 9, r"sss: resolved cell", want=2, tries=8, each=6.0):
+                    print("FAIL: the second SSS never resolved a stage everywhere")
+                    return False
+                again = __import__("net_test_n").Drive(insts)
+                if not wait_more(insts, r"online: enter VS at frame", vs, 180):
+                    again.done()
+                    print("FAIL: the match after CPUs Off never loaded")
+                    return False
+                if not all(nt.re.search(r"online: XeleeNet match P1:hmn0/\d+/t\d P2:hmn0/\d+/t\d P4:hmn0/\d+/t\d$",
+                                        i.text(), nt.re.M) for i in insts):
+                    print("FAIL: the match after CPUs Off wasn't the three people alone")
+                    again.done()
+                    return False
+                nap(args.seconds)
+                again.done()
         else:
             nap(args.seconds)
             drive.done()
@@ -1724,6 +2129,41 @@ def run(args):
         if lan and not all("xeleenet: network LAN" in t for t in texts):
             print("FAIL: an instance never switched to LAN")
             ok = False
+        if cpus:
+            # The first match: two people and two level-9 CPUs, the same on
+            # every player; in CTF dealt red/blue by port with the people.
+            want = (r"online: XeleeNet match P1:hmn0/2/t0 P2:hmn0/20/t1 P3:cpu9/2/t0 P4:cpu9/\d+/t1"
+                    if args.scenario == "cpus" else
+                    r"online: XeleeNet match P1:hmn0/2/t0 P2:hmn0/20/t1 P3:cpu9/\d+/t0 P4:cpu9/9/t1")
+            firsts = [nt.re.findall(r"online: XeleeNet match.*", t)[:1] for t in texts]
+            print(f"net_test_xn_menu: first matches {firsts}", flush=True)
+            for i, t in zip(insts, texts):
+                if not nt.re.search(want, t):
+                    print(f"FAIL: [{i.name}] the first match wasn't 2 people + 2 level-9 CPUs ({want})")
+                    ok = False
+            if len({tuple(f) for f in firsts}) != 1:
+                print("FAIL: the players' first matches differ")
+                ok = False
+            if args.scenario == "cpus-ctf":
+                for i, t in zip(insts, texts):
+                    for w in (r"game_mode=1/5/1/0/1 cpus=2", r"online: Capture the Flag, game 1 of the session",
+                              r"ctf: match on stage 14"):
+                        if not nt.re.search(w, t):
+                            print(f"FAIL: [{i.name}] no {w}")
+                            ok = False
+        if args.scenario in ("ctf", "settings-mode"):
+            # Every player's match is Capture the Flag on Temple from the
+            # lobby's RULES (the defaults: first to 5, no auto-return, 10:00),
+            # its HUD up, and its sides as set (game 1).
+            for i, t in zip(insts, texts):
+                want = (r"net: RULES (?:in force|applied) mode=\d+ time=10 .* game_mode=1/5/1/0/1",
+                        r"online: Capture the Flag, game 1 of the session",
+                        r"ctf: match on stage 14, first to 5, home required 1, return 0 frames, swap 0",
+                        r"ctf-hud: timer 1")
+                missing = [w for w in want if not nt.re.search(w, t)]
+                if missing:
+                    print(f"FAIL: [{i.name}] no {missing}")
+                    ok = False
         if any("net: quick chat on" in t for t in texts):
             print("FAIL: quick chat came on in a XeleeNet lobby")
             ok = False
@@ -1749,7 +2189,8 @@ def main():
                              "sss-same", "css-b-hold", "leave-host-alone", "set", "teams", "multipad",
                              "multipad-full", "fighters", "details", "settings-engine", "settings-hold",
                              "settings-open", "settings", "settings-cancel", "settings-seats", "settings-teams",
-                             "settings-alone", "settings-race", "settings-list"),
+                             "settings-alone", "settings-race", "settings-list", "ctf", "leave-match",
+                             "leave-match-kill", "settings-mode", "cpus", "cpus-ctf"),
                     help="sss-host-b: guest B and off-list picks refused, host B back to the CSS; "
                          "ready: Ready on the CSS (one START, the countdown, B stops it); "
                          "leave-guest: the last guest holds B and leaves alone, then joins again; "
@@ -1759,6 +2200,9 @@ def main():
                          "sss-same: everyone picks Battlefield, no draw; "
                          "css-b-hold: B held over the grid leaves the token and the pick alone; "
                          "leave-host-alone: the host alone holds B and leaves its lobby; "
+                         "ctf: the host's lobby plays Capture the Flag; every player's match is CTF on Temple; "
+                         "leave-match: the last guest quits mid-match (a goodbye), and the others go back to "
+                         "the CSS together and play on; leave-match-kill: the same with no goodbye (SIGKILL); "
                          "set: 1-minute matches, the results, back to the CSS and a rematch; "
                          "teams: Teams with a seat per player (doors moved unless 4), the host turns "
                          "its team on its door's button; "
@@ -1772,7 +2216,12 @@ def main():
                          "with no UI (MELEE_XN_TEST_APPLY), -hold rests the host's port, -open opens it from the "
                          "banner and with Z, settings walks the UI and applies, -cancel changes nothing, -seats "
                          "lowers and raises the seats (a 4th joins), -teams deals and keeps teams, -alone applies "
-                         "with nobody in, -race applies while a join is in flight, -list changes the listing only")
+                         "with nobody in, -race applies while a join is in flight, -list changes the listing only, -mode switches VS to Capture the Flag and plays it; "
+                         "cpus: CPUs in a lobby (docs/xeleenet-cpus-plan.md, use --players 2): Host mode refuses the "
+                         "guest's type button, the host adds two level-9 CPUs, a 1-minute match plays out, the CPUs "
+                         "come back to the CSS, the host's second pad takes the highest-port CPU's seat, CPUs Off "
+                         "takes the other out, and the three people play; cpus-ctf: the same lobby in Capture the "
+                         "Flag with CPUs Anyone, a CPU each from the host and the guest")
     ap.add_argument("--paced", action="store_true",
                     help="the old way: 60 Hz, key holds in milliseconds (docs/fast-tests-plan.md)")
     ap.add_argument("--no-shots", action="store_true",

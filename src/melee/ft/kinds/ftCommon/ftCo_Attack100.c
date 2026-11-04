@@ -2,6 +2,8 @@
 
 #include <Runtime/platform.h>
 
+#include <melee/it/kinds/itctfflag.h>
+
 #include <melee/ft/forward.h>
 
 #include <placeholder.h>
@@ -36,6 +38,11 @@ extern f64 ftCo_804D90D8; // Increment value (Double)
 bool ftCo_800D6824(Fighter_GObj* gobj)
 {
     Fighter* fp = GET_FIGHTER(gobj);
+#ifdef TARGET_PC
+    if (itCtfFlag_Is(fp->item_gobj)) {
+        return false; /* no specials while carrying a CTF flag */
+    }
+#endif
     if (ftData_SpecialN[fp->kind] == NULL) {
         return false;
     }
@@ -59,6 +66,11 @@ bool ftCo_800D688C(Fighter* fp)
 bool ftCo_800D68C0(Fighter_GObj* gobj)
 {
     Fighter* fp = GET_FIGHTER(gobj);
+#ifdef TARGET_PC
+    if (itCtfFlag_Is(fp->item_gobj)) {
+        return false; /* no specials while carrying a CTF flag */
+    }
+#endif
     if (ftData_SpecialLw[fp->kind] == NULL) {
         return false;
     }
@@ -82,6 +94,11 @@ bool ftCo_800D6928(Fighter* fp)
 bool ftCo_Attack100_CheckInput(Fighter_GObj* gobj)
 {
     Fighter* fp = GET_FIGHTER(gobj);
+#ifdef TARGET_PC
+    if (itCtfFlag_Is(fp->item_gobj)) {
+        return false; /* no specials while carrying a CTF flag */
+    }
+#endif
     if (ftData_SpecialHi[fp->kind] == NULL) {
         return false;
     }
@@ -95,6 +112,11 @@ bool ftCo_Attack100_CheckInput(Fighter_GObj* gobj)
 bool ftCo_800D69C4(Fighter_GObj* gobj)
 {
     Fighter* fp = gobj->user_data;
+#ifdef TARGET_PC
+    if (itCtfFlag_Is(fp->item_gobj)) {
+        return false; /* no specials while carrying a CTF flag */
+    }
+#endif
     if (ftData_SpecialHi[fp->kind] == NULL) {
         return false;
     }

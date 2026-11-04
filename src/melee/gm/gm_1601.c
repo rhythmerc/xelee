@@ -1,5 +1,6 @@
 #include "gm_1601.h"
 #include <stdlib.h>
+#include <melee/gm/gmctf.h>
 
 #include "pc/pc.h"
 
@@ -2949,6 +2950,11 @@ s32 fn_8016588C(MatchEnd* match_end, s32 player_slot)
 
     PAD_STACK(0x18);
 
+#ifdef TARGET_PC
+    if (gmCtf_Active()) { /* CTF ranks by the team's captures */
+        return fn_8016588C_clamp(gmCtf_TeamScore(match_end->player_standings[player_slot].team));
+    }
+#endif
     if (gm_GetCurrentGameMode() == GM_STAMINA_VS) {
         if (match_end->player_standings[player_slot].x28 != 0) {
             v = match_end->player_standings[player_slot].x28 / 60 + 0xFF000001;
@@ -3517,6 +3523,9 @@ void fn_8016719C(s32 slot, s32 subchar)
         Player_80032FA4(slot, var_r30);
         Player_SetSomePos(slot, &offset);
     }
+#ifdef TARGET_PC
+    gmCtf_Respawn(slot); /* CTF: back at the team's base */
+#endif
 
     respawn_pos.y = Stage_GetCamBoundsTopOffset();
     Player_80032768(slot, &respawn_pos);
@@ -3739,6 +3748,9 @@ void gm_SetupAllPlayerDefaults(struct PlayerInitData* player)
 void gm_SetupRulesDefaults(struct StartMeleeRules* rules)
 {
     memzero(rules, sizeof(*rules));
+#ifdef TARGET_PC
+    gmCtf_SetRules(NULL); /* a mode that wants CTF sets its rules after these */
+#endif
     rules->x0_3 = 4;
 
     rules->sd_penalty = 0;

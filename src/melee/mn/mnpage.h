@@ -12,7 +12,10 @@
  * animation, its title swapped for SIS text), the hint box says what the
  * cursor is on, and B goes back to the page's row. mnpage.c's list of pages
  * gives each one's Options row, name, description, preview and screen; the
- * Options menu takes its PC rows from it. docs/adding-menu-pages.md. */
+ * Options menu takes its PC rows from it. A game mode's rules page is in the
+ * list too, with VS Mode > Xelee Melee as its parent (MENU_KIND_MODE_PAGE,
+ * VS. Mode's red frame) and START on to the mode.
+ * docs/adding-menu-pages.md. */
 
 /* The Options menu's rows (mnmain.c): whether `row` is a page's (the rest
  * are hidden on PC); its label and description; the first row shown, how
@@ -28,6 +31,10 @@ void mnPage_Previews(AnimLoopSettings* rows, int count);
 /* Opens the page in Options row `row`, from the Options menu's think (as
  * mnSound_8024A09C is); false when the row has none. */
 bool mnPage_Open(int row);
+/* Opens the page in row `row` of `parent`'s menu (MENU_KIND_XELEE_MELEE: a
+ * mode's rules page, menu kind MENU_KIND_MODE_PAGE), from that menu's think;
+ * 0 for Options. False when the row has none. */
+bool mnPage_OpenIn(MenuKind parent, int row);
 /* Back from where a page sent the player (Erase Data's B): opens that page
  * again; false when none did. */
 bool mnPage_Return(void);

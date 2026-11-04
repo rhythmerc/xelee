@@ -333,6 +333,7 @@ set(PC_SOURCES
         src/pc/fight_menu.cpp
         src/pc/audio_menu.cpp
         src/pc/gameplay_menu.cpp
+        src/pc/ctf_rules_menu.cpp
         src/pc/credits_menu.cpp
         src/pc/graphics_menu.cpp
         src/pc/settings_page.cpp
@@ -389,6 +390,8 @@ set(PC_SOURCES
         src/pc/xr_pointer.c
         src/pc/button_icons.c
         src/pc/button_icons_data.c
+        src/pc/ctf_art.c
+        src/pc/ctf_art_data.c
         src/pc/windows_arm64_softfp.c
         src/pc/android_compat.cpp
         src/pc/file_cache.cpp
@@ -435,6 +438,7 @@ set(PC_SOURCES
         # section 5), and so does any libm from the GameCube's, which a
         # Slippi peer runs (src/pc/libm/pc_msl_trig.c).
         src/pc/libm/pc_msl_trig.c
+        src/pc/libm/pc_msl_logf.c
         src/pc/libm/pc_perturb.c)
 # iOS, not APPLE: ios_dialog.m imports UIKit, which the macOS SDK has no
 # headers for. The glob this replaced matched src/pc/*.m on macOS too.

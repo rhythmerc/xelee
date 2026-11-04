@@ -1091,3 +1091,12 @@ void ifStock_802FB6AC(int player)
         HSD_GObj_80390CAC(x->player[player].x0);
     }
 }
+
+#ifdef TARGET_PC
+/* The stock-icon model the HUD's own heads use, for Capture the Flag's
+ * carrier icon (ifctf.c); NULL before the HUD has loaded it. */
+DynamicModelDesc* ifStock_PcIconModel(void)
+{
+    return ifStock_804A1378.x0 != NULL ? IFSTOCK_MODEL0(&ifStock_804A1378) : NULL;
+}
+#endif

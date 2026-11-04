@@ -2884,6 +2884,26 @@ extern "C" void pc_settings_set_gameplay(const PcGameplaySettings* s) {
     if (!launcher::save_preferences(config_path, prefs, error))
         SDL_Log("settings: not saved: %s", error.c_str());
 }
+static PcCtfSettings ctf_of(const launcher::Preferences& p) {
+    return {p.ctf_caps, p.ctf_minutes, p.ctf_return, p.ctf_home, p.ctf_slow, p.ctf_items};
+}
+extern "C" void pc_settings_ctf(PcCtfSettings* out) {
+    *out = ctf_of(prefs);
+}
+extern "C" void pc_settings_ctf_defaults(PcCtfSettings* out) {
+    *out = ctf_of(launcher::Preferences{});
+}
+extern "C" void pc_settings_set_ctf(const PcCtfSettings* s) {
+    prefs.ctf_caps = s->captures;
+    prefs.ctf_minutes = s->minutes;
+    prefs.ctf_return = s->return_s;
+    prefs.ctf_home = s->home;
+    prefs.ctf_slow = s->slow;
+    prefs.ctf_items = s->items;
+    std::string error;
+    if (!launcher::save_preferences(config_path, prefs, error))
+        SDL_Log("settings: not saved: %s", error.c_str());
+}
 extern "C" bool pc_settings_xn_notice_seen(void) {
     return prefs.xn_notice_seen;
 }

@@ -15,6 +15,14 @@
 #include <sysdolphin/baselib/gobjproc.h>
 #include <sysdolphin/baselib/jobj.h>
 
+#ifdef TARGET_PC
+/* XR: the timer is the HUD's top row, drawn above the damage row there
+ * (ifAll_TopBegin). */
+#define IFTIME_DRAW ifAll_TopJObjCallback
+#else
+#define IFTIME_DRAW HSD_GObj_JObjCallback
+#endif
+
 static struct ifTime_data {
     HSD_GObj* match_timer;
     HSD_GObj* countdown_timer;
@@ -210,7 +218,7 @@ void ifTime_UpdateTimers(HSD_GObj* arg0)
         }
         tmp = HSD_GObj_JObjKind;
         HSD_GObjObject_80390A70(x->countdown_timer, tmp, jobj2);
-        GObj_SetupGXLink(x->countdown_timer, HSD_GObj_JObjCallback, 11, 0);
+        GObj_SetupGXLink(x->countdown_timer, IFTIME_DRAW, 11, 0);
         x->countdown_seconds = ifTime_GetCountdownSeconds_dontinline();
         lb_8000C0E8(jobj2, x->countdown_seconds, IFTIME_COUNTDOWN_MODEL(x));
         HSD_JObjReqAnimAll(jobj2, 0.0f);
@@ -254,7 +262,7 @@ void ifTime_CreateTimers(void)
             OSPanic("iftime.c", 389, "");
         }
         HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
-        GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 11, 0);
+        GObj_SetupGXLink(gobj, IFTIME_DRAW, 11, 0);
         anims = DP(DiscU32, ifTime_match_timer_models.anims);
         matanims = DP(DiscU32, ifTime_match_timer_models.matanims);
         shapeanims = DP(DiscU32, ifTime_match_timer_models.shapeanims);

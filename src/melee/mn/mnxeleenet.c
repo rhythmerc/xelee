@@ -9,6 +9,7 @@
 #include "types.h"
 #include "pc/pc.h"
 #include "pc/menu_screen.h"
+#include <sysdolphin/baselib/controller.h>
 #include "pc/xeleenet_menu.h"
 #include <melee/gm/gm_1A36.h>
 #include <melee/gm/gm_1A3F.h>
@@ -230,6 +231,16 @@ void mnXeleeNet_Frame(void)
         pc_xn_menu_input(PC_XN_IN_X);
     } else if (buttons & MenuInput_YButton) {
         pc_xn_menu_input(PC_XN_IN_Y);
+    }
+    {
+        /* Z (Melee's menus have no use for it): the lobby list's mode filter. */
+        int port;
+        for (port = 0; port < 4; port++) {
+            if (HSD_PadCopyStatus[port].trigger & HSD_PAD_Z) {
+                pc_xn_menu_input(PC_XN_IN_Z);
+                break;
+            }
+        }
     }
 }
 

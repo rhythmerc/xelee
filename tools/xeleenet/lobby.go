@@ -59,15 +59,27 @@ type Lobby struct {
 	Extra []int `json:"extra"`
 	// Whose machine each Extra seat plays from, by that machine's port
 	// (0 the host's): the list names the seat after its owner, "RHYTHM 2".
-	ExtraOwner []int    `json:"extra_owner"`
-	Banned     []string `json:"banned"`
-	State      string   `json:"state"`
-	Score      []int    `json:"score"`
-	Created    int64    `json:"created"` // ms
-	Beat       int64    `json:"beat"`    // ms, the last heartbeat
+	ExtraOwner []int `json:"extra_owner"`
+	// The CSS's CPU doors (docs/xeleenet-cpus-plan.md), as the host's
+	// heartbeat names them: seats a CPU keeps warm, never taken. A joiner
+	// gets an empty seat first, else the highest-port CPU's.
+	Cpus    []CpuSeat `json:"cpus"`
+	Banned  []string  `json:"banned"`
+	State   string    `json:"state"`
+	Score   []int     `json:"score"`
+	Created int64     `json:"created"` // ms
+	Beat    int64     `json:"beat"`    // ms, the last heartbeat
 
 	pending map[string]*pending // joiner key -> request
 	closed  bool
+}
+
+// A CPU on a lobby's CSS: its port (1-3), level (1-9) and fighter (a
+// CharacterKind, -1 none yet).
+type CpuSeat struct {
+	Port  int `json:"port"`
+	Level int `json:"level"`
+	Ckind int `json:"ckind"`
 }
 
 // A joiner waiting on "Ask before joining".
@@ -180,7 +192,7 @@ func (s *Service) list(c Compat, full bool, from Geo) map[string]any {
 		if !l.Public {
 			continue
 		}
-		if l.Compat != c {
+		if !s.sameBuild(l.Compat, c) {
 			others++
 			continue
 		}
@@ -234,6 +246,16 @@ func (l *Lobby) players() []map[string]any {
 		}
 		out = append(out, map[string]any{"port": q, "extra": true, "owner": owner})
 	}
+	// A CPU keeps its seat warm (docs/xeleenet-cpus-plan.md): open to a joiner.
+	for _, c := range l.Cpus {
+		if !l.held(c.Port) {
+			cpu := map[string]any{"port": c.Port, "cpu": true, "level": c.Level}
+			if c.Ckind >= 0 {
+				cpu["ckind"] = c.Ckind
+			}
+			out = append(out, cpu)
+		}
+	}
 	sort.Slice(out, func(a, b int) bool { return out[a]["port"].(int) < out[b]["port"].(int) })
 	return out
 }
@@ -269,6 +291,7 @@ type beat struct {
 	Owners []int // each one's machine, by its port (missing: the host's)
 	Score  []int // nil: unchanged
 	XR     bool
+	Cpus   []CpuSeat // the CSS's CPU doors
 }
 
 // heartbeat: the host is alive. `roster` lists the guests its game is linked
@@ -309,6 +332,12 @@ func (s *Service) heartbeat(l *Lobby, key string, b beat) answer {
 			}
 			l.Extra = append(l.Extra, q)
 			l.ExtraOwner = append(l.ExtraOwner, owner)
+		}
+	}
+	l.Cpus = []CpuSeat{}
+	for _, c := range b.Cpus {
+		if c.Port >= 1 && c.Port <= 3 && !l.held(c.Port) && !l.isCpu(c.Port) {
+			l.Cpus = append(l.Cpus, c)
 		}
 	}
 	members := []map[string]any{}
@@ -391,7 +420,7 @@ func (s *Service) closeBy(l *Lobby, key string) answer {
 // join decides a join by code. With "Ask before joining" it returns the
 // request to wait on instead.
 func (s *Service) join(l *Lobby, j Joiner) (answer, *pending) {
-	if l.Compat != j.Compat {
+	if !s.sameBuild(l.Compat, j.Compat) {
 		return refused(refuse(409, "version", "This lobby is on a different Xelee version; both need the same one")), nil
 	}
 	if contains(l.Banned, j.Key) {
@@ -464,28 +493,70 @@ func (s *Service) seat(l *Lobby, j Joiner) answer {
 	if l.taken() >= l.Settings.Seats {
 		return refused(refuse(409, "full", "The lobby is full"))
 	}
-	port := 1
-	for used := true; used; {
-		used = false
-		for _, m := range l.Members {
-			if m.Port == port {
-				used = true
+	port := l.seatPort()
+	if l.isCpu(port) {
+		// The CPU there leaves at the join's session; the list stops showing it now.
+		cpus := []CpuSeat{}
+		for _, c := range l.Cpus {
+			if c.Port != port {
+				cpus = append(cpus, c)
 			}
 		}
-		for _, e := range l.Extra {
-			if e == port {
-				used = true
-			}
-		}
-		if used {
-			port++
-		}
+		l.Cpus = cpus
 	}
 	m := j.Member
 	m.Country, m.Port, m.Joined = j.Geo.Country, port, nowMs()
 	l.Members = append(l.Members, m)
 	sort.Slice(l.Members, func(a, b int) bool { return l.Members[a].Port < l.Members[b].Port })
 	return okBody(l.joined(m))
+}
+
+// held: a person sits on port q (the host, a member, or another pad's seat).
+func (l *Lobby) held(q int) bool {
+	if q == 0 {
+		return true
+	}
+	for _, m := range l.Members {
+		if m.Port == q {
+			return true
+		}
+	}
+	for _, e := range l.Extra {
+		if e == q {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *Lobby) isCpu(q int) bool {
+	for _, c := range l.Cpus {
+		if c.Port == q {
+			return true
+		}
+	}
+	return false
+}
+
+// seatPort is the port a joiner gets (docs/xeleenet-cpus-plan.md): the
+// lowest empty one inside the seats, else the highest-port CPU's, else the
+// lowest nobody holds. The game's pc_xn_seat_port (net_punch.c) is the same.
+func (l *Lobby) seatPort() int {
+	for q := 1; q < 4 && q < l.Settings.Seats; q++ {
+		if !l.held(q) && !l.isCpu(q) {
+			return q
+		}
+	}
+	for q := 3; q >= 1; q-- {
+		if l.isCpu(q) && !l.held(q) {
+			return q
+		}
+	}
+	q := 1
+	for q < 3 && l.held(q) {
+		q++
+	}
+	return q
 }
 
 func (l *Lobby) joined(m Member) map[string]any {

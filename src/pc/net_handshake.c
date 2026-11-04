@@ -146,7 +146,11 @@ static GameRules s_game_wanted;
 static uint8_t s_items_wanted;
 static uint32_t s_stages_wanted;
 static uint8_t s_seats_wanted;
+static PcNetMode s_mode_wanted;  /* what this host's RULES will carry */
+static PcNetMode s_rules_mode;   /* the mode the RULES in force carry */
 static uint8_t s_rules_seats; /* the seats the RULES in force carry */
+static uint8_t s_cpus_wanted = PC_NET_CPUS_HOST; /* who may add CPUs: this host's RULES */
+static uint8_t s_rules_cpus;                     /* and the RULES in force */
 /* An XeleeNet lobby (docs/xeleenet-settings-overlay-plan.md, O1): a RULES set
  * taken while the lobby runs is staged, not applied, on the host and on the
  * guests, and pc_net_rules_commit puts it in force on the session's agreed
@@ -289,6 +293,8 @@ static void rules_capture_from(Rules* ru, bool own) {
     ru->teams = s_teams_wanted;
     ru->fighter_mask = s_fighters_wanted;
     ru->seats = s_seats_wanted >= 2 && s_seats_wanted <= 4 ? s_seats_wanted : 4;
+    ru->mode = s_mode_wanted;
+    ru->cpus = s_cpus_wanted;
 }
 
 static void rules_capture(Rules* ru) {
@@ -309,14 +315,18 @@ static void rules_apply(const Rules* ru, bool from_peer) {
     s_rules_teams = ru->teams != 0;
     s_rules_fighters = ru->fighter_mask;
     s_rules_seats = ru->seats;
+    s_rules_mode = ru->mode;
+    s_rules_cpus = ru->cpus;
     s_rules_on = true;
     pc_log_line("net: RULES %s mode=%u time=%u stock=%u handicap=%u dmg=%u stage_sel=%u ff=%u "
-                "pause=%u sd=%u items=%u/%016llx stages=%08x frozen=%u fighters=%07x seats=%u unlock_all=1",
+                "pause=%u sd=%u items=%u/%016llx stages=%08x frozen=%u fighters=%07x seats=%u "
+                "game_mode=%u/%u/%u/%u/%u cpus=%u unlock_all=1",
         from_peer ? "applied" : "in force", ru->game.mode, ru->game.time_limit,
         ru->game.stock_count, ru->game.handicap, ru->game.damage_ratio, ru->game.stage_sel,
         ru->game.friendly_fire, ru->game.pause, ru->game.unk_xc, ru->item_freq,
         (unsigned long long)ru->item_mask, ru->stage_mask, ru->frozen_stadium,
-        (unsigned)ru->fighter_mask, ru->seats);
+        (unsigned)ru->fighter_mask, ru->seats, ru->mode.mode, ru->mode.caps, ru->mode.home, ru->mode.return_s,
+        ru->mode.slow, ru->cpus);
 }
 
 /* What every player must agree on, as a number for the log: the match-
@@ -359,6 +369,8 @@ void pc_net_set_rules_staging(bool on) {
         s_staged = false;
         s_game_wanted_set = false; /* a lobby's rules end with it */
         s_seats_wanted = 0;
+        memset(&s_mode_wanted, 0, sizeof s_mode_wanted); /* a lobby's mode ends with it */
+        s_cpus_wanted = PC_NET_CPUS_HOST;
         if (was && !net.active) {
             rules_restore(false); /* the host alone, its lobby's rules kept in force till now */
         }
@@ -384,6 +396,26 @@ void pc_net_rules_take_wanted(void) {
 
 int pc_net_rules_seats(void) {
     return s_rules_on ? s_rules_seats : s_seats_wanted;
+}
+
+void pc_net_set_mode(const PcNetMode* mode) {
+    if (mode != NULL) {
+        s_mode_wanted = *mode;
+    } else {
+        memset(&s_mode_wanted, 0, sizeof s_mode_wanted);
+    }
+}
+
+void pc_net_rules_mode(PcNetMode* out) {
+    *out = s_rules_on ? s_rules_mode : s_mode_wanted;
+}
+
+void pc_net_set_cpus(int cpus) {
+    s_cpus_wanted = (uint8_t)(cpus < PC_NET_CPUS_OFF || cpus > PC_NET_CPUS_ANYONE ? PC_NET_CPUS_HOST : cpus);
+}
+
+int pc_net_rules_cpus(void) {
+    return s_rules_on ? s_rules_cpus : s_cpus_wanted;
 }
 
 /* ---- unlock state -----------------------------------------------------
@@ -527,7 +559,10 @@ static const char* rules_values_invalid(const Rules* ru) {
         ru->game.damage_ratio < 5 || ru->game.damage_ratio > 20 ||
         (ru->item_freq > 4 && ru->item_freq != 0xFF) || ru->stage_mask == 0 ||
         ru->fighter_mask == 0 || ru->fighter_mask != xn_fighters_normal(ru->fighter_mask) || ru->seats < 2 ||
-        ru->seats > 4)
+        ru->seats > 4 || ru->mode.mode > PC_NET_MODE_CTF ||
+        (ru->mode.mode == PC_NET_MODE_CTF && (ru->mode.caps < 1 || ru->mode.caps > 9 || ru->mode.home > 1 ||
+                                              ru->mode.return_s > 60 || ru->mode.slow > 1)) ||
+        ru->cpus > PC_NET_CPUS_ANYONE)
     {
         return "value out of range";
     }

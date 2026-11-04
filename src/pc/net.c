@@ -21,6 +21,8 @@
  *   MELEE_NET_SIM_REORDER=pct    hold that share of packets behind the next one
  *   MELEE_NET_SIM_DUP=pct        send that share of packets twice
  *   MELEE_NET_SIM_BURST=n        every 5 s drop n consecutive outgoing packets
+ *   MELEE_NET_SIM_CUT=a:b@f-t    ports a and b cannot reach each other from frame f to t
+ *   MELEE_NET_SIM_LINK=a:b=ms~j@f-t,...  that pair's own one-way delay, +-j ms jitter, frames f-t
  *   (the simulator's PRNG is seeded from MELEE_NET_PORT, so runs repeat)
  *
  * This file is the session, the socket and the rollback loop; the wire
@@ -125,6 +127,12 @@ typedef struct Peer {
     /* Game thread. */
     int32_t last_acked; /* newest local frame it holds */
     uint32_t ping_us;   /* smoothed RTT of this link */
+    /* This link's share of the stats line, per window (stats_peers_report):
+     * RTT samples, their mean |dRTT|, and the input packets sent to it
+     * (tx_lock) against the acks that came back (receive thread). */
+    uint64_t st_rtt_sum, st_jit_sum;
+    uint32_t st_rtt_min, st_rtt_max, st_rtt_prev;
+    unsigned st_rtt_n, st_jit_n, st_tx, st_acks;
     /* Its newest checksum report, which the host passes on with its input to
      * a guest that cannot hear it (send_forwarded). */
     int32_t ck_last_frame;
@@ -542,6 +550,7 @@ static void send_packet(Peer* p, Packet* pk) {
     int slot = pk->seq & 63;
     p->rtt_ring[slot].seq = pk->seq;
     p->rtt_ring[slot].send_ns = SDL_GetTicksNS();
+    p->st_tx++;
     Packet w = *pk;
     wire_packet(&w);
     uint8_t out[PACKET_WIRE_MAX];
@@ -617,6 +626,16 @@ static Uint32 SDLCALL tx_timer(void* ud, SDL_TimerID id, Uint32 interval) {
  * input packets still do, so a link that comes back is heard: it revives, and
  * the host stops relaying that pair.
  *
+ * Giving a link up takes seconds, and every player stalls on the one input
+ * that cannot arrive meanwhile (the playtest of 2026-11-02 froze 3 s that
+ * way). So long before it does, a guest that has heard nothing on a link for
+ * RELAY_ASK_MS while the host was heard just now puts that port in the same
+ * REL_ROUTE mask, and the host relays as above. The link itself stays up --
+ * its reliable lane keeps retrying, and its input still goes out -- so a
+ * message can land twice, once direct and once relayed: whichever copy lands
+ * second is dropped (relay_twin). Once the link is heard again and the ask is
+ * RELAY_HOLD_MS old, the guest takes the port off the mask.
+ *
  * "While its other links are fresh" is what tells a dead link from a starved
  * process. Four games booting on one machine stalled whole processes for
  * seconds (tools/net_test_n.py, cold caches), and every link looked silent at
@@ -641,9 +660,18 @@ static Uint32 SDLCALL tx_timer(void* ud, SDL_TimerID id, Uint32 interval) {
 #define ROUTE_BACK_MS 500    /* a dead route heard this recently is back */
 #define DROP_SETTLE_MS 500   /* the collected input stopped growing this long */
 #define VOID_LEAD 60         /* frames past the last input the match is void on */
+#define RELAY_ASK_MS 200     /* a working guest link silent this long: ask for the relay */
+#define RELAY_NEVER_MS 1000  /* one never heard, this long after the handshake */
+#define RELAY_HOST_MS 100    /* "the host was heard just now" */
+#define RELAY_HOLD_MS 1500   /* an ask stands at least this long */
+#define TWIN_MS 5000         /* a delivered message's twin is looked for this long */
 
 static uint8_t s_fwd[PORTS];                  /* peers (bit = peer index) port o's input goes on to */
+static uint8_t s_relay_mask;                  /* guest: ports asked for before their link is dead */
+static uint8_t s_fast_mask;                   /* guest: ports asked for because the host is faster */
+static uint64_t s_relay_t[PORTS];             /* when it asked, then when it stopped */
 static int32_t s_fwd_acked[PORTS][MAX_PEERS]; /* what each of them holds of it (tx_lock) */
+static int32_t s_fwd_sent[PORTS];             /* the newest frame of it passed on (tx_lock) */
 static uint8_t s_route_mask;                  /* guest: ports it cannot hear */
 static bool s_route_told;                     /* the host has that mask */
 static uint64_t s_link_t0;                    /* when the handshake finished, 0 before */
@@ -660,6 +688,8 @@ typedef struct VoidMsg {
 } __attribute__((packed)) VoidMsg;
 
 static void exit_if_test_done(void);
+static void link_figs_reset(void);
+static bool row_says_faster(int reporter, int port);
 
 static Peer* peer_by_port(int port) {
     for (int i = 0; i < net.npeers; i++) {
@@ -670,10 +700,96 @@ static Peer* peer_by_port(int port) {
     return NULL;
 }
 
+/* Twins (game thread): a message a guest asked the host to relay before the
+ * direct link was given up on can land by both paths. Each delivered copy
+ * cancels one identical copy from the same player by the other path, in
+ * order; a player's messages keep their order on each path, so pairing the
+ * oldest match pairs the right two. Direct copies are only remembered while
+ * a relay of that player is asked for (and TWIN_MS after), because only then
+ * can a twin follow. */
+typedef struct Twin {
+    uint64_t t;
+    uint32_t hash;
+    uint16_t len;
+    uint8_t port, type;
+    bool relayed;
+} Twin;
+#define TWINS 32
+static Twin s_twin[TWINS];
+static bool s_rx_relayed; /* the message being dispatched came through the host */
+
+static void relay_twins_reset(void) {
+    memset(s_twin, 0, sizeof s_twin);
+    s_rx_relayed = false;
+}
+
+static uint32_t twin_hash(uint8_t type, const void* payload, int len) {
+    uint32_t h = 2166136261u ^ type;
+    for (int k = 0; k < len; k++) {
+        h = (h ^ ((const uint8_t*)payload)[k]) * 16777619u;
+    }
+    return h;
+}
+
+/* True when this message's copy by the other path has already landed: drop it. */
+bool net_relay_twin(int peer, uint8_t type, const void* payload, int len) {
+    if (net.local == 0 || peer < 0 || peer >= net.npeers) {
+        return false; /* only guests are relayed to */
+    }
+    uint64_t now = SDL_GetTicksNS();
+    uint32_t h = twin_hash(type, payload, len);
+    Twin* best = NULL;
+    for (int k = 0; k < TWINS; k++) {
+        Twin* w = &s_twin[k];
+        if (w->t != 0 && now - w->t < TWIN_MS * 1000000ull && w->port == s_peer[peer].port &&
+            w->relayed != s_rx_relayed && w->type == type && w->len == len && w->hash == h &&
+            (best == NULL || w->t < best->t))
+        {
+            best = w;
+        }
+    }
+    if (best == NULL) {
+        return false;
+    }
+    best->t = 0;
+    pc_log_line("net: type %02x from P%d landed %s first; dropped its twin", type,
+        s_peer[peer].port + 1, s_rx_relayed ? "direct" : "relayed");
+    return true;
+}
+
+/* A message from that player was delivered: remember it if a twin may follow. */
+void net_relay_landed(int peer, uint8_t type, const void* payload, int len) {
+    if (net.local == 0 || peer < 0 || peer >= net.npeers) {
+        return;
+    }
+    const int port = s_peer[peer].port;
+    uint64_t now = SDL_GetTicksNS();
+    const bool watched = ((s_relay_mask | s_route_mask | s_fast_mask) & (1u << port)) ||
+                         (s_relay_t[port] != 0 && now - s_relay_t[port] < TWIN_MS * 1000000ull);
+    if (!s_rx_relayed && !watched) {
+        return;
+    }
+    Twin* slot = &s_twin[0];
+    for (int k = 0; k < TWINS; k++) {
+        if (s_twin[k].t == 0 || now - s_twin[k].t >= TWIN_MS * 1000000ull) {
+            slot = &s_twin[k];
+            break;
+        }
+        slot = s_twin[k].t < slot->t ? &s_twin[k] : slot; /* full: the oldest goes */
+    }
+    *slot = (Twin){now, twin_hash(type, payload, len), (uint16_t)len, (uint8_t)port, type,
+        s_rx_relayed};
+}
+
 static void links_reset(void) {
     memset(s_fwd, 0, sizeof s_fwd);
+    s_relay_mask = s_fast_mask = 0;
+    link_figs_reset();
+    memset(s_relay_t, 0, sizeof s_relay_t);
+    relay_twins_reset();
     for (int o = 0; o < PORTS; o++) {
         s_port_end[o] = -1;
+        s_fwd_sent[o] = -1;
         for (int i = 0; i < MAX_PEERS; i++) {
             s_fwd_acked[o][i] = -1;
         }
@@ -713,6 +829,7 @@ static void send_forwarded(void) {
         if (have < 0) {
             continue;
         }
+        s_fwd_sent[o] = have;
         for (int i = 0; i < net.npeers; i++) {
             if (!(s_fwd[o] & (1u << i)) || net.link_dead[i]) {
                 continue;
@@ -756,6 +873,28 @@ static void send_forwarded(void) {
             tx(i, out, n);
         }
     }
+}
+
+/* Host, right after a drain (links_poll): pass on input that just arrived
+ * instead of leaving it for the next send_inputs. fresh_tick sends before it
+ * drains, so a frame that landed during a tick used to wait out the rest of
+ * that tick and the whole next one: the forwarding hold measured 26.7 ms in a
+ * paced fight, 1.6 frames on every relayed input. Passed on here, the host's
+ * path between two guests 80 ms apart and 10 ms from the host measured 34 ms
+ * one way instead of 44-52 (net_test_n --paced --link
+ * 0:1=10,0:2=10,1:2=80). Only when something new arrived, so the 'F' rate
+ * stays one per frame of input. */
+static void forward_fresh(void) {
+    SDL_LockMutex(net.tx_lock);
+    bool fresh = false;
+    for (int o = 0; o < PORTS && !fresh; o++) {
+        const Peer* op = s_fwd[o] != 0 ? peer_by_port(o) : NULL;
+        fresh = op != NULL && peer_have(op) > s_fwd_sent[o];
+    }
+    if (fresh) {
+        send_forwarded();
+    }
+    SDL_UnlockMutex(net.tx_lock);
 }
 
 static void send_fwd_ack(const Peer* to, int origin, int32_t frame) {
@@ -884,7 +1023,12 @@ void net_link_rel(int peer, uint8_t type, const void* payload, int len) {
             if (want && !have) {
                 s_fwd[o] |= (uint8_t)(1u << peer);
                 s_fwd_acked[o][peer] = -1;
-                pc_log_line("net: P%d cannot hear P%d; relaying", s_peer[peer].port + 1, o + 1);
+                /* The guest's link report goes out just ahead of the ask
+                 * (fast_poll), so its flag usually says which ask this is. */
+                pc_log_line(row_says_faster(s_peer[peer].port, o) ?
+                                "net: P%d hears P%d faster through the host; relaying" :
+                                "net: P%d cannot hear P%d; relaying",
+                    s_peer[peer].port + 1, o + 1);
             } else if (!want && have) {
                 s_fwd[o] &= (uint8_t)~(1u << peer);
                 pc_log_line("net: P%d hears P%d again; no longer relaying", s_peer[peer].port + 1,
@@ -896,7 +1040,9 @@ void net_link_rel(int peer, uint8_t type, const void* payload, int len) {
     case REL_RELAY: { /* the host passing on another guest's message */
         Peer* o = len >= 2 && from_host ? peer_by_port(b[0]) : NULL;
         if (o != NULL && o != &s_peer[peer]) {
+            s_rx_relayed = true; /* for relay_twin */
             rel_dispatch(peer_index(o), b[1], b + 2, len - 2);
+            s_rx_relayed = false;
         }
         return;
     }
@@ -934,6 +1080,449 @@ void net_link_rel(int peer, uint8_t type, const void* payload, int len) {
     }
 }
 
+/* ---- link figures ---------------------------------------------------------
+ * Every side measures only its own links, and auto delay is decided by the
+ * host alone (net_sync.c delay_auto), which never sees a link between two
+ * guests. So every guest reports its figures for each of its links to the
+ * host twice a second ('L', LinkReport), and the host reports its own to
+ * every guest. A figure is the receiving end's view of one direction: the
+ * direct link's ping and jitter, and the trip that player's input actually
+ * takes to get here -- the direct link's half round trip, or the relayed
+ * path's when this side gets that player through the host. Delay is then
+ * sized from the worst of all of them (net_links_worst).
+ *
+ * Relaying for speed. A guest pair can be far worse connected to each other
+ * than either is to the host (two players on different ISPs that peer badly,
+ * both near the host), and the host can pass each one's input on to the
+ * other ('F', the dead-link machinery above). Each guest decides for its own
+ * inbound links, by the same REL_ROUTE ask as for a silent link, because:
+ * it is the only side that can measure both paths' arrivals of the same
+ * frame (the lead below), the twin bookkeeping that keeps a message landing
+ * by both paths from being delivered twice is already the receiver's, and
+ * the host needs no new state. The two directions of a pair are decided
+ * independently, each by its receiver, which is right: the paths need not be
+ * symmetric.
+ *
+ * Before switching, the host's path can only be estimated: half this side's
+ * round trip to the host, plus half the host's to that player (the host's
+ * report), plus the host's measured forwarding hold (fwd below: from the
+ * input packet's arrival on its receive thread to the 'F' leaving with it,
+ * which is game-thread paced -- forward_fresh runs after each drain, about
+ * once a frame). Once relayed, it is measured: every frame now arrives by
+ * both paths, and the receive thread times both arrivals of each frame
+ * (arrival_note); the mean difference is the lead the host's path actually
+ * has. The estimate's error against that measurement is kept per player and
+ * applied to later estimates, so a host slower to forward than it looked
+ * does not get switched to, measured, dropped and switched to again. A
+ * pair relayed because its link is dead or silent counts as the host's path
+ * too, estimated the same way (there is no direct arrival to race it).
+ *
+ * Hysteresis: the host's path has to be FAST_ON_US (a frame, one way) ahead
+ * to switch to it and falls back below FAST_OFF_US (half a frame) to switch
+ * back, either way held for FAST_HOLD_MS. A silent link keeps its own,
+ * faster ask (RELAY_ASK_MS): the two masks are independent and the host
+ * relays their union.
+ *
+ * Switching cannot desync. Input is frame-tagged and either path carries the
+ * same real frames (the host forwards from its ring of confirmed input,
+ * never a prediction); each port's ring takes only contiguous frames, so a
+ * frame that lands twice is applied once. Reliable messages are twin-checked
+ * while either ask stands and TWIN_MS after (net_relay_landed). */
+#define LINKS_EVERY_MS 500   /* a link report goes out this often */
+#define LINKS_STALE_MS 3000  /* a report this old no longer counts */
+#define ARRIVALS 64          /* frames of both paths' arrival times kept per player */
+#define LEAD_WINDOW_MS 500   /* the lead is read and averaged over this */
+#define LEAD_SETTLE_MS 500   /* after a switch: the host's backlog of old frames lands */
+#define LEAD_MIN_SAMPLES 8   /* frames a window needs before its mean counts */
+#define FAST_HOLD_MS 3000    /* a switch's condition held this long first */
+#define FAST_ON_US FRAME_US  /* the host's path this far ahead, one way: switch to it */
+#define FAST_OFF_US (FRAME_US / 2) /* ...and back once its lead is under this */
+
+typedef struct LinkRow {
+    uint64_t t;   /* when it arrived, 0 never */
+    uint32_t fwd; /* the host's forwarding hold */
+    LinkFig fig[MAX_PEERS]; /* host order */
+} LinkRow;
+static LinkRow s_rows[PORTS]; /* each peer's last report, by its primary port (game thread) */
+static uint64_t s_links_sent;  /* when ours last went out */
+
+/* One sending player's two paths here, by its primary port. */
+typedef struct Inbound {
+    /* Receive thread, s_rx_lock: arrival times by frame, [0] direct, [1]
+     * through the host, and the lead samples since the game thread read. */
+    int32_t frame[ARRIVALS];
+    uint64_t at[ARRIVALS][2];
+    int64_t seen[2]; /* newest frame each path has delivered */
+    int64_t lead_sum;
+    unsigned lead_n;
+    /* Game thread. */
+    int32_t lead_us;   /* mean over the last window: how far the host's path is ahead */
+    bool lead_ok;      /* that window is a measurement (relayed, settled, enough samples) */
+    uint64_t lead_read; /* when the window was last read */
+    uint64_t settle;   /* samples before this are the switch's backlog */
+    int32_t err_us;    /* the estimate's lead minus the measured one */
+    bool err_ok;
+    uint64_t since;    /* when the switch's condition started holding, 0 not */
+} Inbound;
+static Inbound s_in[PORTS];
+
+/* Host: the forwarding hold, from each input packet that moved a player's
+ * mark (its receive-thread arrival) to the next point that passes it on:
+ * forward_fresh after the drain, or send_inputs. Measured whether or not
+ * anything is being forwarded: it is the hold a relay would see. */
+static uint64_t s_fwd_pend_sum; /* arrival stamps since the last pass */
+static unsigned s_fwd_pend_n;
+static uint64_t s_fwd_win_ns;   /* this report window's holds */
+static unsigned s_fwd_win_n;
+static uint32_t s_fwd_us;       /* smoothed over windows */
+
+static void link_figs_reset(void) {
+    memset(s_rows, 0, sizeof s_rows);
+    memset(s_in, 0, sizeof s_in);
+    for (int o = 0; o < PORTS; o++) {
+        s_in[o].seen[0] = s_in[o].seen[1] = -1;
+        for (int k = 0; k < ARRIVALS; k++) {
+            s_in[o].frame[k] = -1;
+        }
+    }
+    s_links_sent = 0;
+    s_fwd_pend_sum = s_fwd_win_ns = 0;
+    s_fwd_pend_n = s_fwd_win_n = 0;
+    s_fwd_us = 0;
+}
+
+bool net_link_counts(int i) {
+    return i >= 0 && i < net.npeers && !(s_gone & (1u << s_peer[i].port)) && !net.link_dead[i];
+}
+
+/* Frames up to `last` of that player's input just arrived by one path
+ * (receive thread, s_rx_lock held). A frame the other path already brought
+ * is one lead sample: positive when the host's path was first. */
+static void arrival_note(const Peer* p, bool relayed, int64_t last) {
+    Inbound* in = &s_in[p->port];
+    const int path = relayed ? 1 : 0;
+    if (last <= in->seen[path]) {
+        return;
+    }
+    int64_t from = in->seen[path] + 1;
+    from = last - from >= ARRIVALS ? last - ARRIVALS + 1 : from;
+    in->seen[path] = last;
+    uint64_t now = SDL_GetTicksNS();
+    for (int64_t f = from; f <= last; f++) {
+        const int k = (int)(f & (ARRIVALS - 1));
+        if (in->frame[k] != (int32_t)f) {
+            in->frame[k] = (int32_t)f;
+            in->at[k][path] = now;
+            in->at[k][path ^ 1] = 0;
+            continue;
+        }
+        if (in->at[k][path] != 0) {
+            continue;
+        }
+        in->at[k][path] = now;
+        const uint64_t other = in->at[k][path ^ 1];
+        if (other != 0) {
+            const int64_t d = (int64_t)((now - other) / 1000);
+            in->lead_sum += relayed ? -d : d;
+            in->lead_n++;
+        }
+    }
+}
+
+/* Host: an input packet that arrived at rx_ns moved its player's mark. */
+static void fwd_pending(uint64_t rx_ns) {
+    if (net.local == 0 && net.npeers >= 2 && rx_ns != 0) {
+        s_fwd_pend_sum += rx_ns;
+        s_fwd_pend_n++;
+    }
+}
+
+/* Host, from send_inputs: everything pending goes out now. */
+static void fwd_sent(uint64_t now) {
+    if (s_fwd_pend_n != 0) {
+        uint64_t held = (uint64_t)s_fwd_pend_n * now - s_fwd_pend_sum;
+        if ((int64_t)held > 0) {
+            s_fwd_win_ns += held;
+            s_fwd_win_n += s_fwd_pend_n;
+        }
+        s_fwd_pend_sum = 0;
+        s_fwd_pend_n = 0;
+    }
+}
+
+/* A fresh report's figure from `reporter` for its link to `port`, or NULL. */
+static const LinkFig* row_fig(int reporter, int port, uint64_t now) {
+    const LinkRow* r = &s_rows[reporter];
+    if (r->t == 0 || now - r->t > LINKS_STALE_MS * 1000000ull) {
+        return NULL;
+    }
+    for (int k = 0; k < MAX_PEERS; k++) {
+        if (r->fig[k].port == port) {
+            return &r->fig[k];
+        }
+    }
+    return NULL;
+}
+
+static bool row_says_faster(int reporter, int port) {
+    const LinkFig* f = row_fig(reporter, port, SDL_GetTicksNS());
+    return f != NULL && (f->flags & LINK_FASTER);
+}
+
+/* Why that guest gets that player through the host, by its last report. */
+static const char* row_relay_why(int reporter, int port) {
+    const LinkFig* f = row_fig(reporter, port, SDL_GetTicksNS());
+    return f == NULL ? "asked" : (f->flags & LINK_DEAD) ? "dead" :
+           (f->flags & LINK_FASTER) ? "faster" : "silent";
+}
+
+/* Guest: the host's path for peer i's input, estimated -- half our round
+ * trip to the host, the host's forwarding hold, half the host's round trip
+ * to that player -- with the jitter of the worse of the two legs. */
+static bool relay_estimate(int i, uint64_t now, uint32_t* trip, uint32_t* jit) {
+    const int host = net_host_peer();
+    if (net.local == 0 || host < 0 || i == host) {
+        return false;
+    }
+    const LinkFig* ha = row_fig(0, s_peer[i].port, now);
+    const uint32_t bh = s_peer[host].ping_us;
+    if (ha == NULL || ha->ping == 0 || bh == 0) {
+        return false;
+    }
+    *trip = bh / 2 + s_rows[0].fwd + ha->ping / 2;
+    const uint32_t jb = jitter_peer_us(host);
+    *jit = ha->jit > jb ? ha->jit : jb;
+    return true;
+}
+
+/* Our figure for peer i's input to us (host order). */
+static void own_fig(int i, uint64_t now, LinkFig* f) {
+    const Peer* p = &s_peer[i];
+    const uint8_t bit = (uint8_t)(1u << p->port);
+    const bool dead = net.link_dead[i];
+    const bool relayed = ((s_relay_mask | s_route_mask | s_fast_mask) & bit) != 0;
+    memset(f, 0, sizeof *f);
+    f->port = (uint8_t)p->port;
+    f->flags = (uint8_t)(((s_gone & bit) ? LINK_GONE : 0) | (dead ? LINK_DEAD : 0) |
+                         (relayed ? LINK_RELAYED : 0) | ((s_fast_mask & bit) ? LINK_FASTER : 0));
+    f->ping = p->ping_us;
+    f->jit = jitter_peer_us(i);
+    f->trip = p->ping_us / 2;
+    f->jeff = f->jit;
+    uint32_t rt, rj;
+    if (!(dead || relayed) || !relay_estimate(i, now, &rt, &rj)) {
+        return;
+    }
+    const Inbound* in = &s_in[p->port];
+    if (!dead && in->lead_ok) {
+        /* Measured: each frame is used from whichever path brings it first. */
+        if (in->lead_us > 0) {
+            f->trip = f->trip > (uint32_t)in->lead_us ? f->trip - (uint32_t)in->lead_us : 0;
+            f->jeff = rj;
+        }
+    } else if (dead || rt < f->trip) {
+        f->trip = rt;
+        f->jeff = rj;
+    }
+}
+
+/* Our report: to the host from a guest, to every guest from the host. */
+static void links_report(uint64_t now, bool force) {
+    if (!force && s_links_sent != 0 && now - s_links_sent < LINKS_EVERY_MS * 1000000ull) {
+        return;
+    }
+    s_links_sent = now;
+    if (net.local == 0 && s_fwd_win_n != 0) {
+        const uint32_t w = (uint32_t)(s_fwd_win_ns / s_fwd_win_n / 1000);
+        s_fwd_us = s_fwd_us == 0 ? w : (s_fwd_us * 3 + w) / 4;
+        s_fwd_win_ns = 0;
+        s_fwd_win_n = 0;
+    }
+    LinkReport r;
+    memset(&r, 0, sizeof r);
+    r.h = hdr('L');
+    r.fwd = htonl(net.local == 0 ? s_fwd_us : 0);
+    for (int k = 0; k < MAX_PEERS; k++) {
+        LinkFig* f = &r.fig[k];
+        if (k >= net.npeers) {
+            f->port = 0xff;
+            continue;
+        }
+        own_fig(k, now, f);
+        f->ping = htonl(f->ping);
+        f->jit = htonl(f->jit);
+        f->trip = htonl(f->trip);
+        f->jeff = htonl(f->jeff);
+    }
+    const int host = net_host_peer();
+    SDL_LockMutex(net.tx_lock);
+    for (int i = 0; i < net.npeers; i++) {
+        if ((net.local == 0 || i == host) && net_link_counts(i)) {
+            tx(i, &r, sizeof r);
+        }
+    }
+    SDL_UnlockMutex(net.tx_lock);
+}
+
+/* A peer's report (game thread): the host keeps every guest's, a guest the host's. */
+static void on_links(const Peer* p, const LinkReport* r) {
+    if ((net.local == 0) == (p->port == 0)) {
+        return;
+    }
+    LinkRow* row = &s_rows[p->port];
+    row->t = SDL_GetTicksNS();
+    row->fwd = ntohl(r->fwd);
+    for (int k = 0; k < MAX_PEERS; k++) {
+        LinkFig f = r->fig[k];
+        if (f.port >= PORTS) {
+            f.port = 0xff;
+        }
+        f.ping = ntohl(f.ping);
+        f.jit = ntohl(f.jit);
+        f.trip = ntohl(f.trip);
+        f.jeff = ntohl(f.jeff);
+        row->fig[k] = f;
+    }
+}
+
+/* Guest: read each player's lead window, and learn the estimate's error
+ * from it while relayed for speed. */
+static void lead_poll(uint64_t now) {
+    for (int i = 0; i < net.npeers; i++) {
+        Inbound* in = &s_in[s_peer[i].port];
+        if (in->lead_read != 0 && now - in->lead_read < LEAD_WINDOW_MS * 1000000ull) {
+            continue;
+        }
+        in->lead_read = now;
+        SDL_LockMutex(s_rx_lock);
+        const int64_t sum = in->lead_sum;
+        const unsigned n = in->lead_n;
+        in->lead_sum = 0;
+        in->lead_n = 0;
+        SDL_UnlockMutex(s_rx_lock);
+        const uint8_t bit = (uint8_t)(1u << s_peer[i].port);
+        if (!(s_fast_mask & bit) || now < in->settle || n < LEAD_MIN_SAMPLES) {
+            in->lead_ok = (s_fast_mask & bit) && in->lead_ok && now >= in->settle;
+            continue;
+        }
+        in->lead_us = (int32_t)(sum / (int64_t)n);
+        in->lead_ok = true;
+        uint32_t rt, rj;
+        if (relay_estimate(i, now, &rt, &rj) && s_peer[i].ping_us != 0) {
+            const int32_t est = (int32_t)(s_peer[i].ping_us / 2) - (int32_t)rt;
+            const int32_t e = est - in->lead_us;
+            in->err_us = in->err_ok ? (in->err_us * 3 + e) / 4 : e;
+            in->err_ok = true;
+        }
+    }
+}
+
+/* Guest: relay peer i's input through the host for speed, or stop. */
+static void fast_poll(int i, uint64_t now) {
+    const int port = s_peer[i].port;
+    const uint8_t bit = (uint8_t)(1u << port);
+    Inbound* in = &s_in[port];
+    uint32_t rt, rj;
+    if (s_peer[i].ping_us == 0 || !relay_estimate(i, now, &rt, &rj)) {
+        in->since = 0;
+        return;
+    }
+    const int32_t direct = (int32_t)(s_peer[i].ping_us / 2);
+    const int32_t est = direct - (int32_t)rt - (in->err_ok ? in->err_us : 0);
+    const bool fast = (s_fast_mask & bit) != 0;
+    const int32_t lead = fast && in->lead_ok ? in->lead_us : est;
+    const bool want = fast ? lead >= FAST_OFF_US : lead >= FAST_ON_US;
+    if (want == fast) {
+        in->since = 0;
+        return;
+    }
+    if (in->since == 0) {
+        in->since = now;
+        return;
+    }
+    if (now - in->since < FAST_HOLD_MS * 1000000ull) {
+        return;
+    }
+    in->since = 0;
+    if (want) {
+        s_fast_mask |= bit;
+        in->settle = now + LEAD_SETTLE_MS * 1000000ull;
+        in->lead_ok = false;
+        pc_log_line("net: P%d direct %.1f ms, through the host ~%.1f ms (hold %.1f, %s); "
+                    "asking the host to relay it (faster) at frame %d",
+            port + 1, direct / 1000.0, (direct - lead) / 1000.0, s_rows[0].fwd / 1000.0,
+            in->err_ok ? "corrected by measurement" : "estimated", net.frame);
+    } else {
+        s_fast_mask &= (uint8_t)~bit;
+        pc_log_line("net: P%d through the host only %.1f ms ahead (%s) at frame %d; direct again",
+            port + 1, lead / 1000.0, in->lead_ok ? "measured" : "estimated", net.frame);
+        in->lead_ok = false;
+    }
+    s_relay_t[port] = now; /* twins may still be on their way */
+    s_route_told = false;
+    links_report(now, true); /* ahead of the ask, so the host's log can say why */
+}
+
+void net_links_worst(LinkWorst* w) {
+    memset(w, 0, sizeof *w);
+    w->from = w->to = net.local;
+    if (s_slippi_on || net.npeers < 2) {
+        /* A 1v1 (or a Slippi session, whose round trip is the adapter's):
+         * the one link, both ways. */
+        const uint32_t j = jitter_us();
+        w->trip_us = net.ping_us / 2;
+        w->jit_us = w->jit_max_us = j;
+        w->need_us = w->trip_us + j;
+        w->rtt_max_us = net.ping_us;
+        w->from = net.npeers > 0 ? net.peer_port[0] : net.local;
+        return;
+    }
+    const uint64_t now = SDL_GetTicksNS();
+    for (int r = 0; r < PORTS; r++) {
+        if (s_gone & (1u << r)) {
+            continue;
+        }
+        for (int k = 0; k < MAX_PEERS; k++) {
+            LinkFig own;
+            const LinkFig* f;
+            if (r == net.local) {
+                if (k >= net.npeers) {
+                    break;
+                }
+                own_fig(k, now, &own);
+                f = &own;
+            } else {
+                const LinkRow* row = &s_rows[r];
+                if (row->t == 0 || now - row->t > LINKS_STALE_MS * 1000000ull) {
+                    break;
+                }
+                f = &row->fig[k];
+            }
+            if (f->port >= PORTS || (f->flags & LINK_GONE) || (s_gone & (1u << f->port)) ||
+                f->trip == 0)
+            {
+                continue;
+            }
+            const uint32_t need = f->trip + f->jeff;
+            if (2 * f->trip > w->rtt_max_us) {
+                w->rtt_max_us = 2 * f->trip;
+            }
+            if (f->jeff > w->jit_max_us) {
+                w->jit_max_us = f->jeff;
+            }
+            if (need > w->need_us) {
+                w->need_us = need;
+                w->trip_us = f->trip;
+                w->jit_us = f->jeff;
+                w->from = f->port;
+                w->to = r;
+                w->relayed = (f->flags & LINK_DEAD) ||
+                             ((f->flags & LINK_RELAYED) && f->trip < f->ping / 2);
+            }
+        }
+    }
+}
+
 /* Routes, drops and their timers: every fresh tick and every turn of an input
  * wait (game thread). */
 static void links_poll(void) {
@@ -941,6 +1530,10 @@ static void links_poll(void) {
         return;
     }
     int host = net_host_peer();
+    if (net.local == 0) {
+        forward_fresh();
+        fwd_sent(SDL_GetTicksNS()); /* the hold is drain to here now, relaying or not */
+    }
     /* Each link's receive clock, under the receive thread's lock. */
     bool heard[MAX_PEERS], left[MAX_PEERS];
     uint64_t last[MAX_PEERS];
@@ -963,6 +1556,10 @@ static void links_poll(void) {
      * there is none before the first frame): silence means nothing yet. The
      * connect and stall waits cover that stretch, as in a 1v1. */
     bool judge = s_link_t0 != 0;
+    if (judge) {
+        lead_poll(now);
+        links_report(now, false);
+    }
     /* Is there a fresh link other than i? (FRESH_MS) */
     int fresh = 0;
     for (int i = 0; i < net.npeers; i++) {
@@ -983,6 +1580,10 @@ static void links_poll(void) {
                 net.link_dead[i] = false;
                 SDL_UnlockMutex(net.tx_lock);
                 s_route_mask &= (uint8_t)~(1u << port);
+                if (s_relay_mask & (1u << port)) {
+                    s_relay_mask &= (uint8_t)~(1u << port);
+                    s_relay_t[port] = now; /* twins may still be on their way */
+                }
                 s_route_told = false;
                 pc_log_line("net: link to P%d is back at frame %d", port + 1, net.frame);
             }
@@ -1017,6 +1618,25 @@ static void links_poll(void) {
             continue; /* the host going silent ends the session (wait_remote) */
         }
         bool host_fresh = host >= 0 && heard[host] && now - last[host] < FRESH_MS * 1000000ull;
+        /* Ask for the relay well before giving the link up (above). */
+        const uint8_t bit = (uint8_t)(1u << port);
+        bool host_now = host >= 0 && heard[host] && now - last[host] < RELAY_HOST_MS * 1000000ull;
+        uint64_t silent = heard[i] ? now - last[i] : s_link_t0 != 0 ? now - s_link_t0 : 0;
+        uint64_t ask = (heard[i] ? RELAY_ASK_MS : RELAY_NEVER_MS) * 1000000ull;
+        if (judge && !(s_relay_mask & bit) && host_now && silent > ask) {
+            s_relay_mask |= bit;
+            s_relay_t[port] = now;
+            s_route_told = false;
+            pc_log_line("net: P%d silent %.0f ms at frame %d; asking the host to relay it",
+                port + 1, silent / 1e6, net.frame);
+        } else if ((s_relay_mask & bit) && heard[i] && now - last[i] < RELAY_HOST_MS * 1000000ull &&
+                   now - s_relay_t[port] > RELAY_HOLD_MS * 1000000ull)
+        {
+            s_relay_mask &= (uint8_t)~bit;
+            s_relay_t[port] = now; /* twins may still be on their way */
+            s_route_told = false;
+            pc_log_line("net: P%d heard again at frame %d; no relay needed", port + 1, net.frame);
+        }
         bool never = !heard[i] && s_link_t0 != 0 && now - s_link_t0 > ROUTE_WAIT_MS * 1000000ull;
         bool quiet = heard[i] && now - last[i] > ROUTE_SILENT_MS * 1000000ull;
         if (judge && (never || quiet) && host_fresh) {
@@ -1027,9 +1647,13 @@ static void links_poll(void) {
             s_route_mask |= (uint8_t)(1u << port);
             s_route_told = false;
         }
+        if (judge && !net.link_dead[i]) {
+            fast_poll(i, now);
+        }
     }
     if (!s_route_told && host >= 0) {
-        s_route_told = rel_send_to(host, REL_ROUTE, &s_route_mask, 1);
+        const uint8_t m = s_route_mask | s_relay_mask | s_fast_mask;
+        s_route_told = rel_send_to(host, REL_ROUTE, &m, 1);
     }
     /* Host: a player's collected input has settled and every guest holds it. */
     if (net.local == 0) {
@@ -1162,6 +1786,9 @@ static void send_inputs(void) {
         p->last_send_ns = now;
     }
     send_forwarded();
+    if (net.local == 0) {
+        fwd_sent(SDL_GetTicksNS());
+    }
     SDL_UnlockMutex(net.tx_lock);
     s_red_target = red;
     if (newest != s_send_frame) {
@@ -1229,12 +1856,14 @@ typedef struct RxMsg {
     int len;    /* message bytes */
     int rtt_us; /* 'A': round trip timed as it landed, -1 for none;
                  * 'M': RX_REORDERED if it arrived behind a later seq */
+    uint64_t rx_ns; /* when it landed: the host's forwarding hold (fwd_pending) */
     union {
         Hdr h;
         Packet pk;
         Ack ack;
         Rel rel;
         RelAck rack;
+        LinkReport links;
     } u;
 } RxMsg;
 /* While this side is frozen the peer keeps sending: its input packet every
@@ -1260,6 +1889,7 @@ static bool rx_push(const Peer* p, const void* body, int len, int rtt_us) {
     m->peer = peer_index(p);
     m->len = len;
     m->rtt_us = rtt_us;
+    m->rx_ns = SDL_GetTicksNS();
     memcpy(&m->u, body, (size_t)len);
     return true;
 }
@@ -1335,6 +1965,9 @@ static void rx_input(Peer* p, const Packet* pk, int n, bool reordered, const Pee
     if (count > 0 && first <= have + 1 && last > have && last < (int64_t)frame + RING / 2) {
         have = last;
     }
+    if (count > 0 && last < (int64_t)frame + RING / 2) {
+        arrival_note(p, via != NULL, last); /* the two paths' race, frame by frame */
+    }
     if (rx_push(p, pk, n, reordered ? RX_REORDERED : -1)) {
         p->rx_have = (int32_t)have;
     }
@@ -1384,16 +2017,20 @@ static void on_port_pads(int port, const Packet* pk, const WirePad* pads) {
  * the same packets in the same order, against a net.frame never behind the
  * one it checked, so a drain leaves the port's mark at or above rx_have.
  * Every port the peer plays rides in the packet (xports); each moves alike. */
-static void on_inputs(Peer* p, const Packet* pk, bool reordered) {
+static void on_inputs(Peer* p, const Packet* pk, bool reordered, uint64_t rx_ns) {
     const int port = p->port;
     if (s_port_end[port] >= 0) {
         return; /* the player left and everyone agreed where its input ends */
     }
+    const int32_t had = s_port_have[port];
     on_port_pads(port, pk, pk->pads);
     for (int q = 0, x = 0; q < PORTS && x < MAX_XPORTS; q++) {
         if (pk->xports & (1u << q)) {
             on_port_pads(q, pk, pk->xpads[x++]);
         }
+    }
+    if (s_port_have[port] > had) {
+        fwd_pending(rx_ns);
     }
     if (pk->ck_frame >= 0) {
         p->rck[pk->ck_frame & (RING - 1)].frame = pk->ck_frame;
@@ -1713,7 +2350,22 @@ static void on_ack(Peer* p, const Ack* a, int rtt) {
         if ((uint32_t)rtt > s_rtt_max) {
             s_rtt_max = (uint32_t)rtt;
         }
-        jitter_note((uint32_t)rtt);
+        jitter_note(peer_index(p), (uint32_t)rtt);
+        p->st_rtt_sum += (uint64_t)rtt;
+        p->st_rtt_n++;
+        if (p->st_rtt_min == 0 || (uint32_t)rtt < p->st_rtt_min) {
+            p->st_rtt_min = (uint32_t)rtt;
+        }
+        if ((uint32_t)rtt > p->st_rtt_max) {
+            p->st_rtt_max = (uint32_t)rtt;
+        }
+        if (p->st_rtt_prev != 0) {
+            uint32_t d = (uint32_t)rtt > p->st_rtt_prev ? (uint32_t)rtt - p->st_rtt_prev :
+                                                         p->st_rtt_prev - (uint32_t)rtt;
+            p->st_jit_sum += d;
+            p->st_jit_n++;
+        }
+        p->st_rtt_prev = (uint32_t)rtt;
     }
 }
 
@@ -1808,6 +2460,7 @@ static void rx_dispatch(Peer* p, void* buf, int n) {
         }
         wire_ack(&u->ack);
         s_rx_acks++;
+        p->st_acks++;
         rx_push(p, &u->ack, n, rtt_sample(p, u->ack.seq));
         break;
     case 'R':
@@ -1822,6 +2475,12 @@ static void rx_dispatch(Peer* p, void* buf, int n) {
             return;
         }
         rx_push(p, &u->rack, n, -1);
+        break;
+    case 'L':
+        if (n != (int)sizeof(LinkReport)) {
+            return;
+        }
+        rx_push(p, buf, n, -1);
         break;
     case 'B':
         /* Only a peer we have already heard from can end the session. Before
@@ -1883,6 +2542,8 @@ static bool packet_shape(const void* buf, int n) {
     }
     case 'G':
         return n == (int)sizeof(FwdAck);
+    case 'L':
+        return n == (int)sizeof(LinkReport);
     case 'B':
         return n == (int)sizeof(Bye);
     default:
@@ -2248,13 +2909,16 @@ void recv_inputs(void) {
         Peer* p = &s_peer[m.peer];
         switch (m.u.h.magic) {
         case 'M':
-            on_inputs(p, &m.u.pk, m.rtt_us == RX_REORDERED);
+            on_inputs(p, &m.u.pk, m.rtt_us == RX_REORDERED, m.rx_ns);
             break;
         case 'A':
             on_ack(p, &m.u.ack, m.rtt_us);
             break;
         case 'R':
             on_rel(m.peer, &m.u.rel, m.len);
+            break;
+        case 'L':
+            on_links(p, &m.u.links);
             break;
         default: /* 'K' */
             on_rel_ack(m.peer, &m.u.rack);
@@ -2765,16 +3429,42 @@ int pc_net_local_player(void) {
  * not an arithmetic one (docs/netcode-plan.md section 5.2).
  *
  * So the exit frame is agreed instead of inferred: each peer announces the
- * frame its scene asked to end on, and both leave on the later of the two
- * plus a lead that covers the reliable round trip. This is the pattern the
- * lobbies use to hand over to the CSS (pc_net_start_frame). */
-#define SCENE_HANDOFF 20 /* frames of lead: ~330 ms, menus are lockstep */
+ * frame its scene asked to end on, and every peer leaves on the latest of
+ * them plus a lead. This is the pattern the lobbies use to hand over to the
+ * CSS (pc_net_start_frame).
+ *
+ * The announcement used to be a reliable message (REL_SCENE) and the lead
+ * was meant to cover its round trip, which no lead can: lockstep paces the
+ * frames by the input
+ * packets, which go out every few milliseconds and carry each frame many
+ * times over, while the announcement is one message that a single lost
+ * packet holds back for a 250 ms resend. Under 50 ms +-40 ms with 2% loss it
+ * arrived after the agreed frame on some peer in 8 of 12 3-player runs; that
+ * peer had already ticked the old scene past the exit and entered the next
+ * scene a frame or more late (DESYNC on the first frames of the stage select
+ * or the match; tools/net_test_xn_menu.py, default and settings-engine).
+ *
+ * So the ask travels IN the input stream, which every peer already holds in
+ * frame order before it may simulate a frame: the peer marks the first input
+ * frame it has not yet written (WIRE_SCENE_ASK) and that input frame is its
+ * ask. A peer whose confirmed input from P runs through frame h without a
+ * mark knows P's ask, whenever it comes, is past h, so the exit is past
+ * h + SCENE_HANDOFF. Confirmed input reaches at least WINDOW frames behind
+ * any frame we simulate, so with the lead above WINDOW a missing ask can
+ * never be one the gate needed: no peer can pass an exit it does not know,
+ * however late any packet is, and nobody waits for anything but inputs.
+ *
+ * The Slippi transport keeps REL_SCENE: its pads are the console's format and
+ * Dolphin peers (the only ones it meets in a match-only session, which has
+ * no hand-offs at all) would read the mark as a button. */
+#define SCENE_HANDOFF 20 /* frames of lead; must exceed WINDOW (see above) */
+_Static_assert(SCENE_HANDOFF > WINDOW, "an unconfirmed ask must lie past the gate");
 #define SCENE_SLOTS 8    /* announcements kept: the peer may be a scene ahead */
 /* How long a scene may wait for the other half of a hand-off before the
  * session is declared dead. Five seconds is far longer than any real
- * hand-off (the announcement is one reliable round trip on top of
- * SCENE_HANDOFF) and short enough that a peer which never answers does not
- * leave the player in a scene they cannot leave. */
+ * hand-off (the peers' scenes ask within a load's difference of each other)
+ * and short enough that a peer which never answers does not leave the
+ * player in a scene they cannot leave. */
 #define SCENE_HOLD_MAX 300
 
 /* Defined below; pc_net_scene_hold() is the one caller ahead of it. */
@@ -2792,9 +3482,24 @@ static int32_t s_scene_exit_local = -1;          /* frame our scene asked to end
 static int32_t s_scene_exit_at = -1;             /* agreed frame, once both are in */
 static int32_t s_scene_wait_since = -1;          /* frame the incomplete wait began */
 static int32_t s_scene_exit_remote[MAX_PEERS][SCENE_SLOTS]; /* each peer's, by its own seq */
+/* The asks as input marks (WIRE_SCENE_ASK): per controller port, the newest
+ * confirmed input frame already looked at, and how many marks it held (the
+ * port's own count of exits, the seq its next mark belongs to). */
+static int32_t s_mark_scanned[PORTS];
+static uint32_t s_mark_seq[PORTS];
+
+/* Asks ride the input stream on the custom transport; REL_SCENE on Slippi's. */
+static bool scene_marks(void) {
+    return !s_slippi_on;
+}
 
 void net_scene_rel(int peer, const void* payload, int len) {
     SceneMsg m;
+    if (scene_marks()) {
+        /* Nothing on this transport sends one: an ask here is an input mark. */
+        pc_log_line("net: REL_SCENE from peer %d ignored (asks are input marks)", peer);
+        return;
+    }
     if (len != (int)sizeof m) {
         pc_log_line("net: REL_SCENE of %d bytes ignored", len);
         return;
@@ -2839,6 +3544,108 @@ static void scene_handoff_reset(void) {
             s_scene_exit_remote[p][i] = -1;
         }
     }
+    for (int q = 0; q < PORTS; q++) {
+        s_mark_scanned[q] = -1;
+        s_mark_seq[q] = 0;
+    }
+}
+
+/* Read the asks out of every peer's newly confirmed input, in frame order.
+ * Every fresh tick and every gate check calls it, so it never falls a ring
+ * behind: a peer's confirmed input cannot run more than its delay and ours
+ * past the frame we are on. Only the primary port carries the mark. */
+static void scene_marks_scan(void) {
+    if (!net.active || !scene_marks()) {
+        return;
+    }
+    for (int i = 0; i < net.npeers; i++) {
+        const int p = s_peer[i].port;
+        if (p < 0 || p >= PORTS || !(s_remote_mask & (1u << p))) {
+            continue;
+        }
+        int32_t upto = s_port_have[p];
+        if (s_port_end[p] >= 0 && upto > s_port_end[p]) {
+            upto = s_port_end[p];
+        }
+        int32_t f = s_mark_scanned[p] + 1;
+        if (f <= upto - RING) {
+            pc_log_line("net: P%d's input %d..%d went by unread for scene asks", p + 1, f,
+                upto - RING);
+            f = upto - RING + 1;
+        }
+        for (; f <= upto; f++) {
+            if (!(s_remote_ring[p][f & (RING - 1)].button & WIRE_SCENE_ASK)) {
+                continue;
+            }
+            const uint32_t seq = s_mark_seq[p]++;
+            int64_t ahead = (int64_t)seq - (int64_t)s_scene_seq;
+            if (ahead < 0 || ahead > 1) {
+                /* A peer leaves a scene only on the frame we leave it too, so
+                 * its asks can be for ours or the next one and no other. */
+                pc_log_line("net: P%d's scene ask %u at input %d ignored (we are on %u)", p + 1,
+                    seq, f, s_scene_seq);
+                continue;
+            }
+            s_scene_exit_remote[i][seq % SCENE_SLOTS] = f;
+        }
+        if (upto > s_mark_scanned[p]) {
+            s_mark_scanned[p] = upto;
+        }
+    }
+}
+
+/* Every live peer's exit frame for this scene; the latest of them, -1 while
+ * any is still missing (-2 with no live peer). All of them announce to all of
+ * them, so each computes the same exit on its own. */
+static int32_t scene_exit_remote(void) {
+    const int slot = s_scene_seq % SCENE_SLOTS;
+    int32_t remote = -2;
+    for (int i = 0; i < net.npeers; i++) {
+        if (s_gone & (1u << s_peer[i].port)) {
+            continue;
+        }
+        int32_t f = s_scene_exit_remote[i][slot];
+        remote = f < 0 ? -1 : remote == -1 ? -1 : f > remote ? f : remote;
+    }
+    return remote;
+}
+
+/* Agree the exit frame once our ask and every peer's are in. True when it is
+ * agreed (now or before). */
+static bool scene_exit_agree(void) {
+    if (s_scene_exit_at >= 0) {
+        return true;
+    }
+    int32_t remote = scene_exit_remote();
+    if (s_scene_exit_local < 0 || remote < 0) {
+        return false;
+    }
+    int32_t later = remote > s_scene_exit_local ? remote : s_scene_exit_local;
+    s_scene_exit_at = later + SCENE_HANDOFF;
+    /* Nothing may still be predicted when the scene goes: the next
+     * scene's first tick raises the barrier past every outstanding
+     * frame, and snapshot_unusable() rejects those snapshots anyway, so
+     * a correction arriving then is dropped and the peers finish the
+     * match on different remote inputs. So the last frames of the scene
+     * run lockstep (scene_exit_lockstep): they cost nothing, being the
+     * frames after the match has already been decided, and it is the
+     * same thing the entry side does.
+     *
+     * Not by raising the barrier: the peer's announcement can land a few
+     * frames after our own ask, with those frames still predicted, and a
+     * barrier over them dropped their correction (DESYNC a frame later,
+     * seen unpaced in net_test_xn_menu's set and fighters runs). */
+    pc_log_line("net: scene %u ends at frame %d (asked %d, peer %d)", s_scene_seq,
+        s_scene_exit_at, s_scene_exit_local, remote);
+    /* net.frame is the frame the next tick runs. The marks keep the
+     * agreement ahead of it (see SCENE_HANDOFF), so this cannot fire on the
+     * custom transport; if it does, this peer leaves the scene late and the
+     * checksum says so a frame on. */
+    if (net.frame > s_scene_exit_at) {
+        pc_log_line("net: scene %u exit agreed late: frame %d is already past %d", s_scene_seq,
+            net.frame, s_scene_exit_at);
+    }
+    return true;
 }
 
 /* True while the caller must keep ticking the scene it has asked to leave.
@@ -2852,19 +3659,12 @@ bool pc_net_scene_hold(void) {
          * recorded pair agreed, not where this run's own code asks to. */
         return record_replay_scene_hold(net.frame);
     }
-    /* Every peer's exit frame for this scene; the latest of them, or -1 while
-     * any is still missing. All of them announce to all of them, so each
-     * computes the same exit on its own. */
-    const int slot = s_scene_seq % SCENE_SLOTS;
-    int32_t remote = -2;
-    for (int i = 0; i < net.npeers; i++) {
-        if (s_gone & (1u << s_peer[i].port)) {
-            continue;
-        }
-        int32_t f = s_scene_exit_remote[i][slot];
-        remote = f < 0 ? -1 : remote == -1 ? -1 : f > remote ? f : remote;
-    }
-    if (s_scene_exit_local < 0) {
+    scene_marks_scan();
+    if (s_scene_exit_local < 0 && scene_marks()) {
+        /* The first input frame not yet written carries the mark (fresh_tick
+         * sets it as it writes that frame), and is the ask. */
+        s_scene_exit_local = s_wrote + 1;
+    } else if (s_scene_exit_local < 0) {
         SceneMsg m = {htonl(s_scene_seq), htonl((uint32_t)net.frame)};
         /* Only latch the frame if the announcement actually went out. The
          * lane is stop-and-wait four deep and shares itself with the resume,
@@ -2884,8 +3684,9 @@ bool pc_net_scene_hold(void) {
      * eventually. The peer keeps sending inputs, so neither the stall timeout
      * nor the watchdog notices a peer that has simply stopped answering this
      * exchange, and the player is left in a scene they cannot leave. */
-    if (s_scene_exit_local < 0 || remote < 0) {
+    if (!scene_exit_agree()) {
         static int32_t said;
+        const int32_t remote = scene_exit_remote();
         if (s_scene_wait_since < 0) {
             s_scene_wait_since = net.frame;
         }
@@ -2905,28 +3706,10 @@ bool pc_net_scene_hold(void) {
         return true; /* the peer is still in the scene: wait for its frame */
     }
     s_scene_wait_since = -1;
-    if (s_scene_exit_at < 0) {
-        int32_t later = remote > s_scene_exit_local ? remote : s_scene_exit_local;
-        s_scene_exit_at = later + SCENE_HANDOFF;
-        /* Nothing may still be predicted when the scene goes: the next
-         * scene's first tick raises the barrier past every outstanding
-         * frame, and snapshot_unusable() rejects those snapshots anyway, so
-         * a correction arriving then is dropped and the peers finish the
-         * match on different remote inputs. So the last frames of the scene
-         * run lockstep (scene_exit_lockstep): they cost nothing, being the
-         * frames after the match has already been decided, and it is the
-         * same thing the entry side does.
-         *
-         * Not by raising the barrier: the peer's announcement can land a few
-         * frames after our own ask, with those frames still predicted, and a
-         * barrier over them dropped their correction (DESYNC a frame later,
-         * seen unpaced in net_test_xn_menu's set and fighters runs). */
-        pc_log_line("net: scene %u ends at frame %d (asked %d, peer %d)", s_scene_seq,
-            s_scene_exit_at, s_scene_exit_local, remote);
-    }
     if (net.frame < s_scene_exit_at) {
         return true;
     }
+    const int slot = s_scene_seq % SCENE_SLOTS;
     for (int i = 0; i < MAX_PEERS; i++) {
         s_scene_exit_remote[i][slot] = -1;
     }
@@ -2947,8 +3730,9 @@ bool net_local_idle(void) {
     for (int q = 0; q < PORTS; q++) {
         const WirePad* p = &s_local_ring[q][s_wrote & (RING - 1)];
         if ((net.local_mask & (1u << q)) &&
-            (p->button != 0 || p->stickX != 0 || p->stickY != 0 || p->substickX != 0 ||
-                p->substickY != 0 || p->triggerLeft != 0 || p->triggerRight != 0))
+            ((p->button & ~WIRE_SCENE_ASK) != 0 || p->stickX != 0 || p->stickY != 0 ||
+                p->substickX != 0 || p->substickY != 0 || p->triggerLeft != 0 ||
+                p->triggerRight != 0))
         {
             return false;
         }
@@ -4353,6 +5137,30 @@ static void predict(int32_t f) {
     }
 }
 
+/* MELEE_NET_SIM_TAKE_REFUSE=N (fixture): every Nth snapshot take of a
+ * re-run frame is refused, as snapshot_take refuses one while an ARAM or
+ * disc transfer is in flight. The real case is rare: aurora's ARQ worker
+ * counts a transfer finished only after running its callback, and a
+ * synchronous ARAM fetch (ftdata.c's fighter animations) is released by
+ * that callback, so the take right after such a tick -- a rollback's -- can
+ * find it still in flight. The re-run then waits for that frame's input,
+ * which is the path this exercises; a rollback's own retake only waits with
+ * three or more players (in a 1v1 the correction that starts it is the
+ * input it would wait for). */
+static bool take_refuse_test(void) {
+    static int every = -1;
+    static unsigned n;
+    if (every < 0) {
+        const char* e = getenv("MELEE_NET_SIM_TAKE_REFUSE");
+        every = e != NULL ? atoi(e) : 0;
+        if (every > 0) {
+            pc_log_line("net: refusing every %d re-run snapshot take (MELEE_NET_SIM_TAKE_REFUSE)",
+                every);
+        }
+    }
+    return every > 0 && net.resim && ++n % (unsigned)every == 0;
+}
+
 /* Snapshot before a predicted frame. Behind the barrier nothing is taken
  * (the frame cannot be rolled back to anyway); when the buffer cannot be
  * grown, disable further prediction without invalidating older snapshots.
@@ -4360,6 +5168,10 @@ static void predict(int32_t f) {
 static bool snap_predicted(int32_t f) {
     Snapshot* s = snap_slot(f);
     if (s_lockstep || f <= net.rb_barrier || scene_exit_lockstep(f)) {
+        return false;
+    }
+    if (take_refuse_test()) {
+        s->frame = -1; /* what snapshot_take does when it refuses */
         return false;
     }
     if (!snapshot_take(s, f)) {
@@ -4562,7 +5374,7 @@ static void write_head(PADStatus* head, int32_t f) {
             theirs = &wrong;
         }
         from_wire(&head[p], theirs);
-        if (!s_seen_remote && theirs->button != 0) {
+        if (!s_seen_remote && (theirs->button & ~WIRE_SCENE_ASK) != 0) {
             s_seen_remote = true;
             pc_log_line("net: first remote button press (%04x) at frame %d", theirs->button, f);
         }
@@ -4674,7 +5486,22 @@ static bool rollback_to(int32_t f) {
     if (depth > s_rb_depth_cur) {
         s_rb_depth_cur = depth;
     }
+    /* The state is now f's entry state: the timeline ends at f - 1, and
+     * frames f.. are re-run from the rings. simulated_upto() has to say so
+     * before resim_prepare, which can wait for input: with three or more
+     * players one peer's correction starts the rollback while another's
+     * input for f is still predicted, and when the retake of f is refused
+     * (an ARAM transfer from the tick just run still in flight) the re-run
+     * waits for it. Left at the pre-rollback tick, a correction for any
+     * frame from f up to that tick landing during the wait read as a
+     * misprediction of a frame already simulated, and the next tick rolled
+     * back again: to a later frame, whose snapshot still held the timeline
+     * being replaced (a DESYNC a frame later, on that machine alone), or to
+     * f itself, whose slot the refused take had just emptied ("cannot roll
+     * back ... no snapshot"). Those frames have not been re-run yet; the
+     * re-run reads the corrected ring. */
     net.resim = true;
+    net.tick_frame = f - 1;
     return resim_prepare(f);
 }
 
@@ -4902,6 +5729,63 @@ static void capture_local_sample(bool fresh) {
     }
 }
 
+/* The stats line's ping, jitter and loss are the session's: the ping its
+ * slowest link's, the jitter its worst link's own. With three or four
+ * players that hides which link is the bad one, so each link gets its own
+ * figures on a line of their own (caller holds s_rx_lock, which the acks are
+ * counted under; tx_lock nests inside it as in rx_input):
+ *
+ *   net:   peers: P2 98 ms (avg 66, 12-212, jitter 31.1, loss 0%); P3 ...
+ *
+ * "dead" marks a link this side has given up on, "gone" a player who left,
+ * "relayed" one whose relay this side asked for while the link still stands:
+ * "(silent)" when the link went quiet, "(faster)" when the host's path is
+ * the quicker one (link figures), with the lead the host's path measured.
+ * The host names, after a guest, the players it passes on to it and why. */
+static void stats_peers_report(void) {
+    if (net.npeers < 2) {
+        return; /* a 1v1's one link is the stats line itself */
+    }
+    char line[640];
+    int n = snprintf(line, sizeof line, "net:   peers:");
+    SDL_LockMutex(net.tx_lock);
+    for (int i = 0; i < net.npeers && n > 0 && n < (int)sizeof line; i++) {
+        Peer* p = &s_peer[i];
+        const uint8_t bit = (uint8_t)(1u << p->port);
+        int loss = p->st_tx > p->st_acks ? (int)(100 * (p->st_tx - p->st_acks) / p->st_tx) : 0;
+        char why[48] = "";
+        if (s_gone & bit) {
+            snprintf(why, sizeof why, " gone");
+        } else if (net.link_dead[i]) {
+            snprintf(why, sizeof why, " dead");
+        } else if (s_relay_mask & bit) {
+            snprintf(why, sizeof why, " relayed (silent)");
+        } else if ((s_fast_mask & bit) && s_in[p->port].lead_ok) {
+            snprintf(why, sizeof why, " relayed (faster, %.1f ms ahead)",
+                s_in[p->port].lead_us / 1000.0);
+        } else if (s_fast_mask & bit) {
+            snprintf(why, sizeof why, " relayed (faster)");
+        }
+        n += snprintf(line + n, sizeof line - (size_t)n,
+            "%s P%d %u ms (avg %.0f, %u-%u, jitter %.1f, loss %d%%)%s", i > 0 ? ";" : "",
+            p->port + 1, p->ping_us / 1000,
+            p->st_rtt_n ? p->st_rtt_sum / 1000.0 / p->st_rtt_n : 0.0, p->st_rtt_min / 1000,
+            p->st_rtt_max / 1000, p->st_jit_n ? p->st_jit_sum / 1000.0 / p->st_jit_n : 0.0, loss,
+            why);
+        for (int o = 0; net.local == 0 && o < PORTS && n > 0 && n < (int)sizeof line; o++) {
+            if ((s_fwd[o] & (1u << i)) && !(s_gone & (1u << o))) {
+                n += snprintf(line + n, sizeof line - (size_t)n, " gets P%d relayed (%s)", o + 1,
+                    row_relay_why(p->port, o));
+            }
+        }
+        p->st_rtt_sum = p->st_jit_sum = 0;
+        p->st_rtt_min = p->st_rtt_max = 0;
+        p->st_rtt_n = p->st_jit_n = p->st_tx = p->st_acks = 0;
+    }
+    SDL_UnlockMutex(net.tx_lock);
+    pc_log_line("%s", line);
+}
+
 /* A fresh frame: capture the local sample, exchange inputs, predict or
  * stall, and feed the queue head. `raw` is false for the extra tick a
  * time-sync advance adds, which reuses the last physical sample. */
@@ -4935,6 +5819,11 @@ static void fresh_tick(PADStatus* head, bool raw) {
                 if (net.local_mask & (1u << q)) {
                     to_wire(&s_local_ring[q][w & (RING - 1)], &s_raw_last[q]);
                 }
+            }
+            if (w == s_scene_exit_local && scene_marks()) {
+                /* Our scene's ask (pc_net_scene_hold): on the primary port,
+                 * which every peer reads it from (scene_marks_scan). */
+                s_local_ring[net.local][w & (RING - 1)].button |= WIRE_SCENE_ASK;
             }
             s_wrote = w;
         }
@@ -4982,6 +5871,7 @@ static void fresh_tick(PADStatus* head, bool raw) {
             int lead = in_fight() ? FIGHT_ENTRY_LEAD : IO_QUIET;
             barrier_raise(net.frame + lead);
         }
+        scene_marks_scan(); /* the peers' scene asks, from their new input */
         /* Predict at most WINDOW frames past the remote, and only in a
          * fight past the barrier (plan §10.4: menus lockstep, rollback
          * armed in GS_VS once the match's own loads have gone quiet).
@@ -5133,6 +6023,7 @@ static void fresh_tick(PADStatus* head, bool raw) {
         s_rx_dups = s_rx_reorders = s_sock_err = s_resim_eat = 0;
         s_rx_bad_src = s_rx_bad_sess = s_rx_bad_player = s_rx_malformed = s_tx_would_block = 0;
         s_rx_bad_mac = s_rx_full = 0;
+        stats_peers_report();
         SDL_UnlockMutex(s_rx_lock);
         snap_stats_report();
         sfx_stats_report();

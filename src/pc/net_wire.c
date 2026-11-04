@@ -15,7 +15,7 @@ static int8_t at_rest(int8_t v) {
 }
 
 void to_wire(WirePad* w, const PADStatus* p) {
-    w->button = p->button;
+    w->button = p->button & (uint16_t)~WIRE_SCENE_ASK;
     w->stickX = at_rest(p->stickX);
     w->stickY = at_rest(p->stickY);
     w->substickX = at_rest(p->substickX);
@@ -26,7 +26,7 @@ void to_wire(WirePad* w, const PADStatus* p) {
 
 void from_wire(PADStatus* p, const WirePad* w) {
     memset(p, 0, sizeof *p);
-    p->button = w->button;
+    p->button = w->button & (uint16_t)~WIRE_SCENE_ASK;
     p->stickX = w->stickX;
     p->stickY = w->stickY;
     p->substickX = w->substickX;
