@@ -39,6 +39,10 @@ typedef struct PcXnSeat {
     bool xr;
     bool extra;    /* a machine's other pad: no name of its own */
     uint8_t owner; /* an extra seat's machine, by its port */
+    /* A CPU keeping the seat warm (docs/xeleenet-cpus-plan.md): open to a
+     * joiner. Its level (1-9) and fighter (a CharacterKind, 0xFF none). */
+    bool cpu;
+    uint8_t level, ckind;
 } PcXnSeat;
 
 /* A lobby as the browser lists it (and as joining learns it): the

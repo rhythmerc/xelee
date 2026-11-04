@@ -103,8 +103,10 @@ class XnClient:
             "compat": self.compat, "settings": settings or DEFAULT_SETTINGS, "candidates": candidates,
         })
 
-    def heartbeat(self, lobby, roster=(), state="open", score=None, xr=False, extra=None, owners=None):
+    def heartbeat(self, lobby, roster=(), state="open", score=None, xr=False, extra=None, owners=None, cpus=None):
         body = {"roster": list(roster), "state": state, "xr": xr}
+        if cpus is not None:
+            body["cpus"] = list(cpus)  # the CSS's CPU doors: {port, level, ckind}
         if extra is not None:
             body["extra"] = list(extra)  # ports machines' other pads hold
         if owners is not None:

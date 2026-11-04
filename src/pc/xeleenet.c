@@ -336,6 +336,12 @@ static void parse_players(const PcSlippiJson* list, PcXnListing* x) {
         }
         s->port = (uint8_t)port;
         s->extra = pc_slippi_json_bool(pc_slippi_json_get(p, "extra"), false);
+        s->cpu = pc_slippi_json_bool(pc_slippi_json_get(p, "cpu"), false);
+        if (s->cpu) {
+            const int ck = pc_slippi_json_int(pc_slippi_json_get(p, "ckind"), -1);
+            s->level = (uint8_t)pc_slippi_json_int(pc_slippi_json_get(p, "level"), 1);
+            s->ckind = ck >= 0 && ck < 26 ? (uint8_t)ck : 0xFF;
+        }
         s->owner = (uint8_t)(pc_slippi_json_int(pc_slippi_json_get(p, "owner"), 0) & 3);
         s->xr = pc_slippi_json_bool(pc_slippi_json_get(p, "xr"), false);
         str_of(p, "name", s->name, sizeof s->name);

@@ -380,6 +380,7 @@ xeleenet:
       ctf: CTF
     in_game: IN GAME
     xr: XR
+    cpus: "+{n} CPU"                 # beside "2/4": CPUs keep seats warm (docs/xeleenet-cpus-plan.md)
     stocks: "{n} stocks"
     ctf_caps: "First to {n} caps"
     time: Time
@@ -410,6 +411,8 @@ xeleenet:
     open_seat: Open seat
     pad_seat: "{name} {n}"           # another pad of that player's machine, as the CSS names it
     other_pad: Another controller    # ...when the player isn't known
+    cpu: "CPU {n}"                   # a CPU's seat, {n} its level: a joiner takes it
+    cpu_open: OPEN
     off_label: "Off:"                # before the stages that are off, dimmed
     "off": "Off: {names}"            # under the fighters: the shorter side
     only: "Only: {names}"
@@ -623,6 +626,7 @@ xeleenet:
     editing: Host is changing settings
     tag_editing: "editing…"          # the host's door, on the guests' CSS
     tag_choosing: "choosing…"        # a door whose fighter came off the list
+    tag_open: OPEN                   # a CPU's door: a joiner or a spare controller's START takes it
     dropped: "{name} is off the new list · pick again"
     changed: "Host changed: {what}"
     changed_more: "Host changed: {what}, and {n} more"

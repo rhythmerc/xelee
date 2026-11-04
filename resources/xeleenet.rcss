@@ -100,6 +100,9 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
 .badge.game { color: #f0c226; background-color: #00000000; border: 2px #f0c226; line-height: 24px; }
 .lrow .lt { position: absolute; left: 900px; top: 22px; font-size: 26px; font-weight: 800; color: #fff8e0; }
 .lrow .lc { position: absolute; right: 22px; top: 26px; font-size: 19px; color: #8d8468; }
+/* CPUs keeping seats warm, under the count (docs/xeleenet-cpus-plan.md). */
+.lrow .lcpu { position: absolute; left: 896px; top: 58px; padding: 0 6px; height: 20px; line-height: 20px; font-size: 13px;
+              font-weight: bold; letter-spacing: 1px; color: #e6e2d6; background-color: #4a4740; border-radius: 4px; }
 .lrow.cursor { border: 3px #fff4c4; background-color: #1d180af0; box-shadow: #ffb020e0 0px 0px 16px 3px; padding: 0 21px; }
 .lrow.full { opacity: 0.5; }
 .empty { margin-top: 140px; text-align: center; font-size: 25px; color: #c9b77c; }
@@ -138,6 +141,10 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
 .dseat.open { height: 38px; margin: 4px 0; border: 2px #c9b77c60; border-radius: 6px; }
 .dseat.open .pn { left: 18px; line-height: 34px; color: #8d8468; }
 .dseat.open .nm { left: 60px; line-height: 34px; font-weight: normal; color: #c9b77c; }
+/* A CPU's seat: open to a joiner, with its fighter. */
+.dseat.cpu .nm { color: #d6d3cb; }
+.dseat .tags .badge.open { color: #062210; background-color: #3ddc84; }
+.dseat .tags .fname { display: inline-block; margin-left: 12px; font-size: 21px; line-height: 28px; color: #e7d7a8; }
 
 .dchips { margin-top: 8px; }
 .dchip { display: inline-block; height: 36px; margin: 0 8px 8px 0; padding: 0 10px; font-size: 23px; line-height: 32px;

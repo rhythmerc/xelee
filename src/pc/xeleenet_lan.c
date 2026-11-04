@@ -772,6 +772,16 @@ static void parse_seats(const char* p, PcXnListing* x) {
             p += 11;
             continue;
         }
+        if (p[1] == 'c') { /* a CPU's seat: level, fighter in hex, "-----0" */
+            char hex[3] = {p[3], p[4], '\0'};
+            const unsigned long ck = strtoul(hex, NULL, 16);
+            s->cpu = true;
+            s->level = (uint8_t)(p[2] >= '1' && p[2] <= '9' ? p[2] - '0' : 1);
+            s->ckind = ck < 26 ? (uint8_t)ck : 0xFF;
+            x->nplayers++;
+            p += 11;
+            continue;
+        }
         s->xr = p[1] == '1';
         x->xr |= s->xr;
         copy_str(s->tag, sizeof s->tag, p + 2, 8);

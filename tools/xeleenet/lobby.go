@@ -246,6 +246,16 @@ func (l *Lobby) players() []map[string]any {
 		}
 		out = append(out, map[string]any{"port": q, "extra": true, "owner": owner})
 	}
+	// A CPU keeps its seat warm (docs/xeleenet-cpus-plan.md): open to a joiner.
+	for _, c := range l.Cpus {
+		if !l.held(c.Port) {
+			cpu := map[string]any{"port": c.Port, "cpu": true, "level": c.Level}
+			if c.Ckind >= 0 {
+				cpu["ckind"] = c.Ckind
+			}
+			out = append(out, cpu)
+		}
+	}
 	sort.Slice(out, func(a, b int) bool { return out[a]["port"].(int) < out[b]["port"].(int) })
 	return out
 }

@@ -546,6 +546,16 @@ void sample_seat(PcXnListing& x, int port, const char* name, const char* tag, bo
     s.extra = name[0] == '\0'; // another pad of P1's machine
 }
 
+// A CPU keeping a seat warm (docs/xeleenet-cpus-plan.md).
+void sample_cpu(PcXnListing& x, int port, int level, int ckind) {
+    PcXnSeat& s = x.players[x.nplayers++];
+    s = PcXnSeat{};
+    s.port = static_cast<uint8_t>(port);
+    s.cpu = true;
+    s.level = static_cast<uint8_t>(level);
+    s.ckind = static_cast<uint8_t>(ckind);
+}
+
 // tools/xn_preview.py's details (XeleeNet: 3 of 4, Low tiers, Competitive)
 // and lan-details (full, in a game, a custom stage list, another pad's seat).
 PcXnListing details_sample(bool on_lan) {
@@ -555,6 +565,7 @@ PcXnListing details_sample(bool on_lan) {
         sample_seat(x, 0, "RHYTHM", "K7Q2MPXA", false);
         sample_seat(x, 1, "KOOPA", "Z2RWQ4NE", true);
         sample_seat(x, 2, "WAVEDASH KID", "3MPAT2LA", false);
+        sample_cpu(x, 3, 9, 0x04); // a level 9 Kirby: the seat a joiner takes
         x.fighter_mask = XN_FIGHTERS_LOW, x.stage_mask = kCompetitive;
         return x;
     }
@@ -694,6 +705,7 @@ std::string legend_key(const std::string& button, const char* label) {
 }
 
 void settings_done(bool apply); // the Lobby Settings overlay closes (below)
+std::string fighter_name_of(int ckind); // a fighter's name by CharacterKind (below)
 void s_draft_set(bool host);     // and its draft (below)
 
 // The doors' rectangles in the CSS as Melee lays it out, as fractions of the
@@ -1217,6 +1229,7 @@ struct Screen : Rml::EventListener {
                 PcXnListing ctf = sample("F4LG9T", "Flag runners", "PENNANT", "7CTF", "US", 2, 4, true, false, 4, 10,
                                          false, false, false);
                 ctf.ctf = true, ctf.ctf_caps = 5, ctf.teams = true, ctf.stage_mask = kCtfStages;
+                sample_cpu(ctf, 2, 9, 0x02); // "2/4 +1 CPU" (docs/xeleenet-cpus-plan.md)
                 rows.insert(rows.begin() + 1, ctf);
             }
             others = 2, fetch = 1, fetchedAt = SDL_GetTicks() - 4000;
@@ -1365,8 +1378,11 @@ struct Screen : Rml::EventListener {
                  (x.playing ? "<span class=\"badge game\">" + enc(tr("xeleenet.lobbies.in_game")) + "</span>"
                   : x.xr    ? "<span class=\"badge\">" + enc(tr("xeleenet.lobbies.xr")) + "</span>"
                             : std::string()) +
-                 "</div><div class=\"lt\">" + std::to_string(x.taken) + "/" + std::to_string(x.seats) +
-                 "</div><div class=\"lc\">" + enc(x.country) + "</div></div>";
+                 "</div><div class=\"lt\">" + std::to_string(x.taken) + "/" + std::to_string(x.seats) + "</div>" +
+                 (cpu_count(x) > 0 ? "<div class=\"lcpu\">" + enc(tr("xeleenet.lobbies.cpus", {{"n", cpu_count(x)}})) +
+                                         "</div>"
+                                   : std::string()) +
+                 "<div class=\"lc\">" + enc(x.country) + "</div></div>";
         }
         r += "</div>";
         if (n > kListRows) {
@@ -1393,8 +1409,19 @@ struct Screen : Rml::EventListener {
             browse(); // full lobbies too, while here (the service's next fetch asks)
     }
 
-    // "RHYTHM#K7Q2", or for another pad "RHYTHM 2", as the CSS names it.
+    // The CPUs keeping a lobby's seats warm (docs/xeleenet-cpus-plan.md).
+    static int cpu_count(const PcXnListing& x) {
+        int n = 0;
+        for (int i = 0; i < x.nplayers; i++)
+            n += x.players[i].cpu;
+        return n;
+    }
+
+    // "RHYTHM#K7Q2", or for another pad "RHYTHM 2", as the CSS names it; a
+    // CPU "CPU 9".
     static std::string seat_name(const PcXnListing& x, const PcXnSeat& s) {
+        if (s.cpu)
+            return tr("xeleenet.details.cpu", {{"n", s.level}});
         if (!s.extra)
             return std::string(s.name) + (s.tag[0] ? "#" + std::string(s.tag).substr(0, 4) : "");
         int n = 1;
@@ -1423,15 +1450,14 @@ struct Screen : Rml::EventListener {
     bool details_full() const { return details.taken >= details.seats; }
     bool details_joinable() const { return !details_full() && !detailsGone; }
 
-    // The seat a joiner would get: the lowest port nobody holds.
+    // The seat a joiner would get: an empty one, else the highest-port CPU's
+    // (docs/xeleenet-cpus-plan.md), as the service picks it.
     int details_open_port() const {
-        unsigned held = 1;
+        unsigned held = 1, cpus = 0;
         for (int i = 0; i < details.nplayers; i++)
-            held |= 1u << details.players[i].port;
-        for (int q = 1; q < 4; q++)
-            if (!(held & (1u << q)))
-                return q;
-        return details.taken;
+            (details.players[i].cpu ? cpus : held) |= 1u << details.players[i].port;
+        const int q = pc_xn_seat_port(held, cpus, details.seats);
+        return q > 0 ? q : details.taken;
     }
 
     // The place line: the region, or on LAN the host's address.
@@ -1498,6 +1524,17 @@ struct Screen : Rml::EventListener {
             const std::string pn = "<div class=\"pn\">P" + std::to_string(q + 1) + "</div>";
             if (s == nullptr) {
                 r += "<div class=\"dseat open\">" + pn + "<div class=\"nm\">" + enc(tr("xeleenet.details.open_seat")) +
+                     "</div></div>";
+                continue;
+            }
+            if (s->cpu) {
+                // "P3 · CPU 9 · OPEN · Fox": a CPU keeps the seat warm for a joiner.
+                r += "<div class=\"dseat cpu\"><div class=\"pc\" style=\"background-color: " +
+                     std::string(kPortColor[q]) + ";\"></div>" + pn + "<div class=\"nm\">" + enc(seat_name(x, *s)) +
+                     "</div><div class=\"tags\"><span class=\"badge open\">" + enc(tr("xeleenet.details.cpu_open")) +
+                     "</span>" +
+                     (s->ckind < 0x1A ? "<span class=\"fname\">" + enc(fighter_name_of(s->ckind)) + "</span>"
+                                      : std::string()) +
                      "</div></div>";
                 continue;
             }
@@ -2975,6 +3012,15 @@ struct Banner : Rml::EventListener {
                          enc(tr(adding ? "xeleenet.css.spare_adding" : "xeleenet.css.spare_line")) + "</div>" +
                          (adding ? "" : "<div class=\"sk\" style=\"font-size: " + fmt(9.f * k) + "px;\">START</div>") +
                          "</div>";
+                    continue;
+                }
+                if ((s_css.cpus & bit) && i < seats && !(s_css.humans & bit)) {
+                    // A CPU's door: OPEN over its name box, as a joiner or a
+                    // spare controller's START takes the seat (docs/xeleenet-cpus-plan.md).
+                    r += "<div class=\"door\" style=\"left: " + fmt(x) + "px; top: " + fmt(y) + "px; width: " + fmt(w) +
+                         "px; height: " + fmt(h) + "px;\"><div class=\"tag open\" style=\"bottom: " + fmt(0.1f * w) +
+                         "px; font-size: " + fmt(11.f * k) + "px; height: " + fmt(22.f * k) + "px; line-height: " +
+                         fmt(20.f * k) + "px;\">" + enc(tr("xeleenet.css.tag_open")) + "</div></div>";
                     continue;
                 }
                 if (!(s_css.humans & bit))
