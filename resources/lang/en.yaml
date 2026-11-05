@@ -423,7 +423,7 @@ xeleenet:
         one: "{n} seat open. You'd be P{p}."
         other: "{n} seats open. You'd be P{p}."
       full: Full. It shows because Show full is on.
-      in_game: In a match. Join to wait, and you're seated when they're back on the CSS.
+      in_game: Lobby is in the middle of a match -- Join to wait for the match to complete.
       closed: This lobby closed.
 
   # Join > Enter code (J1).
