@@ -2,43 +2,9 @@ Xelee for Meta Quest 3 / 3S, Android phones and tablets, Windows PCs, Macs, Stea
 
 ## Changelog
 
-### Capture the Flag
-
-A new team mode on Hyrule Temple: grab the other team's flag and bring it back to your base.
-
-- **Offline:** VS Mode › Xelee Melee › Capture the Flag. Red vs blue, any mix of players and CPUs.
-- **Online:** XeleeNet and LAN lobbies can switch between VS and Capture the Flag with the **Mode** bar in Lobby Settings.
-- **Rules:** captures to win (default 5), time limit (default 10:00), whether your own flag must be home to score, flag return time, and whether carriers are slowed.
-- **New CPU behaviors for CTF.** They go after the enemy flag, guard and return their own, throw the flag into their base, and pass to teammates at higher levels. The CPU level (1–9) sets how well they play.
-
-### CPUs in XeleeNet lobbies
-
-- New Lobby Settings row: **CPUs: Off / Host / Anyone** (default Host).
-- Press the button on an empty seat to add a CPU. Set its fighter, level, colour and team the same way as offline.
-- A CPU never keeps a person out: the lobby list shows "+1 CPU", and anyone joining (online, or with a second controller) takes a CPU's seat.
-
-### Netplay
-
-- Fixed a desync in matches with 3 or 4 players.
-- Fixed a desync between Windows and the other platforms.
-- Auto delay now goes by the worst connection between any two players, jitter included, and holds steady through a match.
-- When two guests connect to each other better through the host, Xelee routes them through it automatically.
-- Lobby Settings changes apply about a second sooner.
-- Leaving mid-match now sends everyone back to the character select screen instead of a stuck No Contest.
-- Name tag selection disabled in XeleeNet (unintended feature that crashed sessions. Name is now locked to XeleeNet name as intended)
-- Run rollback snapshots every 3 frames instead of every 1 frame to lighten CPU load in heavy netplay fights
-
-### GameCube adapter
-
-- The official adapter (WUP-028) now works on Windows and Android.
-
-### Headset
-
-- The HUD's top row sits just above the damage row.
-
-### Platforms
-
-- Builds added for MacOS on Intel and Apple Silicon.
+- Notify properly when a lobby is in the middle of a match.
+- Wait for match completion before seating LAN players in a lobby.
+- Reduce frame drops for headset users when playing with peers running under full speed.
 
 ## Installation
 
