@@ -26,6 +26,9 @@ extern void pc_log_line(const char* fmt, ...);
 #define HEARTBEAT_MS 2000          /* the host's, at the CSS */
 #define HEARTBEAT_PLAYING_MS 10000 /* in a game: nobody joins until the CSS, and each beat is billed */
 #define JOIN_RETRIES 10 /* "pending" answers on Ask before joining (XN3) */
+/* A lobby in a game refuses joins ("playing"): ask again this often. Under
+ * the service's 20 joins a minute an address. */
+#define JOIN_GAME_WAIT_MS 6000
 /* The longest reply is a full listing: 50 lobbies of 4 players with long
  * names and custom lists come to about 34 KB (tools/xeleenet/test_service.py
  * checks it fits). A reply cut short doesn't parse, and the list fails. */
@@ -50,6 +53,7 @@ static SDL_Mutex* s_lock;
 static SDL_Thread* s_thread;
 static SDL_AtomicInt s_stop;
 static SDL_AtomicInt s_playing; /* pc_xn_set_playing */
+static SDL_AtomicInt s_game_wait; /* pc_xn_game_wait */
 static PcXnStatus s_status;
 static char s_reason[24], s_error[160];
 static char s_lobby[33], s_lobby_code[8];
@@ -568,16 +572,45 @@ static void put_settings(void) {
         why[0] ? ": " : "", why);
 }
 
+static void wait_ms(int ms);
+
+/* Whether a join's refusal is the lobby's game: the host's game links
+ * nobody until it's back at the CSS, so the service turns joins away. */
+static bool refused_playing(const PcSlippiJson* r, int status) {
+    char reason[16] = "";
+    pc_slippi_json_string(pc_slippi_json_get(r, "reason"), reason, sizeof reason);
+    return status == 409 && strcmp(reason, "playing") == 0;
+}
+
 static bool join(void) {
     char common[512], body[768];
     int status = 0;
     PcSlippiJson* r;
     common_fields(common, sizeof common);
     snprintf(body, sizeof body, "{\"code\":\"%s\",%s}", s_args.code, common);
-    if (!call_auth("/v1/join", body, &status, &r)) {
-        fail("offline", "Couldn't reach XeleeNet");
-        return false;
+    for (;;) {
+        if (!call_auth("/v1/join", body, &status, &r)) {
+            SDL_SetAtomicInt(&s_game_wait, 0);
+            fail("offline", "Couldn't reach XeleeNet");
+            return false;
+        }
+        if (!refused_playing(r, status)) {
+            break;
+        }
+        /* J-6: wait it out on the Joining page's "Game in progress", and
+         * join once the lobby is back at the CSS. */
+        pc_slippi_json_free(r);
+        if (!SDL_GetAtomicInt(&s_game_wait)) {
+            pc_log_line("xeleenet: the lobby is in a game; joining once it's back at the CSS");
+        }
+        SDL_SetAtomicInt(&s_game_wait, 1);
+        wait_ms(JOIN_GAME_WAIT_MS);
+        if (SDL_GetAtomicInt(&s_stop)) {
+            SDL_SetAtomicInt(&s_game_wait, 0);
+            return false;
+        }
     }
+    SDL_SetAtomicInt(&s_game_wait, 0);
     for (int tries = 0;; tries++) {
         char st[16] = "", id[33] = "";
         pc_slippi_json_string(pc_slippi_json_get(r, "status"), st, sizeof st);
@@ -707,6 +740,7 @@ static bool svc_start(const char* url, const PcNetIdentity* id, const char* name
     SDL_UnlockMutex(s_lock);
     SDL_SetAtomicInt(&s_stop, 0);
     SDL_SetAtomicInt(&s_playing, 0);
+    SDL_SetAtomicInt(&s_game_wait, 0);
     s_thread = SDL_CreateThread(thread_main, "xeleenet", NULL);
     if (s_thread == NULL) {
         fail("thread", "Couldn't start the XeleeNet thread");
@@ -1009,6 +1043,10 @@ void pc_xn_set_playing(bool playing) {
 
 bool pc_xn_playing(void) {
     return SDL_GetAtomicInt(&s_playing) != 0;
+}
+
+bool pc_xn_game_wait(void) {
+    return s_xn_net == PC_XN_NET_SERVICE && SDL_GetAtomicInt(&s_game_wait) != 0;
 }
 
 void pc_xn_exit(void) {

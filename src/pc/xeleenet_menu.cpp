@@ -1733,9 +1733,11 @@ struct Screen : Rml::EventListener {
         view(&v);
         const int at = v.phase == PC_XN_PUNCH_SERVICE ? 0 : v.phase == PC_XN_PUNCH_LOBBY ? 1 : 2;
         PcXnListing info;
-        const bool playing = s_preview == "progress" ||
+        // The service turning the join away until the lobby's game ends (J-6).
+        const bool waiting = pc_xn_game_wait();
+        const bool playing = s_preview == "progress" || waiting ||
                              (pc_xn_lobby_info(&info) && info.playing && at == 1 && v.nplayers > 1 && v.players[0].linked);
-        std::string r = track(playing ? 2 : at, false);
+        std::string r = track(waiting ? 1 : playing ? 2 : at, false);
         r += "<div id=\"lobbycard\">";
         if (playing) {
             r += "<div class=\"head\">" + enc(tr("xeleenet.joining.in_progress")) + "</div><div class=\"rules\">" +
@@ -1744,6 +1746,9 @@ struct Screen : Rml::EventListener {
             for (int i = 0; i < v.nplayers; i++)
                 if (!v.players[i].local)
                     names += (names.empty() ? "" : ", ") + std::string(v.players[i].name);
+            for (int i = 0; waiting && joiningKnown && i < joining.nplayers; i++)
+                if (joining.players[i].name[0])
+                    names += (names.empty() ? "" : ", ") + std::string(joining.players[i].name);
             r += "<div class=\"text\">" + enc(names) + "</div><div class=\"fine\">" +
                  enc(tr("xeleenet.joining.seated_later")) + "</div>";
         } else {
@@ -2315,8 +2320,9 @@ struct Screen : Rml::EventListener {
             PcXnPunchView v;
             view(&v);
             const int n = std::max(0, v.nplayers - 1);
-            hintText = n > 0 ? tr("xeleenet.joining.hints.connecting", {{"n", n}})
-                             : tr("xeleenet.joining.hints.finding");
+            hintText = pc_xn_game_wait() ? tr("xeleenet.joining.hints.game")
+                       : n > 0           ? tr("xeleenet.joining.hints.connecting", {{"n", n}})
+                                         : tr("xeleenet.joining.hints.finding");
         } else if (page == Page::Failed) {
             hintText = tr("xeleenet.failed.hint");
         } else if (page == Page::Details) {

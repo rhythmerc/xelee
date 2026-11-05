@@ -131,9 +131,13 @@ unsigned pc_xn_cpus(uint8_t level[4], uint8_t ckind[4]);
 /* Leave the lobby (a host closes it) and stop the thread. */
 void pc_xn_stop(void);
 /* A game is running (VS to the results) or not: the host's heartbeat says so
- * (the browser's "in game") and slows down meanwhile. LAN has no heartbeat. */
+ * (the browser's "in game", and the service holds joins) and slows down
+ * meanwhile. LAN has no heartbeat. */
 void pc_xn_set_playing(bool playing);
 bool pc_xn_playing(void);
+/* A join waiting out the lobby's game (J-6): the service refuses joins while
+ * the host plays, and the join asks again until it's back at the CSS. */
+bool pc_xn_game_wait(void);
 /* The app is closing: a LAN lobby says goodbye (the host's announcement, a
  * guest's LEAVE) at once. The service's lobby is left to its own timeouts, as
  * a lost connection would be. */
