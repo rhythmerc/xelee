@@ -423,7 +423,7 @@ xeleenet:
         one: "{n} seat open. You'd be P{p}."
         other: "{n} seats open. You'd be P{p}."
       full: Full. It shows because Show full is on.
-      in_game: In a game. Join, and you're seated when they're back on the CSS.
+      in_game: In a match. Join to wait, and you're seated when they're back on the CSS.
       closed: This lobby closed.
 
   # Join > Enter code (J1).
@@ -443,7 +443,7 @@ xeleenet:
       connect: CONNECT
       lobby: LOBBY
     lobby: Lobby {code}              # a lobby known only by its code
-    in_progress: Game in progress
+    in_progress: Waiting for match to complete   # a lobby in a game (J-6), the card's title
     seated_later: You'll be seated when they're back on the CSS.
     players:
       you: you
@@ -458,7 +458,7 @@ xeleenet:
         one: Connecting to {n} player...
         other: Connecting to {n} players...
       finding: Finding the lobby...
-      game: Waiting for their game to end...   # the lobby is in a game (J-6)
+      game: Their match is still going...   # the lobby is in a game (J-6)
 
   # A lobby's rules in a line, "Doubles · 4 stocks · 8:00": the joining
   # card and the CSS banner.

@@ -54,6 +54,7 @@ static SDL_Thread* s_thread;
 static SDL_AtomicInt s_stop;
 static SDL_AtomicInt s_playing; /* pc_xn_set_playing */
 static SDL_AtomicInt s_game_wait; /* pc_xn_game_wait */
+static int s_beat_playing; /* the thread's: the state its last heartbeat sent */
 static PcXnStatus s_status;
 static char s_reason[24], s_error[160];
 static char s_lobby[33], s_lobby_code[8];
@@ -479,8 +480,9 @@ static bool heartbeat(void) {
     char body[640], path[96];
     int status = 0;
     PcSlippiJson* r;
+    s_beat_playing = SDL_GetAtomicInt(&s_playing);
     size_t o = (size_t)snprintf(body, sizeof body, "{\"state\":\"%s\",\"xr\":%s,\"roster\":[",
-                                SDL_GetAtomicInt(&s_playing) ? "playing" : "open",
+                                s_beat_playing ? "playing" : "open",
                                 pc_xr_presenting() ? "true" : "false");
     SDL_LockMutex(s_lock);
     for (int i = 0; i < s_nroster; i++) {
@@ -597,8 +599,8 @@ static bool join(void) {
         if (!refused_playing(r, status)) {
             break;
         }
-        /* J-6: wait it out on the Joining page's "Game in progress", and
-         * join once the lobby is back at the CSS. */
+        /* J-6: wait it out on the Joining page's "Waiting for match to
+         * complete" card, and join once the lobby is back at the CSS. */
         pc_slippi_json_free(r);
         if (!SDL_GetAtomicInt(&s_game_wait)) {
             pc_log_line("xeleenet: the lobby is in a game; joining once it's back at the CSS");
@@ -660,9 +662,11 @@ static void wait_ms(int ms) {
 /* Until the host's next heartbeat. In a game, every HEARTBEAT_PLAYING_MS,
  * unless a member the service lists isn't linked yet (one who joined during
  * the game: the host learns of them from a beat, then has the service's
- * roster grace to reach them). The game starting or ending beats at once. */
+ * roster grace to reach them). The game starting or ending beats at once:
+ * against the state the last beat sent, so a change while that beat was on
+ * its way (or the settings were) isn't left for the next timer. */
 static void wait_beat(void) {
-    const int playing = SDL_GetAtomicInt(&s_playing);
+    const int playing = s_beat_playing;
     SDL_LockMutex(s_lock);
     const bool linking = s_nmembers > s_nroster;
     SDL_UnlockMutex(s_lock);
@@ -741,6 +745,7 @@ static bool svc_start(const char* url, const PcNetIdentity* id, const char* name
     SDL_SetAtomicInt(&s_stop, 0);
     SDL_SetAtomicInt(&s_playing, 0);
     SDL_SetAtomicInt(&s_game_wait, 0);
+    s_beat_playing = 0; /* a new lobby is open */
     s_thread = SDL_CreateThread(thread_main, "xeleenet", NULL);
     if (s_thread == NULL) {
         fail("thread", "Couldn't start the XeleeNet thread");

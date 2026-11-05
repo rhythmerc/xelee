@@ -174,7 +174,7 @@ but not scheduled.
 | J-3 | Sorted by region closeness to us, then by newest. A refresh button, plus auto-refresh every 10 s while open. | v1 |
 | J-4 | **Join with Code** types the code on the Name Entry keyboard (capitals and digits). Also reachable from Browse (Y). | v1 |
 | J-5 | Joining shows its steps (Find · Connect · Lobby) and names each failure: code not found, lobby full, closed, version mismatch, declined by host, couldn't connect. | v1 |
-| J-6 | Joining a lobby whose game is running waits on a "Game in progress" screen until the game ends, then seats you at the CSS. | v1 |
+| J-6 | Joining a lobby whose game is running waits on a "Waiting for match to complete" card until the game ends, then seats you at the CSS. | v1 |
 | J-7 | A measured ping per listed lobby. | later |
 | J-8 | Invite a recent player (a Recent tab). | later |
 
@@ -453,8 +453,9 @@ at an agreed frame**:
 A joiner who arrives during a game (J-6) waits, and is seated by the roster
 reload when everyone is back at the CSS. The host's game links newcomers only
 in the CSS (it polls its punch there), so the service refuses a join with
-`playing` while the host's heartbeat says playing; the game asks again every
-6 s on the Joining page's "Game in progress" card. (Before 2026-11-04 the
+`playing` while the host's heartbeat says playing (from leaving the CSS to
+coming back to it, beaten at once on each change); the game asks again every
+6 s on the Joining page's "Waiting for match to complete" card. (Before 2026-11-04 the
 service seated such a joiner, which then timed out reaching the host, shown as
 "Couldn't reach the host".)
 

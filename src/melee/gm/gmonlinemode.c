@@ -681,6 +681,13 @@ void onExitCss(GameModeState* state)
         gm_SetNextGameModeStateId(state_lobby);
         return;
     }
+    if (online_kind == ONLINE_KIND_XN) {
+        /* In a game from here to the CSS again (onEnterCss): the stage
+         * select, placement, the splash, the match and the results. The
+         * host's game links newcomers only in the CSS, so the service holds
+         * joins meanwhile (J-6); the heartbeat says so at once. */
+        pc_xn_set_playing(true);
+    }
 #endif
     gmVsMelee_ExitCss(state, &online_vs);
 }

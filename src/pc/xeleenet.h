@@ -130,7 +130,8 @@ void pc_xn_set_cpus(unsigned mask, const uint8_t level[4], const uint8_t ckind[4
 unsigned pc_xn_cpus(uint8_t level[4], uint8_t ckind[4]);
 /* Leave the lobby (a host closes it) and stop the thread. */
 void pc_xn_stop(void);
-/* A game is running (VS to the results) or not: the host's heartbeat says so
+/* A game is running (the CSS left for the stage select, up to the CSS
+ * again) or not: the host's heartbeat says so at once
  * (the browser's "in game", and the service holds joins) and slows down
  * meanwhile. LAN has no heartbeat. */
 void pc_xn_set_playing(bool playing);
