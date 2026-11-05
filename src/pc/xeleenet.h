@@ -136,8 +136,9 @@ void pc_xn_stop(void);
  * meanwhile. LAN has no heartbeat. */
 void pc_xn_set_playing(bool playing);
 bool pc_xn_playing(void);
-/* A join waiting out the lobby's game (J-6): the service refuses joins while
- * the host plays, and the join asks again until it's back at the CSS. */
+/* A join waiting out the lobby's game (J-6): the service, or a LAN host,
+ * refuses joins while the host plays, and the join asks again until it's
+ * back at the CSS. */
 bool pc_xn_game_wait(void);
 /* The app is closing: a LAN lobby says goodbye (the host's announcement, a
  * guest's LEAVE) at once. The service's lobby is left to its own timeouts, as

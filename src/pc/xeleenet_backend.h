@@ -24,6 +24,10 @@ typedef struct PcXnBackend {
     int (*browse_poll)(PcXnListing* out, int max, int* n, int* others);
 } PcXnBackend;
 
+/* A join waiting out the lobby's game (pc_xn_game_wait), set by the network
+ * the join is on: the service's "playing" refusal, or a LAN host's. */
+void pc_xn_set_game_wait(bool waiting);
+
 /* A lobby's settings summary (the service's settings object, JSON) into a
  * listing's fields: what the LAN lobby's announcement and welcome carry. */
 bool pc_xn_listing_settings(const char* json, PcXnListing* x);

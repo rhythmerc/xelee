@@ -109,6 +109,14 @@ Built as planned, with these specifics:
 - **Messages:** JOIN, WELCOME and LEAVE are signed with the player's key.
   REFUSE gives `full`, `version` or `not_found`. A guest sends JOIN every
   300 ms and gives up after 6 s.
+- **A lobby in a game** (J-6, since 2026-11-05): the host's game links
+  newcomers only in the CSS, so from leaving the CSS until it's back there
+  (`pc_xn_playing`, announced at once as `g=1`) it REFUSEs `playing` to a
+  joiner whose JOIN sets `J_WAITS` (bit 1 of `reserved[0]`). That joiner
+  shows "Waiting for match to complete" and sends JOIN every 2 s until it's
+  seated. A JOIN without the bit (v0.4.0) is seated as before; an older host
+  ignores the bit. Different builds never meet anyway: JOIN's `rev` must
+  match the host's exactly (`version`).
 - **Joining:** by the listed code (the first 6 hex characters of the lobby
   id) or by `@address[:port]`. The punch's code field grew to 64 characters
   for the address form.

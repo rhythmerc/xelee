@@ -39,6 +39,7 @@ extern void pc_log_line(const char* fmt, ...);
 #define LOBBY_PORT 42424        /* a host's lobby socket, so an address alone finds it */
 #define JOIN_RESEND_MS 300
 #define JOIN_WAIT_MS 6000       /* no answer by then: nobody's hosting there */
+#define JOIN_GAME_MS 2000       /* a lobby in a game ("playing"): ask again this often */
 #define FIND_WAIT_MS 4000       /* a listed lobby's announcement, when we haven't one yet */
 #define ROSTER_GRACE_MS 20000   /* a member the host's game doesn't link to by then has gone */
 #define BROWSE_KEEP_MS 15000    /* browsing goes on this long after the list last asked */
@@ -47,6 +48,10 @@ extern void pc_log_line(const char* fmt, ...);
 /* ---- wire: byte arrays only, so no packing or byte order matters ---------- */
 
 enum { L_JOIN = 'J', L_WELCOME = 'W', L_REFUSE = 'X', L_LEAVE = 'L' };
+/* LJoin.reserved[0]'s bits. J_WAITS: the joiner waits out a game on a
+ * "playing" refusal (J-6); one without it (v0.4.0) is seated as it always
+ * was, and an older host ignores the bit. */
+enum { J_XR = 1, J_WAITS = 2 };
 
 typedef struct LHead {
     uint8_t magic[3]; /* "XNL" */
@@ -61,7 +66,7 @@ typedef struct LJoin {
     uint8_t nonce[8]; /* the WELCOME or REFUSE echoes it */
     char name[16], tag[12];
     char rev[48], disc[12];
-    uint8_t proto, ncands, reserved[2];
+    uint8_t proto, ncands, reserved[2]; /* reserved[0]: J_XR | J_WAITS */
     uint8_t lobby[16]; /* the lobby it saw listed; all zero: whichever is here */
     uint8_t cands[PC_XN_CANDS][6];
     uint8_t sig[64];
@@ -431,6 +436,14 @@ static void on_join(const LJoin* j, const struct sockaddr_in* from) {
             refuse(from, j->nonce, "full");
             return;
         }
+        if (pc_xn_playing() && (j->reserved[0] & J_WAITS)) {
+            /* Our game links newcomers only in the CSS (its punch runs
+             * there): a seat now would time out reaching us. The joiner
+             * asks again until we're back (J-6), as the service has it. */
+            SDL_UnlockMutex(s_lock);
+            refuse(from, j->nonce, "playing");
+            return;
+        }
         /* An empty seat first, else the highest-port CPU's: that CPU leaves at
          * the join's session (docs/xeleenet-cpus-plan.md). */
         unsigned taken = 1u | s_extra;
@@ -452,7 +465,7 @@ static void on_join(const LJoin* j, const struct sockaddr_in* from) {
         copy_str(m->name, sizeof m->name, j->name, sizeof j->name);
         copy_str(m->tag, sizeof m->tag, j->tag, sizeof j->tag);
         m->port = port;
-        m->xr = (j->reserved[0] & 1) != 0;
+        m->xr = (j->reserved[0] & J_XR) != 0;
         m->ncands = j->ncands < PC_XN_CANDS ? j->ncands : PC_XN_CANDS;
         for (int c = 0; c < m->ncands; c++) {
             get_cand(j->cands[c], &m->ip[c], &m->udp[c]);
@@ -624,7 +637,8 @@ static void join_fill(LJoin* j, const uint8_t lobby[16], const uint8_t nonce[8])
     snprintf(j->disc, sizeof j->disc, "%s", pc_net_disc_id());
     j->proto = PC_NET_PROTO_VERSION;
     j->ncands = (uint8_t)s_args.ncands;
-    j->reserved[0] = pc_xr_presenting() ? 1 : 0; /* bit 0: in a headset, for the list's XR tag */
+    /* In a headset (the list's XR tag), and we wait out a game. */
+    j->reserved[0] = (uint8_t)((pc_xr_presenting() ? J_XR : 0) | J_WAITS);
     memcpy(j->lobby, lobby, 16);
     for (int c = 0; c < s_args.ncands; c++) {
         put_cand(j->cands[c], s_args.ip[c], s_args.udp[c]);
@@ -697,8 +711,9 @@ static bool guest_join(void) {
     pc_identity_random(nonce, sizeof nonce);
     LJoin j;
     join_fill(&j, lobby, nonce);
-    const uint64_t until = now_ms() + JOIN_WAIT_MS;
+    uint64_t until = now_ms() + JOIN_WAIT_MS;
     uint64_t next = 0;
+    bool waiting = false;
     while (now_ms() < until && !SDL_GetAtomicInt(&s_stop)) {
         if (now_ms() >= next) {
             send_to(&j, sizeof j, &to);
@@ -717,6 +732,19 @@ static bool guest_join(void) {
             {
                 char reason[17];
                 copy_str(reason, sizeof reason, ((const LRefuse*)buf)->reason, 16);
+                if (strcmp(reason, "playing") == 0) {
+                    /* J-6: the Joining page's "Waiting for match to
+                     * complete" until the host's back at the CSS. */
+                    if (!waiting) {
+                        pc_log_line("xeleenet: the lobby is in a game; joining once it's back at the CSS");
+                        waiting = true;
+                        pc_xn_set_game_wait(true);
+                    }
+                    until = now_ms() + JOIN_GAME_MS + JOIN_WAIT_MS; /* while it answers */
+                    next = now_ms() + JOIN_GAME_MS;
+                    continue;
+                }
+                pc_xn_set_game_wait(false);
                 set_failed(reason, strcmp(reason, "full") == 0      ? "The lobby is full" :
                                    strcmp(reason, "version") == 0   ? "The lobby is on another Xelee version" :
                                                                       "That lobby isn't on this network any more");
@@ -730,6 +758,7 @@ static bool guest_join(void) {
                                 pc_identity_verify(w->m[i].key, w->sig, w, offsetof(LWelcome, sig));
                 }
                 if (memcmp(w->nonce, nonce, 8) == 0 && host_key && w->port >= 1 && w->port <= 3) {
+                    pc_xn_set_game_wait(false);
                     on_welcome(w);
                     return true;
                 }
@@ -737,6 +766,7 @@ static bool guest_join(void) {
         }
         SDL_Delay(TICK_MS);
     }
+    pc_xn_set_game_wait(false);
     set_failed("offline", "No lobby answered there");
     return false;
 }
@@ -876,6 +906,7 @@ static int thread_main(void* unused) {
         mode = M_OFF;
     }
     uint64_t announced = now_ms();
+    bool playing_announced = pc_xn_playing();
     while (!SDL_GetAtomicInt(&s_stop)) {
         SDL_LockMutex(s_lock);
         const bool browsing = s_browse_asked != 0 && now_ms() - s_browse_asked < BROWSE_KEEP_MS;
@@ -899,9 +930,12 @@ static int thread_main(void* unused) {
             SDL_LockMutex(s_lock);
             const bool changed = s_opts.announce;
             SDL_UnlockMutex(s_lock);
-            if (changed || now_ms() - announced > 3000) {
+            /* "In a game" (`g`) goes out at once: the list's IN GAME. */
+            const bool playing = pc_xn_playing();
+            if (changed || playing != playing_announced || now_ms() - announced > 3000) {
                 host_announce(); /* the settings may have changed (the CSS's own) */
                 announced = now_ms();
+                playing_announced = playing;
             }
         }
         if (mode == M_HOST || browsing) {
@@ -979,6 +1013,7 @@ static bool lan_start(const char* url, const PcNetIdentity* id, const char* name
     s_nmembers = s_nroster = 0;
     s_info_known = false;
     SDL_UnlockMutex(s_lock);
+    pc_xn_set_game_wait(false);
     if (!run_thread()) {
         set_failed("thread", "Couldn't start the LAN lobby");
     }

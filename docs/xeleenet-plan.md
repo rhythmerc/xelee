@@ -457,7 +457,8 @@ in the CSS (it polls its punch there), so the service refuses a join with
 coming back to it, beaten at once on each change); the game asks again every
 6 s on the Joining page's "Waiting for match to complete" card. (Before 2026-11-04 the
 service seated such a joiner, which then timed out reaching the host, shown as
-"Couldn't reach the host".)
+"Couldn't reach the host".) A LAN host's game refuses the same way, and its
+joiner asks again every 2 s (docs/lan-lobbies-plan.md).
 
 ### 3.5a Stage placement before each match
 

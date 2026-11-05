@@ -1051,7 +1051,11 @@ bool pc_xn_playing(void) {
 }
 
 bool pc_xn_game_wait(void) {
-    return s_xn_net == PC_XN_NET_SERVICE && SDL_GetAtomicInt(&s_game_wait) != 0;
+    return SDL_GetAtomicInt(&s_game_wait) != 0;
+}
+
+void pc_xn_set_game_wait(bool waiting) {
+    SDL_SetAtomicInt(&s_game_wait, waiting ? 1 : 0);
 }
 
 void pc_xn_exit(void) {
