@@ -121,7 +121,8 @@ button.gold.cursor { border-color: #fff4c4; background-color: #ffd84a; box-shado
 #dtop.cursor { border: 3px #fff4c4; background-color: #1d180af0; box-shadow: #ffb020e0 0px 0px 16px 3px; padding: 0 19px; }
 #dtop .dl1 { position: absolute; left: 20px; top: 6px; width: 1020px; height: 48px; }
 #dtop .dn { display: inline-block; font-size: 38px; font-weight: 800; color: #ffffff; }
-#dtop .badge { margin-left: 16px; vertical-align: middle; }
+/* Centred on the name's capitals: "middle" centres on the row's x-height, which sits low beside a 38px name. */
+#dtop .badge { margin-left: 16px; vertical-align: middle; position: relative; top: -12px; }
 #dtop .badge.gone { color: #ff8a5c; background-color: #00000000; border: 2px #ff8a5c; line-height: 24px; }
 #dtop .dplace { position: absolute; right: 0; top: 10px; font-size: 23px; font-weight: bold; color: #fff8e0; }
 #dtop .dpl { display: inline; margin-right: 22px; font-weight: normal; color: #8d8468; }
