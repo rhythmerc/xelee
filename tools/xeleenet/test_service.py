@@ -192,6 +192,27 @@ def run(url):
     check(any(x["code"] == code for x in e.list(full=True)["lobbies"]), "Show full brings it back")
     refused(lambda: a.join(code, ["198.51.100.1:41000"]), "own_lobby", "the host joining their own lobby")
 
+    print("-- a game in progress (J-6)")
+    gh, gp, gl = player("GAMEHOST"), player("GAMEP2"), player("GAMELATE")
+    r = gh.host("In a game", ["198.51.100.30:41000"], settings=four)
+    g_lobby, g_code = r["id"], r["code"]
+    gp.join(g_code, ["203.0.113.30:41000"])
+    gh.heartbeat(g_lobby, roster=[gp.pubkey], state="playing")
+    row = [x for x in gl.list()["lobbies"] if x["code"] == g_code]
+    check(row and row[0]["state"] == "playing", "the browser lists a lobby in a game as playing")
+    err = refused(lambda: gl.join(g_code, ["203.0.113.31:41000"]), "playing", "a join while the lobby plays")
+    # A v0.4.0 game shows an unknown reason's error as is, except one naming
+    # the host, which it takes for "Couldn't reach the host".
+    check(err is not None and "host" not in err.body.get("error", "").lower(),
+          "the playing refusal never names the host")
+    hb = gh.heartbeat(g_lobby, roster=[gp.pubkey], state="playing")
+    check([m["name"] for m in hb["members"]] == ["GAMEP2"], "the refused joiner never took a seat")
+    check(gp.join(g_code, ["203.0.113.30:41001"])["status"] == "joined", "a member joining again mid-game keeps its seat")
+    gh.heartbeat(g_lobby, roster=[gp.pubkey], state="open")
+    r = gl.join(g_code, ["203.0.113.31:41000"])
+    check(r["status"] == "joined" and r["port"] == 2, "back at the CSS, the same join seats them")
+    gh.close(g_lobby)
+
     print("-- the fighter list")
     refused(lambda: a.settings(lobby, "Friday netplay", dict(four, fighter_list="top")),
             "bad_settings", "a fighter list that doesn't exist")

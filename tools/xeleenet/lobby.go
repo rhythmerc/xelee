@@ -439,6 +439,15 @@ func (s *Service) join(l *Lobby, j Joiner) (answer, *pending) {
 	if l.taken() >= l.Settings.Seats {
 		return refused(refuse(409, "full", "The lobby is full")), nil
 	}
+	if l.State == "playing" {
+		// The host's game links nobody new until it's back at the CSS (it
+		// polls its punch only there), so a seat now would only time out
+		// reaching it: "Couldn't reach the host". The game asks again until
+		// the lobby isn't playing (J-6). The words keep clear of "host": a
+		// v0.4.0 game shows an unknown reason's error as is, unless it
+		// names the host.
+		return refused(refuse(409, "playing", "That lobby is in a game. Join once it's back at the character select")), nil
+	}
 	if !l.Ask {
 		return s.seat(l, j), nil
 	}

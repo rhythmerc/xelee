@@ -450,8 +450,13 @@ at an agreed frame**:
    on the last frame they hold of the dropped player.
 6. **The host dropping** closes the lobby (host migration is later).
 
-A joiner who arrives during a game (J-6) has its links set up, waits, and is
-seated by the roster reload when everyone is back at the CSS.
+A joiner who arrives during a game (J-6) waits, and is seated by the roster
+reload when everyone is back at the CSS. The host's game links newcomers only
+in the CSS (it polls its punch there), so the service refuses a join with
+`playing` while the host's heartbeat says playing; the game asks again every
+6 s on the Joining page's "Game in progress" card. (Before 2026-11-04 the
+service seated such a joiner, which then timed out reaching the host, shown as
+"Couldn't reach the host".)
 
 ### 3.5a Stage placement before each match
 

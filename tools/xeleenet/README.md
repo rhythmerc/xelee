@@ -38,7 +38,8 @@ close them. Hosts get a fresh heartbeat window when the service comes back.
 | `GET /healthz` | monitoring | `ok` |
 
 A refusal is `{"error", "reason"}`. The `reason` is a stable word for the game
-to switch on: `not_found`, `closed`, `full`, `version`, `banned`, `declined`,
+to switch on: `not_found`, `closed`, `full`, `playing` (the lobby is in a
+game; ask again), `version`, `banned`, `declined`,
 `seats`, `bad_name`, `bad_settings`, `rate_limited`, `unauthorized`, …. The
 `error` is a line the game can show as is.
 
