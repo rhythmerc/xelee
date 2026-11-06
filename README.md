@@ -10,8 +10,9 @@ is GPL-3.0-or-later. Details under [License](#license).
 
 ## Features
 
-- Every stage and mode has been tweaked for mixed reality
-- **Full Slippi support**, with Unranked and Direct modes included at launch
+- Every stage and mode has been tweaked for mixed reality (Quest 3/3S builds)
+- **Lobby-based online multiplayer** with XeleeNet
+- **Slippi cross-play** with Unranked and Direct
 - **Touch controller support**, with rumble
 - **External gamepad support**, with rumble 
 - **Hand tracking** for placing, turning and scaling the stage
