@@ -1,6 +1,6 @@
 # Xelee
 
-An independent expansion of Melee featuring XeleeNet (online rollback multiplayer with customizable 2-4 player lobbies!) and full mixed reality support on Quest 3/Quest 3S.
+An independent expansion of Melee featuring XeleeNet (online rollback multiplayer with customizable 2-4 player lobbies!), builds for Windows/MacOS/Linux/Android, and full mixed reality support on Quest 3/Quest 3S.
 
 You need your own disc image. **No game data ships here.** The decompiled game
 code is not licensed and is not relicensed by this project; only the port code
