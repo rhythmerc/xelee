@@ -87,7 +87,8 @@ needs no newer glibc than the runtime's (2.31; the script checks), with GCC
 no updater). On an x86_64 machine it runs the SDK's container under QEMU
 (binfmt_misc): a first build takes a few hours, mostly Dawn; later ones reuse
 `build/frame-ccache`. CI builds it natively on an arm64 runner
-(`.github/workflows/steam-frame.yml`).
+(`.github/workflows/build.yml`'s steam-frame job; a release carries
+the package).
 
 Steam Audio ships no linux-arm64 library: the script builds one from its
 source (`tools/build_steam_audio.sh`, the release's tag; its CMake supports
