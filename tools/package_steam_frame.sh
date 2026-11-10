@@ -40,9 +40,11 @@ export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-6G}"
 MELEE_DAWN_REPO="${MELEE_DAWN_REPO:-https://github.com/rhythmerc/dawn.git}"
 MELEE_DAWN_REF="${MELEE_DAWN_REF:-$(sed -n 's/.*MELEE_DAWN_REF:-\([0-9a-f]*\)}.*/\1/p' "${SCRIPT_DIR}/build_android.sh")}"
 MELEE_DAWN_SOURCE="${MELEE_DAWN_SOURCE:-${ROOT_DIR}/build/dawn-src}"
-if [[ ! -d "${MELEE_DAWN_SOURCE}/.git" ]]; then
+# Fetched again when the pin moves (a checkout of another commit built the
+# wrong Dawn without a word).
+if [[ "$(git -C "${MELEE_DAWN_SOURCE}" rev-parse HEAD 2>/dev/null)" != "${MELEE_DAWN_REF}" ]]; then
     echo "=== Fetching Dawn (${MELEE_DAWN_REPO} @ ${MELEE_DAWN_REF}) ==="
-    git init -q "${MELEE_DAWN_SOURCE}"
+    [[ -d "${MELEE_DAWN_SOURCE}/.git" ]] || git init -q "${MELEE_DAWN_SOURCE}"
     git -C "${MELEE_DAWN_SOURCE}" fetch -q --depth 1 "${MELEE_DAWN_REPO}" "${MELEE_DAWN_REF}"
     git -C "${MELEE_DAWN_SOURCE}" checkout -q FETCH_HEAD
     (cd "${MELEE_DAWN_SOURCE}" && python3 tools/fetch_dawn_dependencies.py)
