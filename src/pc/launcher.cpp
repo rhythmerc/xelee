@@ -1494,6 +1494,8 @@ public:
 #ifdef MELEE_STEAM_FRAME
         if (auto* e = element("spacewarp-row"))  // SteamVR runs it unsteadily: off there
             e->SetProperty("display", "none");
+        if (auto* e = element("lighting-row"))  // Roomtone needs the Quest's camera access
+            e->SetProperty("display", "none");
 #endif
 #ifndef MELEE_SPATIAL_AUDIO
         if (auto* e = element("spatial-row"))  // built without Steam Audio
@@ -2050,6 +2052,9 @@ extern "C" void pc_launcher_configure(AuroraConfig* config) {
     config->xrFoveation = prefs.xr_foveation;
     config->xrNoStageShadow = !prefs.xr_shadow;
     config->xrRoomLight = prefs.xr_lighting;
+#ifdef MELEE_STEAM_FRAME
+    config->xrRoomLight = 0; // Roomtone needs the Quest's camera access (the row is hidden)
+#endif
     config->maxTextureAnisotropy = prefs.anisotropy;
     if (!std::getenv("MELEE_VSYNC"))
         config->vsync = prefs.vsync;
