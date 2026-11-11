@@ -502,4 +502,5 @@ jobs:
             artifacts/Xelee-x86_64.AppImage \
             artifacts/xelee-linux-x86_64.tar.gz \
             artifacts/Xelee-SteamFrame-arm64.tar.gz \
+            platforms/steam-frame/Install-Xelee.desktop \
             artifacts/Xelee-macOS-*.zip

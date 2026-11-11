@@ -30,6 +30,18 @@ a target of this build, but the same presenter handles it.
 
 ## Installing
 
+The quick way: on the headset, download `Install-Xelee.desktop` from the
+newest release and open it. A terminal shows it fetch the newest release's
+package into `~/Applications/xelee` (logs and `melee-env.txt` kept), add
+Xelee to Steam's library the first time (Steam closes and starts again), and
+say so; opened again, it updates, or says it's up to date. It runs
+`platforms/steam-frame/install.sh` from main, which also works from a shell:
+`curl -fsSL https://raw.githubusercontent.com/rhythmerc/xelee/main/platforms/steam-frame/install.sh | bash`.
+Then put your disc image in `~/Games` or `~/Downloads` and keep the display at
+120 Hz (steps 3 and 5 below).
+
+By hand:
+
 1. In the headset's settings, turn on Developer Mode if you want to deploy
    test builds over SSH (below); playing doesn't need it.
 2. Unpack `Xelee-SteamFrame-arm64.tar.gz` (CI artifact, or built as below)
