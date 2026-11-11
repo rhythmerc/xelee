@@ -146,8 +146,57 @@ int main(int argc, char** argv) {
     assert(load_preferences(config).free_camera);
     assert(!save_preferences(dir / "missing" / "config", prefs, error));
     assert(!error.empty());
+    // A headset's Room setting.
+    {
+        Preferences room;
+        assert(!room.xr_full_vr);
+        room.xr_full_vr = true;
+        assert(save_preferences(config, room, error));
+        assert(load_preferences(config).xr_full_vr);
+        room.xr_full_vr = false;
+        assert(save_preferences(config, room, error) && !load_preferences(config).xr_full_vr);
+    }
+    // Discs found without a file picker: supported images only, sorted, from
+    // the directories in order, each once.
+    {
+        auto games = dir / "games";
+        std::filesystem::create_directories(games);
+        std::filesystem::copy_file(image, games / "b.GCM");
+        std::filesystem::copy_file(image, games / "a.iso");
+        std::ofstream(games / "notes.iso") << "not a disc";
+        std::ofstream(games / "a.txt") << "not a disc";
+        const auto found = find_discs({games, dir / "missing", games, dir});
+        assert(found.size() == 3);
+        assert(found[0] == (games / "a.iso").string() && found[1] == (games / "b.GCM").string());
+        assert(found[2] == image.string());
+        assert(find_discs({games}, 1).size() == 1);
+        assert(find_discs({dir / "missing"}).empty());
+    }
+    // The headset's controllers in the launcher (as the GameCube pad).
+    {
+        PadNavState s;
+        auto nav = pad_nav(s, 0x0004, 0, 0, 1000);  // D-pad down
+        assert(nav.step == 1 && nav.horizontal == 0 && !nav.activate && !nav.back);
+        nav = pad_nav(s, 0x0004, 0, 0, 1010);  // held: once
+        assert(nav.step == 0);
+        nav = pad_nav(s, 0x0008 | 0x0100, 0, 0, 1020);  // up and A
+        assert(nav.step == -1 && nav.activate);
+        nav = pad_nav(s, 0x1000, 0, 0, 1030);  // Start
+        assert(nav.activate && nav.step == 0);
+        nav = pad_nav(s, 0x0200 | 0x0002, 0, 0, 1040);  // B and right
+        assert(nav.back && nav.horizontal == 1);
+        nav = pad_nav(s, 0, 0, 100, 2000);  // stick up
+        assert(nav.step == -1);
+        nav = pad_nav(s, 0, 0, 100, 2100);  // held: not yet again
+        assert(nav.step == 0);
+        nav = pad_nav(s, 0, 0, 100, 2250);  // repeats
+        assert(nav.step == -1);
+        nav = pad_nav(s, 0, -100, -30, 2300);  // stick left, a little down
+        assert(nav.horizontal == -1 && nav.step == 0);
+    }
     std::filesystem::remove_all(dir);
     std::cout << "PASS: disc validation, cancellation, mismatch, preferences and write errors\n";
+    std::cout << "PASS: Room setting, disc finding, headset controller navigation\n";
     if (argc > 1) {
         auto info = inspect_disc(argv[1]);
         std::cout << info.message << '\n';

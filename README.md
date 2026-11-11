@@ -1,6 +1,6 @@
 # Xelee
 
-An independent expansion of Melee featuring XeleeNet (online rollback multiplayer with customizable 2-4 player lobbies!), builds for Windows/MacOS/Linux/Android, and full mixed reality support on Quest 3/Quest 3S.
+An independent expansion of Melee featuring XeleeNet (online rollback multiplayer with customizable 2-4 player lobbies!), builds for Windows/MacOS/Linux/Android, and full mixed reality support on Quest 3/Quest 3S and the Steam Frame.
 
 You need your own disc image. **No game data ships here.** The decompiled game
 code is not licensed and is not relicensed by this project; only the port code
@@ -32,6 +32,7 @@ is GPL-3.0-or-later. Details under [License](#license).
 ## Requirements
 
 - A **Meta Quest 3 or 3S**. <!-- TODO: say whether Quest 2 / Pro are supported or untested -->
+  Or a **Steam Frame**: see [Steam Frame](#steam-frame).
 - Your own **Super Smash Bros. Melee NTSC-U 1.02** disc image (`.iso`, `.gcm`,
   `.ciso` or `.rvz`). The launcher checks it against the Redump database.
 - **Developer mode** on the headset, to sideload the APK.
@@ -46,6 +47,19 @@ is GPL-3.0-or-later. Details under [License](#license).
 3. Copy your disc image onto the headset (for example into `Download`, over
    USB or with `adb push`).
 4. Open **Xelee** from your library (it's under *Unknown Sources*).
+
+### Steam Frame
+
+The Steam Frame runs its own build, a native Linux one. On the headset,
+download `Install-Xelee.desktop` from the latest release and open it: it
+installs Xelee in `~/Applications/xelee` and adds it to your Steam library
+(open it again to update). Put your disc image in `Games` or `Downloads`, and
+keep the headset at 120 Hz (at other rates the 3D view shakes as you move your
+head). The room shows through the Frame's passthrough; its controllers play
+with A/B/X/Y and Menu (Start) on the right, the D-pad on the left, Z on either
+shoulder button, the triggers click where the laser points, and the grips grab.
+In a paused fight, View (left controller) switches between your room and the
+stage's own sky. [docs/steam-frame.md](docs/steam-frame.md) has the details.
 
 ## AI Disclosure
 

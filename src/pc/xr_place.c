@@ -373,7 +373,13 @@ bool pc_xr_place_hold(void) {
         if (loaded != (s_dummy ? 1 : 0)) {
             const bool first = loaded < 0;
             loaded = s_dummy ? 1 : 0;
-            load_image(0, s_dummy ? "place-cards-done.png" : "place-cards.png");
+            /* The Steam Frame's controllers: the same cards, Start being
+             * their MENU button. */
+            if (aurora_xr_controllers() == AURORA_XR_CONTROLLERS_FRAME) {
+                load_image(0, s_dummy ? "place-cards-frame-done.png" : "place-cards-frame.png");
+            } else {
+                load_image(0, s_dummy ? "place-cards-done.png" : "place-cards.png");
+            }
             load_image(1, s_dummy ? "place-legend-done.png" : "place-legend.png");
             load_image(2, s_dummy ? "place-cards-hands-done.png" : "place-cards-hands.png");
             load_image(3, s_dummy ? "place-legend-hands-done.png" : "place-legend-hands.png");

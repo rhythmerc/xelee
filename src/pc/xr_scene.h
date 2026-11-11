@@ -45,10 +45,14 @@ struct HSD_GObj;
 bool pc_xr_stage_part_begin(int grkind, int map_id, int layer, struct HSD_JObj* root);
 void pc_xr_stage_part_end(bool hidden);
 /* Mixed-reality staging (stage parts hidden, clipped and moved for the arena
- * over passthrough) is in effect: an XR session is presenting and
- * MELEE_XR_MODE is not "vr". A full-VR mode renders the stage whole; only
- * per-stage centering applies there. */
+ * over passthrough) is in effect: an XR session is presenting, the headset
+ * can show the room (aurora_xr_passthrough_available), and neither the
+ * launcher's Room setting nor MELEE_XR_MODE asks for full VR. A full-VR mode
+ * renders the stage whole; only per-stage centering applies there. */
 bool pc_xr_mixed_reality(void);
+/* The launcher's Room setting: full VR instead of mixed reality.
+ * MELEE_XR_MODE, when set, wins. */
+void pc_xr_set_full_vr(bool full_vr);
 /* A stage is loading for a fight (gr/ground.c): once its floors are in, it
  * is offered for placing again (xr_place.h), the same stage or not. */
 void pc_xr_stage_load(void);
@@ -145,6 +149,9 @@ static inline bool pc_xr_stage_part_begin(int grkind, int map_id, int layer, str
 static inline void pc_xr_stage_part_end(bool hidden) { (void)hidden; }
 static inline bool pc_xr_mixed_reality(void) { return false; }
 static inline bool pc_xr_toggle_mode(void) { return false; }
+static inline void pc_xr_set_full_vr(bool full_vr) {
+    (void)full_vr;
+}
 static inline void pc_xr_poll_control(void) {}
 static inline void pc_xr_gamepad_added(int instance) { (void)instance; }
 static inline int pc_xr_jobj_begin(struct HSD_JObj* jobj) {

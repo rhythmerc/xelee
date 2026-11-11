@@ -1,7 +1,8 @@
 name: Build
 
 # Xelee's builds: the Meta Quest mixed-reality APK, the flat Android APK, the
-# Windows x86-64 zip and the Linux x86-64 AppImage (Steam Deck and desktop).
+# Windows x86-64 zip, the Linux x86-64 AppImage (Steam Deck and desktop) and
+# the Steam Frame's Linux arm64 package.
 # A push to main builds them and keeps them as artifacts; a v* tag on main
 # also publishes them as a GitHub release, which the launchers' updater
 # installs from (src/pc/updater.cpp select_best_asset: Xelee-Quest-arm64.apk,
@@ -363,9 +364,87 @@ jobs:
           path: dist/Xelee-macOS-${{ matrix.arch }}.zip
           if-no-files-found: error
 
+  steam-frame:
+    # Linux arm64 with OpenXR on from the start (docs/steam-frame.md), built
+    # in Valve's Steam Linux Runtime 3 (sniper) arm64 SDK, natively on an
+    # arm64 runner, so it runs on the headset's SteamOS.
+    name: Steam Frame package
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    container:
+      # tools/package_steam_frame.sh's pin.
+      image: registry.gitlab.steamos.cloud/steamrt/sniper/sdk/arm64@sha256:966ad3ef70751b98253f031d22c5b75798ceb9c49612b0a3489fc5f8f58858fc
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/build/frame-ccache
+      CCACHE_MAXSIZE: 3G
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          # The tags and the history: an untagged build's version is the newest
+          # tag and the commits since (cmake/AppVersion.cmake).
+          fetch-depth: 0
+
+      # The container's root works on the runner's checkout (and the cached
+      # Dawn checkout): git refuses another user's repository otherwise.
+      - name: Trust the checkouts
+        run: git config --global --add safe.directory '*'
+
+      - name: Dawn's pinned commit
+        id: dawn
+        run: echo "ref=$(sed -n 's/.*MELEE_DAWN_REF:-\([0-9a-f]*\)}.*/\1/p' tools/build_android.sh)" >> "$GITHUB_OUTPUT"
+
+      # Dawn from source (the melee-xr fork) with its dependencies, once per
+      # pinned commit, as the Quest build does.
+      - uses: actions/cache@v4
+        with:
+          path: build/dawn-src
+          key: dawn-src-${{ steps.dawn.outputs.ref }}
+
+      - uses: actions/cache@v4
+        with:
+          path: build/frame-ccache
+          key: frame-ccache-${{ steps.dawn.outputs.ref }}-${{ github.sha }}
+          restore-keys: frame-ccache-${{ steps.dawn.outputs.ref }}-
+
+      - name: Build and package
+        env:
+          MELEE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          MELEE_SLIPPI_FIREBASE_KEY: ${{ secrets.MELEE_SLIPPI_FIREBASE_KEY }}
+          MELEE_SLIPPI_GRAPHQL_ENDPOINT: ${{ secrets.MELEE_SLIPPI_GRAPHQL_ENDPOINT }}
+          XELEE_LOGS_URL: ${{ secrets.XELEE_LOGS_URL }}
+          XELEENET_URL: ${{ inputs.xeleenet_url || vars.XELEENET_URL }}
+        run: |
+          ccache --zero-stats
+          tools/package_steam_frame.sh
+          ccache --show-stats
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xelee-steam-frame
+          path: dist/Xelee-SteamFrame-arm64.tar.gz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xelee-steam-frame-symbols
+          path: build/steam-frame/melee.debug
+          if-no-files-found: error
+
+      # What this build adds: the launcher's headset logic, the presenter's
+      # decisions, and the package starting at all.
+      - name: Unit tests
+        run: |
+          ninja -C build/steam-frame launcher_data_test xr_policy_tests
+          build/steam-frame/launcher_data_test
+          build/steam-frame/extern/aurora/tests/xr_policy_tests
+
+      - name: Smoke tests (no disc)
+        run: MELEE_BIN=build/steam-frame/xelee/melee python3 tools/smoke_test.py --no-disc
+
   release:
     name: Publish release
-    needs: [quest, linux, android, windows, macos]
+    needs: [quest, linux, android, windows, macos, steam-frame]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
@@ -393,6 +472,11 @@ jobs:
           name: xelee-windows
           path: artifacts
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: xelee-steam-frame
+          path: artifacts
+
       # Both Macs' zips; Intel may be missing (its job may fail, see macos).
       - uses: actions/download-artifact@v4
         with:
@@ -417,4 +501,6 @@ jobs:
             artifacts/Xelee-Windows-x86_64.zip \
             artifacts/Xelee-x86_64.AppImage \
             artifacts/xelee-linux-x86_64.tar.gz \
+            artifacts/Xelee-SteamFrame-arm64.tar.gz \
+            platforms/steam-frame/Install-Xelee.desktop \
             artifacts/Xelee-macOS-*.zip

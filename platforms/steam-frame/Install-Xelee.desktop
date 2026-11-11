@@ -1,0 +1,9 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Type=Application
+Name=Install Xelee
+Comment=Install or update Xelee (Melee in mixed reality) on the Steam Frame
+Exec=bash -c 'curl -fsSL https://raw.githubusercontent.com/rhythmerc/xelee/main/platforms/steam-frame/install.sh -o /tmp/xelee-install.sh && XELEE_FROM_DESKTOP=1 bash /tmp/xelee-install.sh'
+Icon=applications-games
+Terminal=true
+StartupNotify=false

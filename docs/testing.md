@@ -162,6 +162,51 @@ the game presents normally, which looks like a freeze and is not one. `devctl.py
 shot` detects two identical captures and nudges the window; when a screenshot and
 a backtrace disagree, believe the backtrace.
 
+## OpenXR on a desktop
+
+`tools/xr_monado_test.py` tests the XR presenter against Monado (null
+compositor: no window, 20 Hz) with no headset, on the desktop XR build
+(`-DAURORA_ENABLE_OPENXR=ON`, docs/quest-xr.md "Build and run"):
+
+```sh
+MELEE_DISC=<disc> MELEE_BIN=build/linux-xr/melee MONADO=<monado prefix> \
+    VK_LAYER_PATH=<vulkan-validation-layers>/share/vulkan/explicit_layer.d \
+    python3 tools/xr_monado_test.py --headless   # --list, --case <name>
+```
+
+`--headless` runs the game on a headless Weston of its own, so nothing shows
+or plays. The cases boot fights and the Place Stage scene and judge the logs,
+the frame dumps' coverage and, for most, the summary of aurora's test layer
+(`ninja XrApiLayer_aurora_frame_sim`, `extern/aurora/tests/xr_sim_layer`),
+which gives Monado the Steam Frame's SteamVR personality:
+
+- **shared-queue:** on a GPU with one graphics queue (RADV) the runtime shares
+  Dawn's, under Vulkan's validation layer's thread-safety checks: no
+  `THREADING ERROR`. **shared-queue-unguarded** is its negative control: the
+  lock off, the layer must report races.
+- **no-room:** Monado shows no passthrough: full VR, whole stages.
+- **frame-sim:** alpha-blend passthrough (every blended frame starts with a
+  projection layer, and has no other: SteamVR reprojects only the first), the
+  Frame's controller profile, scripted D-pad up, shoulder and A presses
+  reaching the pad as Up, Z and A, no hand taken for tracked, at most 16
+  swapchains.
+- **frame-shoulder:** a SteamVR that knows only the shoulder buttons' new
+  name: the first bindings are refused, the next taken.
+- **frame-launcher:** the Steam Frame build (`MELEE_FRAME_BIN`) from a fresh
+  home: its launcher in the headset finds the disc in `~/Games`, Menu presses
+  Play, and the fight's 3D view is its frames' only projection layer.
+- **frame-view-switch:** View mid-fight does nothing; paused with Start, View
+  switches to full VR and the launcher's settings keep it (`fresh_home`).
+- **pacing-90-unreported**, **pacing-120-unreported**,
+  **pacing-granted-90-runs-72:** the display's rate from `xrWaitFrame`'s
+  period where none is reported or the report is wrong; a runtime listing one
+  rate is asked for 120 Hz.
+- **placing-capped**, **placing-frame:** the placing hold under a swapchain cap
+  of 11 (the limit learned, pictures waiting) and within the Frame's 16.
+
+The aurora unit tests include `xr_policy_tests`, the presenter's decisions with
+the Quest's answers as golden cases.
+
 ## Harnesses for port bugs
 
 Three harnesses find the next batch of the bug classes listed in
