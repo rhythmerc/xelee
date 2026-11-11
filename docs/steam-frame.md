@@ -172,7 +172,9 @@ trigger, placing with the Frame's cards and grips, fights in the room and in
 full VR, View switching them in a pause, the 3D view steady with both eyes
 at 120 Hz, Turnip's second queue, at most 12 swapchains alive, and the game
 started from Steam's library, with the 12-frame period settling and SpaceWarp
-off by default. No Quest was at hand:
-its paths are unchanged by construction (each new one is chosen by something
+off by default. Again on 2026-11-11, rebased on main's fight mapping and
+foveation: the controls through the mapping (shoulders as Z, the D-pad),
+foveation alongside SteamVR's own, the room steady in both eyes, View in a
+pause. No Quest was at hand: its paths are unchanged by construction (each new one is chosen by something
 the Quest's runtime doesn't offer), held by aurora's policy tests' Quest
 cases, and its build compiled (`tools/build_android.sh`'s native library).
